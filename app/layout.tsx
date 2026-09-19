@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import { Doto, Jersey_10, Schibsted_Grotesk, Silkscreen } from "next/font/google";
+import { Analytics } from "@vercel/analytics/next";
 import { MobileNav } from "@/components/MobileNav";
 import { SiteFooter } from "@/components/SiteFooter";
 import { SiteHeader, type HeaderStatus } from "@/components/SiteHeader";
@@ -74,6 +75,7 @@ export default async function RootLayout({ children }: Readonly<{ children: Reac
         <main id="main">{children}</main>
         <SiteFooter />
         <MobileNav focus={focus} />
+        <Analytics />
       </body>
     </html>
   );
