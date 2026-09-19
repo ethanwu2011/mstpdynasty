@@ -3,16 +3,24 @@
  *   - parseSlots: split the "@@slot-id" reply into slots
  *   - sanitize: plain text only, no markdown, no emoji, no em/en dashes or spaced hyphens
  *   - checkText: flag every sentence that
- *       uses a number (digits or words) that is not in FACTS/LORE (rounding to fewer decimals ok)
+ *       states a league stat that is not in FACTS/LORE (rounding to fewer decimals ok). A number
+ *         is a league stat when it has decimals (41.26, a pick label like 2.05), carries $ or %,
+ *         is a digit ordinal (10th), or sits within a few words of a stat word (points, pick,
+ *         spots, rank, round, record, streak, FAAB, value, age...) or of a manager, team or
+ *         player name. Any other number is history or hyperbole ("1812", "six hundred thousand
+ *         men", "200,000 miles") and is free.
  *       ties a FACTS number to the wrong person (decimals and numbers of 20 or more must sit in
  *         the same sentence as, or right after, a name from the same part of FACTS)
  *       claims a streak nobody named there has
  *       writes a score-like pair ("28-6") that FACTS does not contain word for word
  *       uses a box-score word FACTS never carries (touchdowns, yards, "7 catches"...)
- *       uses the medical / school theme, banned filler, a banned joke shape, or shouts in caps
- *   Callers decide what a flagged sentence means (issues and items reject the whole slot).
+ *       claims how long someone took to pick (FACTS has no pick times)
+ *       uses the medical / school theme, a slur, banned filler, a word that announces the joke,
+ *         a banned joke shape, or shouts in caps
+ *   Profanity is allowed. Callers decide what a flagged sentence means (issues and items
+ *   reject the whole slot).
  */
-import { BANNED_FILLER, BANNED_SHAPES, BOX_SCORE_TERMS, CAPS_ALLOWED, COUNTED_STATS, THEME_TERMS, type BannedTerm } from "./banned";
+import { ANNOUNCE_TERMS, BANNED_FILLER, BANNED_SHAPES, BOX_SCORE_TERMS, CAPS_ALLOWED, CLOCK_CLAIMS, COUNTED_STATS, SLUR_TERMS, THEME_TERMS, type BannedTerm } from "./banned";
 import { noLongDashes } from "./format";
 
 /* ------------------------------------------------------------------ */
@@ -22,13 +30,25 @@ import { noLongDashes } from "./format";
 /** Numeric tokens: "1,800", "41.26", "7", "$38" -> 1800, 41.26, 7, 38. Signs are ignored. */
 const NUMBER_RE = /\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?/g;
 
-export function numbersIn(text: string): number[] {
-  const out: number[] = [];
+/** A number a sentence states, with where it sits (character offsets into that text). */
+export interface NumberHit {
+  n: number;
+  start: number;
+  end: number;
+}
+
+function digitHits(text: string): NumberHit[] {
+  const out: NumberHit[] = [];
   for (const m of text.matchAll(NUMBER_RE)) {
     const n = Number(m[0].replace(/,/g, ""));
-    if (Number.isFinite(n)) out.push(n);
+    const start = m.index ?? 0;
+    if (Number.isFinite(n)) out.push({ n, start, end: start + m[0].length });
   }
   return out;
+}
+
+export function numbersIn(text: string): number[] {
+  return digitHits(text).map((h) => h.n);
 }
 
 const UNIT_WORDS = [
@@ -82,6 +102,12 @@ const MULTIPLES = new Map([
   ["twice", 2],
   ["thrice", 3],
 ]);
+/** "six hundred thousand", "a million": scales multiply the number in front of them. */
+const SCALES = new Map([
+  ["thousand", 1_000],
+  ["million", 1_000_000],
+  ["billion", 1_000_000_000],
+]);
 
 /** "one" as a pronoun ("no one", "the one guy", "one of"), not a count. */
 const ONE_PRONOUN_BEFORE = new Set(["no", "the", "any", "every", "some", "each", "which", "that", "this"]);
@@ -106,6 +132,7 @@ function wordNumber(tokens: string[], i: number): { n: number; used: number } | 
   }
   if (w === "hundred") return { n: 100, used: 1 };
   if (w === "dozen") return { n: 12, used: 1 };
+  if (SCALES.has(w)) return { n: SCALES.get(w)!, used: 1 };
   if (ORDINALS.has(w)) {
     // "a second" / "split second" is time; "second-guess" is a verb.
     if (w === "second" && (prev === "a" || prev === "split" || next === "guess" || next === "guessing" || next === "guessed")) return null;
@@ -115,23 +142,150 @@ function wordNumber(tokens: string[], i: number): { n: number; used: number } | 
   return null;
 }
 
-/** Numbers spelled out in words: "three", "twenty-four", "a dozen", "third", "twice". */
-export function numberWordsIn(text: string): number[] {
-  const tokens = (text.toLowerCase().match(/[a-z’']+/g) ?? []).map((t) => t.replace(/['’]s$/, ""));
-  const out: number[] = [];
+function wordHits(text: string): NumberHit[] {
+  const tokens = [...text.matchAll(/[A-Za-z’']+/g)].map((m) => ({
+    w: m[0].toLowerCase().replace(/['’]s$/, ""),
+    start: m.index ?? 0,
+    end: (m.index ?? 0) + m[0].length,
+  }));
+  const words = tokens.map((t) => t.w);
+  const out: NumberHit[] = [];
   for (let i = 0; i < tokens.length; ) {
-    const hit = wordNumber(tokens, i);
-    if (hit) {
-      out.push(hit.n);
-      i += hit.used;
-    } else i++;
+    const hit = wordNumber(words, i);
+    if (!hit) {
+      i++;
+      continue;
+    }
+    let { n, used } = hit;
+    // "six hundred thousand": a scale after the number multiplies it (not after a lone scale).
+    while (!SCALES.has(words[i]) && SCALES.has(words[i + used])) {
+      n *= SCALES.get(words[i + used])!;
+      used++;
+    }
+    out.push({ n, start: tokens[i].start, end: tokens[i + used - 1].end });
+    i += used;
   }
   return out;
+}
+
+/** Numbers spelled out in words: "three", "twenty-four", "a dozen", "third", "twice". */
+export function numberWordsIn(text: string): number[] {
+  return wordHits(text).map((h) => h.n);
+}
+
+/** Every number a sentence states, in digits or in words, in reading order. */
+function numberHits(text: string): NumberHit[] {
+  return [...digitHits(text), ...wordHits(text)].sort((a, b) => a.start - b.start);
 }
 
 /** Every number a sentence states, in digits or in words. */
 export function statedNumbers(text: string): number[] {
   return [...numbersIn(text), ...numberWordsIn(text)];
+}
+
+/* ------------------------------------------------------------------ */
+/* league stats versus history and hyperbole                           */
+/* ------------------------------------------------------------------ */
+
+/** Stands in for a FACTS name (manager, team, player) while a sentence is checked. */
+const NAME_MARK = "\u0001";
+/** How many words on each side of a number decide whether it is a league stat. */
+export const STAT_WINDOW = 5;
+
+/**
+ * Words that make a nearby number a league stat. Hyperbole never needs them: "six hundred
+ * thousand men", "200,000 miles", "in 1812".
+ */
+const STAT_WORDS = [
+  "points?",
+  "pts",
+  "scor(?:e|es|ed|ing)",
+  "put\\s+up",
+  "posted",
+  "projected",
+  "projections?",
+  "optimal",
+  "bench(?:ed)?",
+  "picks?",
+  "picked",
+  "spots?",
+  "reach(?:ed|es)?",
+  "steals?",
+  "rank(?:s|ed|ing)?",
+  "overall",
+  "place",
+  "rounds?",
+  "record",
+  "wins?",
+  "loss(?:es)?",
+  "lost\\s+by",
+  "won\\s+by",
+  "games?",
+  "straight",
+  "streak",
+  "in\\s+a\\s+row",
+  "weeks?",
+  "seasons?",
+  "all-play",
+  "faab",
+  "dollars?",
+  "bucks?",
+  "bids?",
+  "paid",
+  "pays?",
+  "overpa\\w*",
+  "spent",
+  "costs?",
+  "worth",
+  "value[sd]?",
+  "fantasycalc",
+  "net",
+  "grade",
+  "age[sd]?",
+  "year-olds?",
+  "years?\\s+old",
+  "qbs?",
+  "rbs?",
+  "wrs?",
+  "tes?",
+  "flex",
+  "quarterbacks?",
+  "running\\s+backs?",
+  "receivers?",
+  "wideouts?",
+  "tight\\s+ends?",
+  "percent",
+  "odds",
+  "playoffs?",
+  "title",
+  "margin",
+  "hours?",
+  "minutes?",
+  "clock",
+];
+const STAT_CONTEXT_RE = new RegExp(`(?<![a-z0-9])(?:${STAT_WORDS.join("|")})(?![a-z0-9])`, "i");
+
+/**
+ * Whether the number at `h` in `text` (names already replaced by NAME_MARK) reads as a league
+ * stat: decimals (41.26, pick 2.05), $ or %, "No. 5" or "#5", a digit ordinal (10th), or a stat
+ * word or a name within STAT_WINDOW words.
+ */
+function isLeagueStat(text: string, h: NumberHit): boolean {
+  if (text.slice(h.start, h.end).includes(".")) return true;
+  const before = text.slice(Math.max(0, h.start - 4), h.start);
+  const after = text.slice(h.end, h.end + 8);
+  if (/(?:[$#]|\bno\.)\s*$/i.test(before)) return true;
+  if (/^\s*%/.test(after) || /^(?:st|nd|rd|th)(?![a-z])/i.test(after)) return true;
+  const words = [...text.matchAll(/\S+/g)];
+  const first = words.findIndex((w) => (w.index ?? 0) + w[0].length > h.start);
+  if (first < 0) return false;
+  let last = first;
+  while (last + 1 < words.length && (words[last + 1].index ?? 0) < h.end) last++;
+  const around = words
+    .slice(Math.max(0, first - STAT_WINDOW), last + STAT_WINDOW + 1)
+    .map((w) => w[0])
+    .join(" ");
+  return around.includes(NAME_MARK) || STAT_CONTEXT_RE.test(around);
 }
 
 const eq = (a: number, b: number) => Math.abs(a - b) < 1e-9;
@@ -193,6 +347,8 @@ export class AllowedNumbers {
   /** Numbers owned by names: allowed only next to one of them. */
   private readonly bound = new Map<string, NameRef[][]>();
   private readonly nameList: string[];
+  /** Player surnames as written ("Brown" for "A.J. Brown"), matched case-sensitively. */
+  private readonly surnames: string[];
   private readonly streaks: Streak[] = [];
   /** FACTS and LORE text, for word-for-word checks. */
   readonly text: string;
@@ -203,6 +359,7 @@ export class AllowedNumbers {
     this.values = [...set];
     this.text = sources.join("\n");
     const names = new Set<string>();
+    const surnames = new Set<string>();
     for (const s of sources) {
       let parsed: unknown;
       try {
@@ -211,9 +368,10 @@ export class AllowedNumbers {
         for (const n of numbersIn(s)) this.record(n, []);
         continue;
       }
-      this.walk(parsed, [], names);
+      this.walk(parsed, [], names, surnames);
     }
     this.nameList = [...names].sort((a, b) => b.length - a.length);
+    this.surnames = [...surnames].filter((x) => !names.has(x)).sort((a, b) => b.length - a.length);
   }
 
   private record(n: number, chain: NameRef[]): void {
@@ -225,9 +383,9 @@ export class AllowedNumbers {
     }
   }
 
-  private walk(node: unknown, chain: NameRef[], names: Set<string>): void {
+  private walk(node: unknown, chain: NameRef[], names: Set<string>, surnames: Set<string>): void {
     if (Array.isArray(node)) {
-      for (const x of node) this.walk(x, chain, names);
+      for (const x of node) this.walk(x, chain, names, surnames);
       return;
     }
     if (typeof node === "number") return this.record(node, chain);
@@ -241,8 +399,15 @@ export class AllowedNumbers {
     for (const [k, v] of Object.entries(obj)) {
       if (typeof v !== "string" || !v.trim()) continue;
       if (NAME_KEYS.has(k)) {
-        own.push(nameRef(v, k === "name" || k === "player"));
+        const isPlayer = k === "name" || k === "player";
+        own.push(nameRef(v, isPlayer));
         names.add(v.trim());
+        if (isPlayer) {
+          const parts = v.trim().split(/\s+/);
+          while (parts.length > 1 && NAME_SUFFIXES.has(parts[parts.length - 1].toLowerCase())) parts.pop();
+          const last = parts[parts.length - 1];
+          if (parts.length > 1 && last.replace(/[^A-Za-z]/g, "").length >= 3) surnames.add(last);
+        }
       } else if (REF_KEYS.has(k)) names.add(v.trim());
     }
     const here = own.length ? [...chain, ...own] : chain;
@@ -252,7 +417,7 @@ export class AllowedNumbers {
         const m = /^(\d+)[WLT]$/.exec(v);
         if (m) this.streaks.push({ count: Number(m[1]), names: here });
       }
-      this.walk(v, here, names);
+      this.walk(v, here, names, surnames);
     }
   }
 
@@ -261,22 +426,36 @@ export class AllowedNumbers {
   }
 
   /**
-   * `text` with every FACTS name blanked out, so a team called "Seven Seas" or "Team 2" does
-   * not count as a number the sentence states.
+   * `text` with every FACTS name replaced by NAME_MARK, so a team called "Seven Seas" or
+   * "Team 2" does not count as a number the sentence states, and so a number next to a name
+   * reads as a league stat. Player surnames on their own ("Holloway") count as names too.
    */
-  private withoutNames(text: string): string {
+  private markNames(text: string): string {
+    const mark = ` ${NAME_MARK} `;
     let out = text.replace(/\u2019/g, "'");
+    const esc = (n: string) => n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/'/g, "['\u2019]");
     for (const n of this.nameList) {
       if (n.length < 3) continue;
-      const esc = n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/'/g, "['\u2019]");
-      out = out.replace(new RegExp(`(?<![A-Za-z0-9])${esc}(?![A-Za-z0-9])`, "gi"), " ");
+      out = out.replace(new RegExp(`(?<![A-Za-z0-9])${esc(n)}(?![A-Za-z0-9])`, "gi"), mark);
     }
+    for (const n of this.surnames) out = out.replace(new RegExp(`(?<![A-Za-z0-9])${esc(n)}(?![A-Za-z0-9])`, "g"), mark);
     return out;
   }
 
-  /** Numbers in `text` (digits or words) that are not allowed. */
+  /**
+   * The league stats `text` states (digits or words): numbers with decimals, $ or %, digit
+   * ordinals, and numbers near a stat word or a name. History and hyperbole are left out.
+   */
+  statNumbersIn(text: string): number[] {
+    const marked = this.markNames(text);
+    return numberHits(marked)
+      .filter((h) => isLeagueStat(marked, h))
+      .map((h) => h.n);
+  }
+
+  /** League stats in `text` that FACTS/LORE does not have. */
   unknownIn(text: string): number[] {
-    return statedNumbers(this.withoutNames(text)).filter((n) => !this.has(n));
+    return this.statNumbersIn(text).filter((n) => !this.has(n));
   }
 
   /** Every name in FACTS, longest first (to keep periods inside names like "A.J. Brown"). */
@@ -285,14 +464,14 @@ export class AllowedNumbers {
   }
 
   /**
-   * Numbers stated in `sentence` that belong to someone not named in it or in the sentence
-   * before it. Only decimals and numbers of 20 or more are checked: small integers (ranks,
-   * counts, weeks) are everywhere.
+   * League stats stated in `sentence` that belong to someone not named in it or in the
+   * sentence before it. Only decimals and numbers of 20 or more are checked: small integers
+   * (ranks, counts, weeks) are everywhere.
    */
   unboundIn(sentence: string, previous = ""): number[] {
     const scope = `${previous}\n${sentence}`.toLowerCase().replace(/\u2019/g, "'");
     const out: number[] = [];
-    for (const n of statedNumbers(this.withoutNames(sentence))) {
+    for (const n of this.statNumbersIn(sentence)) {
       if (Number.isInteger(n) && n < 20) continue;
       const k = key(n);
       if (this.free.has(k)) continue;
@@ -371,9 +550,14 @@ export function shoutingIn(sentence: string, exempt: string): string[] {
 const hits = (terms: BannedTerm[], text: string, exempt?: string) =>
   terms.filter((t) => t.re.test(text) && (exempt === undefined || !t.re.test(exempt))).map((t) => t.label);
 
-/** Theme words (unless FACTS/LORE uses them) and banned filler. */
+/** Theme words and joke-announcing words (unless FACTS/LORE uses them), slurs and banned filler. */
 export function bannedWordsIn(text: string, exempt = ""): string[] {
-  return [...hits(THEME_TERMS, text, exempt), ...hits(BANNED_FILLER, text)];
+  return [...hits(THEME_TERMS, text, exempt), ...hits(ANNOUNCE_TERMS, text, exempt), ...new Set(hits(SLUR_TERMS, text)), ...hits(BANNED_FILLER, text)];
+}
+
+/** Claims about how long a manager took to pick: FACTS has no pick times. */
+export function clockClaimsIn(sentence: string): string[] {
+  return CLOCK_CLAIMS.filter((re) => re.test(sentence)).length ? ["a claim about time on the clock (FACTS has no pick times)"] : [];
 }
 
 /** Box-score stat words FACTS/LORE never uses, and "<number> catches"-style counts. */
@@ -446,11 +630,11 @@ export function splitSentences(paragraph: string, names: string[] = []): string[
 
 export interface Dropped {
   sentence: string;
-  /** Numbers FACTS/LORE does not have. */
+  /** League stats FACTS/LORE does not have. */
   unknownNumbers: number[];
-  /** Theme words and banned filler. */
+  /** Theme words, slurs, joke-announcing words and banned filler. */
   bannedWords: string[];
-  /** Everything else: numbers tied to the wrong person, invented streaks or scores, box-score words, shapes, caps. */
+  /** Everything else: numbers tied to the wrong person, invented streaks, scores or pick times, box-score words, shapes, caps. */
   problems: string[];
 }
 
@@ -483,6 +667,7 @@ export function checkText(text: string, allowed: AllowedNumbers, exempt = ""): C
         ...allowed.badStreaksIn(s, previous).map((n) => `a streak of ${n} that nobody named there has`),
         ...pairsNotIn(s, allowed.text).map((x) => `${x} is not in FACTS`),
         ...boxScoreIn(s, wordsExempt).map((w) => `box-score word "${w}"`),
+        ...clockClaimsIn(s),
         ...shapesIn(s).map((x) => `the shape "${x}"`),
         ...shoutingIn(s, wordsExempt).map((w) => `all caps "${w}"`),
       ];

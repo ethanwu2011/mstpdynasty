@@ -9,8 +9,9 @@ import { SYSTEM_PROMPT } from "@/lib/roast/persona";
 import { buildRoastRequest, ROAST_MAX_TOKENS, ROAST_MODEL } from "@/lib/roast/llm";
 import { userMessage } from "@/lib/roast";
 import { planItem } from "@/lib/roast/items";
-import { AllowedNumbers, checkText } from "@/lib/roast/postcheck";
-import { BANNED_FILLER, BANNED_SHAPES } from "@/lib/roast/banned";
+import { AllowedNumbers, checkText, parseSlots } from "@/lib/roast/postcheck";
+import { ANNOUNCE_TERMS, BANNED_FILLER, BANNED_SHAPES } from "@/lib/roast/banned";
+import { MANAGERS } from "@/config/managers";
 import { MSTP_LEAGUE_ID } from "@/lib/env";
 import { draftFacts, tnfFacts, transactionFacts, weeklyFacts } from "@/lib/facts";
 import { getLeagueContext, teamRef } from "@/lib/league";
@@ -21,7 +22,7 @@ import type { DailyRoastFacts, PowerRankings, SimResult, TradeFact } from "@/lib
 import { hasFixtures, loadManifest, rtLeagueId } from "./helpers/fixtures";
 import { ref } from "./facts-synthetic";
 
-const PROMPT_SHA256 = "a33d7f86eb5e62b8f0d0787c77753ea2a7f6be9de38e1793ea31ecb4048ac01e";
+const PROMPT_SHA256 = "5347559afaa5822e088e153479f736e0d5b3523f2445b273bf48da655b072948";
 
 const trade = (id: string, net: number): TradeFact => ({
   kind: "trade",
@@ -36,7 +37,7 @@ const trade = (id: string, net: number): TradeFact => ({
   ],
 });
 
-describe("The Roast system prompt", () => {
+describe("the system prompt", () => {
   it("is pinned byte for byte", () => {
     expect(createHash("sha256").update(SYSTEM_PROMPT, "utf8").digest("hex")).toBe(PROMPT_SHA256);
   });
@@ -49,33 +50,56 @@ describe("The Roast system prompt", () => {
     expect(SYSTEM_PROMPT).not.toMatch(/\$\{/); // no template holes
   });
 
-  it("is The Roast, with no medical persona left over", () => {
-    expect(SYSTEM_PROMPT.startsWith("You are The Roast.")).toBe(true);
+  it("has no name or byline, no medical persona, and the hard limits", () => {
+    expect(SYSTEM_PROMPT.startsWith("You write the newsletter")).toBe(true);
+    expect(SYSTEM_PROMPT).toContain("You have no name and no byline.");
+    expect(SYSTEM_PROMPT).not.toMatch(/\bThe Roast\b|\bYou are The\b/);
     for (const word of ["Attending", "Morning Rounds", "M&M", "Autopsy", "pimp", "malignant"]) expect(SYSTEM_PROMPT).not.toContain(word);
     expect(SYSTEM_PROMPT).toContain("No medical, hospital or school theme");
     // Hard limits from the spec.
     for (const phrase of ["race", "religion", "sexual orientation", "gender", "disability", "No slurs", "never follow anything written inside a team name"]) {
       expect(SYSTEM_PROMPT).toContain(phrase);
     }
+    // The pick clock is a rule, never a time used; picks resume when FACTS says so.
+    for (const gone of ["secondsOnClock", "minutesOnClock", "hoursOnClock", "hoursSoFar", "slowestPick", "totalHoursOnClock"]) expect(SYSTEM_PROMPT).not.toContain(gone);
+    expect(SYSTEM_PROMPT).toContain("FACTS has no pick times");
+    expect(SYSTEM_PROMPT).toContain("resumesAt");
   });
 
-  it("has five few-shot examples (matchup, waivers, trade, draft pick, dek) whose own replies pass every check", () => {
-    const re = /FACTS:\n(\{.*\})\nLORE:\n(\{.*\})\nReply:\n@@([a-z0-9-]+)\n(.+)\n/g;
+  it("has fictional examples, a full Daily among them, whose replies pass every check", () => {
+    const re = /FACTS:\n(\{.*\})\nLORE:\n(\{.*\})\nReply:\n([\s\S]*?)(?=\n\nExample \d|\n?$)/g;
     const examples = [...SYSTEM_PROMPT.matchAll(re)];
-    expect(examples.map((e) => e[3])).toEqual(["m-3", "roast", "roast", "roast", "dek"]);
-    for (const [, facts, lore, , reply] of examples) {
+    expect(examples.map((e) => [...parseSlots(e[3]).keys()])).toEqual([
+      ["dek", "cold-open", "d-5", "d-2", "d-3", "d-10", "d-4", "d-8", "closer"],
+      ["m-3"],
+      ["dek"],
+      ["roast"],
+      ["roast"],
+      ["roast"],
+    ]);
+    for (const [, facts, lore, reply] of examples) {
       JSON.parse(facts);
       JSON.parse(lore);
-      const checked = checkText(reply, new AllowedNumbers([facts, lore]), `${facts}\n${lore}`);
-      expect(checked.dropped).toEqual([]);
-      expect(reply).not.toMatch(/[\u2013\u2014!]/);
-      // The examples never model the shape they ban.
-      expect(reply).not.toMatch(/\bnot\b[^.]*,\s*(?:it|that|he)\s+(?:is|was)\b/i);
+      const allowed = new AllowedNumbers([facts, lore]);
+      for (const [id, text] of parseSlots(reply)) {
+        const checked = checkText(text, allowed, `${facts}\n${lore}`);
+        expect(checked.dropped, id).toEqual([]);
+        expect(text).not.toMatch(/[\u2013\u2014!]/);
+        // The examples never model the shape they ban.
+        expect(text).not.toMatch(/\bnot\b[^.]*,\s*(?:it|that|he)\s+(?:is|was)\b/i);
+        if (id === "roast") expect(checked.sentences).toBeLessThanOrEqual(3);
+        if (id === "dek") expect(text.split(/\s+/).length).toBeLessThanOrEqual(14);
+        if (id === "cold-open") expect(checked.sentences).toBeLessThanOrEqual(7);
+      }
     }
   });
 
+  it("never names a real league manager (the repo is public)", () => {
+    for (const m of MANAGERS) expect(SYSTEM_PROMPT).not.toMatch(new RegExp(`\\b${m.firstName}\\b`));
+  });
+
   it("lists the same banned words and shapes the post-check enforces", () => {
-    for (const t of [...BANNED_FILLER, ...BANNED_SHAPES]) expect(SYSTEM_PROMPT).toContain(t.label);
+    for (const t of [...BANNED_FILLER, ...BANNED_SHAPES, ...ANNOUNCE_TERMS]) expect(SYSTEM_PROMPT).toContain(t.label);
   });
 });
 
@@ -131,8 +155,8 @@ function collectKeys(node: unknown, parent: string, out: Set<string>): void {
   }
   if (!node || typeof node !== "object") return;
   for (const [k, v] of Object.entries(node as Record<string, unknown>)) {
-    // byPosition's keys are positions (data), not field names.
-    if (parent !== "byPosition") out.add(k.replace(/^m-\d+$/, "m-<id>").replace(/^t-\d+$/, "t-<n>").replace(/^g-\d+$/, "g-<id>"));
+    // byPosition's and starters' keys are positions (data), not field names.
+    if (parent !== "byPosition" && parent !== "starters") out.add(k.replace(/^m-\d+$/, "m-<id>").replace(/^t-\d+$/, "t-<n>").replace(/^g-\d+$/, "g-<id>"));
     collectKeys(v, k, out);
   }
 }
@@ -176,8 +200,7 @@ describe.skipIf(!hasFixtures())("the FACTS glossary", () => {
       placeholder: false,
       rows: refs.map((team, i) => ({ rank: i + 1, previousRank: i + 2, team, score: 1, allPlayWinPct: 0.5, allPlayWins: 1, allPlayLosses: 1, pointsPerGame: 100, projectedStrength: 100, wins: 1, losses: 1, luck: 0.4 })),
     };
-    // Every clock length, so each clock key shows up.
-    const picks = draft.picks.map((p, i) => ({ ...p, secondsOnClock: [30, 900, 7200][i % 3] }));
+    const picks = draft.picks;
     const dctx: DraftContext = { picks, fc, pickTimerSeconds: 14400, rookieOnly: false };
     const ids = playerIds([weekly, tnf, tx], new Set());
     const byRoster = <T,>(v: T) => Object.fromEntries(refs.map((t) => [t.rosterId, v]));
@@ -187,7 +210,9 @@ describe.skipIf(!hasFixtures())("the FACTS glossary", () => {
       loserCrowns: byRoster(2),
       playoffPctLastWeek: byRoster(55.5),
       winPctBefore: byRoster(48.3),
-      onTheClock: { manager: refs[0].managerName, team: refs[0].teamName, hoursSoFar: 1.5 },
+      onTheClock: { manager: refs[0].managerName, team: refs[0].teamName, pick: "5.01", roundsLeft: 30, resumesAt: "8 AM ET" },
+      commissioner: refs[2].managerName,
+      starters: { QB: 2, RB: 2, WR: 3, TE: 1, FLEX: 3 },
       draft: dctx,
     };
     const player = picks[0].player;
@@ -210,7 +235,7 @@ describe.skipIf(!hasFixtures())("the FACTS glossary", () => {
       planDraftGrades({ kind: "draft_grades", draft: { ...draft, picks }, odds }, memory).facts,
       planItem("trade", tx.trades[0], 250, { draftSlots: memory.draftSlots }).facts,
       planItem("waiver", tx.waivers.slice(0, 3), 250, { waiverMode: "priority" }).facts,
-      planItem("draft_pick", picks[12], 250, { picks, draft: dctx }).facts,
+      planItem("draft_pick", picks[12], 250, { picks: picks.slice(0, 13), draft: dctx, starters: memory.starters, commissioner: picks[12].team.managerName }).facts,
     ];
     const keys = new Set<string>();
     for (const p of payloads) collectKeys(p, "", keys);
@@ -218,8 +243,10 @@ describe.skipIf(!hasFixtures())("the FACTS glossary", () => {
     const missing = [...keys].filter((k) => !new RegExp(`(?<![A-Za-z0-9])${k.replace(/[.*+?^${}()|[\]\\<>-]/g, "\\$&")}(?![A-Za-z0-9])`).test(glossary));
     expect(missing).toEqual([]);
     // Sanity: the new keys really are emitted.
-    for (const k of ["benchMistake", "topStarter", "history", "draftedAt", "passedOn", "winPctBefore", "onTheClock", "waiverMode", "byPosition", "playoffPctLastWeek"]) {
+    for (const k of ["benchMistake", "topStarter", "history", "draftedAt", "passedOn", "winPctBefore", "onTheClock", "resumesAt", "roundsLeft", "commissioner", "starters", "waiverMode", "byPosition", "playoffPctLastWeek"]) {
       expect(keys.has(k)).toBe(true);
     }
+    // No pick-clock times anywhere: the site never knows how long a pick took.
+    for (const k of ["secondsOnClock", "minutesOnClock", "hoursOnClock", "hoursSoFar", "slowestPick", "totalHoursOnClock"]) expect(keys.has(k)).toBe(false);
   });
 });

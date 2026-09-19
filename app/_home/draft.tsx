@@ -189,7 +189,8 @@ export function LeagueRulesPanel({ ctx, span = 4, mdSpan = 12 }: { ctx: LeagueCo
 
 /* ------------------------------ on the clock ------------------------------ */
 
-export function OnTheClockPanel({ ctx, facts, serverNow, span = 4 }: { ctx: LeagueContext; facts: DraftFacts | null; serverNow: number; span?: PanelSpan }) {
+/** Who is on the clock and who is next. No running time on the clock: the site never knows when a pick was made. */
+export function OnTheClockPanel({ ctx, facts, span = 4 }: { ctx: LeagueContext; facts: DraftFacts | null; span?: PanelSpan }) {
   const d = ctx.draft;
   const teams = facts?.teams || d?.settings.teams || 0;
   const total = facts ? facts.rounds * teams : 0;
@@ -205,7 +206,7 @@ export function OnTheClockPanel({ ctx, facts, serverNow, span = 4 }: { ctx: Leag
     next = { pickNo: made + 1, round: at.round, label: at.label, manager: m?.name ?? "Unknown", team: m?.teamName ?? "" };
   }
   const upcoming = d && next ? [1, 2, 3].map((k) => next.pickNo + k).filter((n) => n <= total).map((n) => ({ n, ...pickAt(d, n) })) : [];
-  const since = d?.last_picked ?? d?.start_time ?? null;
+  const resumes = facts?.resumesAt ?? null;
   const round = next?.round ?? facts?.rounds ?? 0;
 
   return (
@@ -221,11 +222,11 @@ export function OnTheClockPanel({ ctx, facts, serverNow, span = 4 }: { ctx: Leag
             <Numeral value={next.label} size="d60" ghost label={`Pick ${next.label}`} />
           </div>
 
-          {since ? (
-            <div className="flex flex-col gap-2">
-              <span className="type-label text-ink-muted">{d?.last_picked ? "On the clock for" : "Since the draft opened"}</span>
-              <Countdown target={since} serverNow={serverNow} mode="up" size="d40" label="Time on the clock" />
-            </div>
+          {resumes ? (
+            <p className="type-label m-0 flex items-center gap-2">
+              <LiveSquare size={10} />
+              Draft paused. Picks resume at {resumes}.
+            </p>
           ) : null}
 
           {upcoming.length ? (

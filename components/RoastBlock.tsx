@@ -28,7 +28,7 @@ export interface RoastBlockData {
   at?: number | null;
   /** Permalink to where this roast lives. */
   href?: string | null;
-  /** Byline in the footer (default "The Roast"). */
+  /** Byline in the footer (default "MSTP Dynasty": the league, never a persona). */
   byline?: string;
   /** Tags beside the kicker: FACTS ONLY, SAMPLE DATA. */
   tags?: ReactNode;
@@ -84,7 +84,7 @@ export function RoastBlock({
   receipt,
   at,
   href,
-  byline = "The Roast",
+  byline = "MSTP Dynasty",
   tags,
   size = "hero",
   animate = false,

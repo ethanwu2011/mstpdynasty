@@ -666,8 +666,10 @@ export interface DraftPickFact {
   /** fcRank - pickNo (expected pick minus actual). Positive = reach, negative = steal. */
   reach: number | null;
   verdict: "reach" | "steal" | "fair" | "unranked";
-  /** Seconds the pick sat on the clock, when known (Sleeper does not expose it; filled from tick timestamps). */
-  secondsOnClock: number | null;
+  /**
+   * When the site first noticed the pick (tick timestamps), not when it was made. Only good for
+   * ordering and "noticed at" stamps: never a time on the clock.
+   */
   pickedAt: number | null;
   /** Length of the position run this pick belongs to (1 = no run). */
   positionRun: number;
@@ -692,6 +694,8 @@ export interface DraftFacts {
   picks: DraftPickFact[];
   /** Next pick when the draft is live. */
   onTheClock: { pickNo: number; round: number; team: TeamRef } | null;
+  /** When picks resume ("8 AM ET", config/draft.ts), only while the draft is paused. */
+  resumesAt: string | null;
   positionRuns: Array<{ position: string; startPick: number; length: number }>;
   /** Only once the draft is complete. */
   grades: DraftGrade[] | null;

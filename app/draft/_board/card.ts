@@ -29,7 +29,7 @@ export interface PickCardData {
 
 const spots = (n: number) => `${fmtInt(n)} ${Math.abs(n) === 1 ? "spot" : "spots"}`;
 
-/** The plain facts of a pick, for when The Roast has not written about it yet. */
+/** The plain facts of a pick, for when the writer has not written about it yet. */
 export function pickFacts(p: DraftPickFact): string {
   const team = p.player.nflTeam ? `, ${p.player.nflTeam}` : "";
   const took = `${p.team.managerName} took ${p.player.name} (${p.player.position}${team}) at ${pickLabel(p.round, p.pickInRound)}, ${ordinal(p.pickNo)} overall.`;
@@ -68,7 +68,7 @@ export function cardData(cell: BoardCell, placeholder: boolean): PickCardData | 
     source: placeholder ? "sample" : llm ? "roast" : "facts",
     atIso: at ? new Date(at).toISOString() : null,
     atLabel: at ? etStamp(at) : null,
-    byline: llm ? "The Roast" : "the numbers",
+    byline: llm ? "MSTP Dynasty" : "the numbers",
     receipt: [
       { label: "Pick", value: `${cell.label} (${ordinal(p.pickNo)})` },
       { label: "FC rank", value: p.fcRank ? ordinal(p.fcRank) : "Unranked" },

@@ -7,7 +7,7 @@ export default function Loading() {
       <Panel label="The latest issue" span={8}>
         <div className="flex flex-col gap-6">
           <p className="type-display m-0 text-j3 text-paper-shade md:text-j4" aria-hidden>
-            The Roast
+            The newsletter
           </p>
           <DotMatrixFill state="loading" label="Pulling the archive." rows={10} />
         </div>

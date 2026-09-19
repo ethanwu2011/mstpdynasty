@@ -1,5 +1,5 @@
 /**
- * League memory for The Roast: facts from outside the issue itself that make a joke specific
+ * League memory for the newsletter writer: facts from outside the issue itself that make a joke specific
  * to this league (each manager's rap sheet, Loser of the Week crowns, where a player was
  * drafted, how the odds moved, who is on the clock). Everything is computed by code; the
  * model only sees it inside FACTS. Loaded only when the roast writer is configured (facts-only
@@ -7,14 +7,13 @@
  */
 import { listOddsSnapshots } from "@/lib/archive";
 import { draftFacts, loserOfTheWeekCounts, shameEntries } from "@/lib/facts";
-import { autopausedMs } from "@/lib/facts/draft";
 import { getFantasyCalc } from "@/lib/fantasycalc";
 import { getWinProbabilities } from "@/lib/models";
 import type { DraftPickFact, FantasyCalcValue, IssueFacts, LeagueContext, ShameEntry } from "@/lib/types";
 import { pickLabel, r1 } from "./format";
-import { EMPTY_MEMORY, type DraftContext, type PayloadMemory } from "./memory-shape";
+import { EMPTY_MEMORY, starterCounts, type DraftContext, type PayloadMemory } from "./memory-shape";
 
-export { EMPTY_MEMORY, type DraftContext, type PayloadMemory } from "./memory-shape";
+export { EMPTY_MEMORY, starterCounts, type DraftContext, type PayloadMemory } from "./memory-shape";
 
 const RAP_SHEET_SIZE = 2;
 
@@ -74,8 +73,9 @@ export async function draftContext(ctx: LeagueContext, picks?: DraftPickFact[]):
 }
 
 /** Everything an issue's FACTS can use beyond the issue facts themselves. */
-export async function issueMemory(facts: IssueFacts, ctx: LeagueContext, now: number = Date.now()): Promise<PayloadMemory> {
+export async function issueMemory(facts: IssueFacts, ctx: LeagueContext): Promise<PayloadMemory> {
   const mem: PayloadMemory = { ...EMPTY_MEMORY };
+  mem.commissioner = ctx.managers.find((m) => m.isCommissioner)?.name ?? null;
   const df = await safe("draft", () => draftFacts(ctx), null);
   const picks = df?.picks ?? [];
   mem.draftSlots = slotsOf(picks);
@@ -122,21 +122,20 @@ export async function issueMemory(facts: IssueFacts, ctx: LeagueContext, now: nu
 
   if (facts.kind === "daily_roast" || facts.kind === "draft_grades") {
     mem.draft = await draftContext(ctx, facts.kind === "draft_grades" ? facts.draft.picks : picks);
+    mem.starters = starterCounts(ctx.starterSlots);
   }
 
   const d = ctx.draft;
-  if (facts.kind === "daily_roast" && d && (d.status === "drafting" || d.status === "paused")) {
-    mem.onTheClock = await safe(
-      "on the clock",
-      async () => {
-        if (!df?.onTheClock) return null;
-        const last = [...df.picks].sort((a, b) => b.pickNo - a.pickNo)[0];
-        const since = last ? last.pickedAt : (df.startTime ?? null);
-        const hours = since !== null && now > since ? r1((now - since - autopausedMs(since, now, d.settings)) / 3600) : null;
-        return { manager: df.onTheClock.team.managerName, team: df.onTheClock.team.teamName, hoursSoFar: hours };
-      },
-      null,
-    );
+  const o = df?.onTheClock;
+  if (facts.kind === "daily_roast" && d && (d.status === "drafting" || d.status === "paused") && df && o) {
+    const teams = Math.max(1, df.teams);
+    mem.onTheClock = {
+      manager: o.team.managerName,
+      team: o.team.teamName,
+      pick: pickLabel({ round: o.round, pickInRound: ((o.pickNo - 1) % teams) + 1 }),
+      roundsLeft: Math.max(0, df.rounds - o.round + 1),
+      ...(df.resumesAt ? { resumesAt: df.resumesAt } : {}),
+    };
   }
   return mem;
 }

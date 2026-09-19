@@ -4,6 +4,7 @@
  */
 import type { RoastBlockData, RoastReceiptItem } from "@/components/RoastBlock";
 import { SampleMark, Tag } from "@/components/Tag";
+import { issueTitle } from "@/lib/roast/plan";
 import type { DraftPickFact, Issue, Roast, StandingRow, TradeFact, WaiverFact, WeeklyFacts } from "@/lib/types";
 import { fmtInt, fmtPts, fmtSigned, ordinal, pickLabel } from "./format";
 
@@ -165,7 +166,7 @@ export function issueToBlock(issue: Issue): RoastBlockData {
     .map((b) => b.text);
   return {
     kicker: issue.week ? `Issue · Week ${issue.week}` : "Issue",
-    victim: issue.title,
+    victim: issueTitle(issue.kind, issue.week),
     lede: issue.dek,
     text: paragraphs.join("\n\n") || issue.note || "",
     at: issue.sentAt ?? issue.createdAt,

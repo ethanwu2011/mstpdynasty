@@ -22,10 +22,10 @@ export default async function SubscribePage({ searchParams }: { searchParams: Se
 
   return (
     <main>
-      <h1>Get The Roast by email</h1>
+      <h1>Get the newsletter by email</h1>
       <p>
-        The Daily Roast when there is something to roast, Thursday Night Fallout on Fridays, The Weekly Roast on
-        Tuesdays. Every email has an unsubscribe link, in case you can&apos;t take it.
+        The Daily when somebody gives it material, Thursday Night Fallout on Fridays, the Week N Recap on Tuesdays.
+        Every email has an unsubscribe link, in case you can&apos;t take it.
       </p>
       {status ? <p role="status">{SUBSCRIBE_MESSAGES[status]}</p> : null}
       {email.ready ? (

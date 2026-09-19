@@ -26,6 +26,7 @@ export function term(label: string, source?: string, flags = "i"): BannedTerm {
 
 /**
  * Filler and AI tells, banned outright (no FACTS exemption). The prompt lists every label.
+ * ("absolutely" is not here on purpose: "Holloway absolutely fucks Rory" is a house headline.)
  * ("clinic" is in THEME_TERMS: banned too, but a team named after one can still be named.)
  */
 export const BANNED_FILLER: BannedTerm[] = [
@@ -35,7 +36,6 @@ export const BANNED_FILLER: BannedTerm[] = [
   term("without further ado"),
   term("let that sink in"),
   term("it's giving"),
-  term("absolutely"),
   term("certainly"),
   term("talk about"),
   term("yikes"),
@@ -53,6 +53,66 @@ export const BANNED_FILLER: BannedTerm[] = [
   term("RIP", "RIP|R\\.I\\.P\\.?", ""),
   term("pour one out"),
   term("in this economy"),
+];
+
+/**
+ * Words that announce the joke instead of making it (docs/SITE_SPEC.md DECISIONS ROUND 2:
+ * never announce the roast). Dropped unless FACTS or LORE uses the same word, so a team that
+ * is really called "Pot Roast" can still be named. The prompt lists every label.
+ */
+export const ANNOUNCE_TERMS: BannedTerm[] = [
+  term("roast", "roast(?:s|ed|ing|er)?"),
+  term("savage"),
+  term("no offense"),
+  term("sick burn"),
+  term("shots fired"),
+  term("no mercy"),
+];
+
+/**
+ * Slurs and slur-adjacent insults. Never allowed, whatever FACTS or LORE says, and never
+ * printed in the prompt (the persona states the rule in words). Logged as "slur" only.
+ * Covers group slurs and sexual orientation used as an insult; crude insults about a
+ * manager's decisions (clown, fraud, dumbass, bitch) are a different thing and stay legal.
+ */
+export const SLUR_TERMS: BannedTerm[] = [
+  "n[i1!]gg(?:a|as|az|er|ers|uh)",
+  "f[a@4]g(?:s|g[oi]ts?|gy)?",
+  "homos?",
+  "no\\s+homo",
+  "gay(?:s|er|est)?",
+  "quee?rs?",
+  "d[y]kes?",
+  "tr[a@]nn(?:y|ies)",
+  "shemales?",
+  "retard(?:s|ed)?",
+  "tards?",
+  "sp[a@]z(?:z|zes|tic)?",
+  "midgets?",
+  "sp[i1]cs?",
+  "ch[i1]nks?",
+  "g[o0]{2}ks?",
+  "k[i1]kes?",
+  "wetbacks?",
+  "beaners?",
+  "rag\\s*heads?",
+  "towel\\s*heads?",
+  "coons?",
+  "japs?",
+  "gyp(?:p?ed|sy|sies)",
+  "wops?",
+  "dagos?",
+].map((source) => term("slur", source));
+
+/**
+ * Claims about how long someone took to pick. The site only knows when it noticed a pick,
+ * not when it was made, so FACTS has no pick times and any such claim is invented. The
+ * league's pick clock (clockLimitHours) is a real setting and stays legal ("four hours per pick").
+ */
+export const CLOCK_CLAIMS: RegExp[] = [
+  /\b(?:took|takes|taking|spent|spends|sat|sits|sitting|burned|burnt|burns|wasted|wastes|needed|needs|used|uses|killed|ran)\b[^.!?]{0,40}?\b(?:hours?|minutes?|mins?|seconds?|secs?)\b/i,
+  /\b(?:hours?|minutes?|mins?|seconds?|secs?|all\s+(?:day|night))\s+(?:on|off)\s+the\s+clock\b/i,
+  /\bon\s+the\s+clock\s+for\s+(?:\S+\s+){0,3}?(?:hours?|minutes?|seconds?|days?)\b/i,
 ];
 
 /**

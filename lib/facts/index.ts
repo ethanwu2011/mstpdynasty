@@ -15,7 +15,7 @@
  *   shameEntries      the all-time Wall of Shame
  *
  * Also: standingsAsOf (regular-season standings at the end of any week) and lastCompletedWeek.
- * The Daily Roast's injuries and lineup alerts are assembled by the ops agent
+ * The Daily's injuries and lineup alerts are assembled by the ops agent
  * (lib/jobs/daily-facts.ts) from these facts plus its own snapshots.
  */
 import { getLeagueContext } from "@/lib/league";
@@ -88,7 +88,7 @@ async function finalWeekFacts(week: number, loader: FactsLoader): Promise<Weekly
 
 /**
  * Loser of the Week crowns per roster over weeks 1..throughWeek (only weeks already final),
- * for The Roast's league memory. Uses the same per-week cache as the Wall of Shame.
+ * for the writer's league memory. Uses the same per-week cache as the Wall of Shame.
  */
 export async function loserOfTheWeekCounts(throughWeek: number, ctx?: LeagueContext): Promise<Record<number, number>> {
   const loader = await loaderFor(ctx);

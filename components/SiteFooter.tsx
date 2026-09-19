@@ -10,7 +10,6 @@ export function SiteFooter() {
           <BrandMark size={16} />
           MSTP Dynasty
         </span>
-        <span>Written by The Roast</span>
         <span>Data from Sleeper, ESPN and FantasyCalc</span>
         <span>All times Eastern</span>
         <Link href="/subscribe" className="link-ink px-0.5 text-ink">

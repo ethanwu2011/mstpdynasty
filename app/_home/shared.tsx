@@ -8,7 +8,7 @@ import { BarLink } from "@/components/HeaderBar";
 import { Panel, type PanelSpan } from "@/components/Panel";
 import { RoastBlock, type RoastBlockData } from "@/components/RoastBlock";
 import { SampleMark, Tag } from "@/components/Tag";
-import { ISSUE_TITLES } from "@/lib/roast";
+import { ISSUE_TITLES, issueTitle } from "@/lib/roast";
 import type { Issue, IssueKind, ShameBoard, ShameEntry, ShameKind } from "@/lib/types";
 import { etStamp, fmtInt, fmtPts } from "../_lib/format";
 
@@ -61,12 +61,12 @@ export function IssuesPanel({ issues, span = 4, mdSpan = 12 }: { issues: Issue[]
               Latest · {etStamp(latest.sentAt ?? latest.createdAt)}
               {latest.placeholder ? <SampleMark /> : null}
             </span>
-            <span className="type-display text-j2 group-hover:underline group-hover:decoration-4">{latest.title}</span>
+            <span className="type-display text-j2 group-hover:underline group-hover:decoration-4">{issueTitle(latest.kind, latest.week)}</span>
             {latest.dek ? <span className="text-body font-semibold">{latest.dek}</span> : null}
           </Link>
         ) : (
           <p className="m-0 text-body">
-            Nothing has gone out yet. Every issue is written by The Roast from this league&apos;s numbers and lands in your inbox.
+            Nothing has gone out yet. Every issue is written from this league&apos;s numbers and lands in your inbox.
           </p>
         )}
 

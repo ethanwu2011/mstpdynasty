@@ -2,14 +2,15 @@
  * Roast engine public API. OWNER: roast agent (lib/facts/**, lib/roast/**, config/roast-notes.ts,
  * tests/facts*, tests/roast*).
  *
- * Rule 1: code computes every fact; The Roast only writes jokes about the facts it is handed.
+ * Rule 1: code computes every fact; the writer only writes jokes about the facts it is handed.
  *   1. plan (lib/roast/plan.ts, items.ts, memory.ts): deterministic sections, tables and fact
  *      lines, the slots the model fills, and the compact FACTS payload (plus league memory:
  *      rap sheets, Loser of the Week crowns, draft slots, odds movement)
  *   2. call (llm.ts): one request with the frozen, cached system prompt (persona.ts)
- *   3. check (postcheck.ts): a slot passes only if EVERY sentence passes (numbers in FACTS and
- *      next to the right name, no invented streaks, scores or box-score stats, no theme words,
- *      filler, banned shapes or caps). Removing one sentence would leave a punchline with no
+ *   3. check (postcheck.ts): a slot passes only if EVERY sentence passes (league stats in FACTS
+ *      and next to the right name, history and hyperbole numbers free, no invented streaks,
+ *      scores, pick times or box-score stats, no theme words, slurs, filler, banned shapes or
+ *      caps). Removing one sentence would leave a punchline with no
  *      setup, so a failing slot is re-asked once (one call for all failing slots, with a note
  *      saying what failed), and if it fails again its code-written fallback is used in full
  *   4. render: slots become paragraphs; anything missing falls back to code-written lines
@@ -37,12 +38,12 @@ import { configured } from "@/lib/env";
 import { draftFacts } from "@/lib/facts";
 import { planItem, type ItemPlan } from "./items";
 import { addUsage, callRoastModel, hasRoastClient, ISSUE_REQUEST, ITEM_REQUEST } from "./llm";
-import { draftContext, EMPTY_MEMORY, issueMemory, type PayloadMemory } from "./memory";
+import { draftContext, EMPTY_MEMORY, issueMemory, starterCounts, type PayloadMemory } from "./memory";
 import { loadRoastNotes, notesFor } from "./notes";
-import { ISSUE_TITLES, planDaily, planDraftGrades, planThursday, planWeekly, type IssuePlan, type SlotSpec, type WaiverMode } from "./plan";
+import { planDaily, planDraftGrades, planThursday, planWeekly, type IssuePlan, type SlotSpec, type WaiverMode } from "./plan";
 import { AllowedNumbers, checkText, describeDrops, limitExclamations, parseSlots, sanitize, type Dropped } from "./postcheck";
 
-export { ISSUE_TITLES } from "./plan";
+export { ISSUE_TITLES, issueTitle } from "./plan";
 export { SYSTEM_PROMPT } from "./persona";
 export { issueMemory } from "./memory";
 export { buildRoastRequest, ROAST_MODEL, setRoastClient } from "./llm";
@@ -114,7 +115,7 @@ function logDrops(label: string, dropped: Dropped[]): void {
 /** The note appended to a retry: what failed, in plain words. */
 function retryNote(reasons: string[], extra = ""): string {
   const what = reasons.length ? reasons.slice(0, 12).join("; ") : "material FACTS does not support";
-  return `\nNOTE: your last draft broke the rules with: ${what}. ${extra}Write it again. Use only numbers that appear in FACTS, each in the same sentence as (or right after) the name it belongs to, and none of the banned words or shapes.`;
+  return `\nNOTE: your last draft broke the rules with: ${what}. ${extra}Write it again. Every league number (points, picks, spots, ranks, ages, dollars, records, streaks, percentages, anything next to a name or a stat word) must appear in FACTS, in the same sentence as (or right after) the name it belongs to. History and hyperbole numbers stay in sentences with no league name and no stat word. None of the banned words or shapes.`;
 }
 
 /* ------------------------------------------------------------------ */
@@ -190,7 +191,7 @@ export async function roastIssue(kind: IssueKind, facts: IssueFacts, ctx?: Leagu
   const date = etDate(now);
   if (facts.kind !== kind) console.warn(`[roast] roastIssue: kind ${kind} does not match facts.kind ${facts.kind}; using facts.kind`);
   const writer = hasRoastClient();
-  const memory = writer ? await issueMemory(facts, c, now).catch(() => EMPTY_MEMORY) : EMPTY_MEMORY;
+  const memory = writer ? await issueMemory(facts, c).catch(() => EMPTY_MEMORY) : EMPTY_MEMORY;
   const plan = planIssue(facts, c, memory);
   const slug = `${date}-${plan.kind.replace(/_/g, "-")}`;
   const lore = writer ? notesFor(await loadRoastNotes(), plan.managers) : {};
@@ -204,7 +205,7 @@ export async function roastIssue(kind: IssueKind, facts: IssueFacts, ctx?: Leagu
     season: c.season,
     week: plan.week ?? (plan.kind === "daily_roast" && c.phase === "in_season" && c.week > 0 ? c.week : null),
     date,
-    title: ISSUE_TITLES[plan.kind],
+    title: plan.title,
     dek: plan.fallbackDek,
     dekSource: "code",
     sections: renderSections(plan, null),
@@ -316,7 +317,7 @@ async function writeItem(plan: ItemPlan, lore: Record<string, string>, recent: s
   return { text: null, model, usage };
 }
 
-/** 1-3 sentence instant roast of one trade, one waiver batch, or one draft pick. Never throws for LLM reasons. */
+/** 1-3 sentence instant post on one trade, one waiver batch, or one draft pick. Never throws for LLM reasons. */
 export async function roastItem(kind: RoastItemKind, fact: RoastItemFact, ctx?: LeagueContext, opts: RoastOptions = {}): Promise<Roast> {
   const c = ctx ?? (await getLeagueContext());
   const isPick = !Array.isArray(fact) && fact.kind === "draft_pick";
@@ -335,6 +336,8 @@ export async function roastItem(kind: RoastItemKind, fact: RoastItemFact, ctx?: 
     picks,
     draft,
     waiverMode: waiverModeOf(c),
+    commissioner: writer ? (c.managers.find((m) => m.isCommissioner)?.name ?? null) : null,
+    starters: writer && isPick ? starterCounts(c.starterSlots) : null,
   });
   const base: Roast = {
     id: plan.id,

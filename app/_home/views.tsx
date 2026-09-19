@@ -77,7 +77,7 @@ export async function HomeDrafting({ ctx }: { ctx: LeagueContext }) {
     <Board>
       <AutoRefresh enabled={live} seconds={30} />
       <LeadPanel data={lead} empty={<EmptyLead line="The draft is open and nobody has picked yet. Pick 1.01 is up." />} />
-      <OnTheClockPanel ctx={ctx} facts={facts} serverNow={ctx.loadedAt} span={4} />
+      <OnTheClockPanel ctx={ctx} facts={facts} span={4} />
       <BoardStrip facts={facts} />
       {earlier.length ? <EarlierRoastsPanel roasts={earlier} span={8} /> : <ShamePanel board={shame} span={8} hideSample />}
       <IssuesPanel issues={issues} span={4} />

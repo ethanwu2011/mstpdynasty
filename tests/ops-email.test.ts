@@ -79,8 +79,8 @@ describe("rendering", () => {
     expect(text).not.toContain(RLO);
     expect(text).toContain('<script>alert("x")</script>'); // plain text is not HTML
     expect(subject).not.toMatch(/[\r\n]/);
-    // A code-written dek: title and week lead the subject, with one colon.
-    expect(subject.startsWith("The Weekly Roast, week 3: ")).toBe(true);
+    // A code-written dek: the issue name leads the subject, with one colon.
+    expect(subject.startsWith("Week 3 Recap: ")).toBe(true);
   });
 
   it("is text-first: one column, no images, an unsubscribe link, no em dashes", () => {
@@ -205,9 +205,28 @@ describe("subjects", () => {
     const opts = { unsubscribeUrl: "https://x.test/u", webUrl: null };
     const model = makeIssue({ factsOnly: false, dekSource: "model", dek: "Rory benched 24.3 and blamed the wind." });
     expect(renderIssueEmail(model, opts).subject).toBe("Rory benched 24.3 and blamed the wind.");
-    expect(renderIssueEmail(makeIssue({ dek: "Kevin's Kitchen put up 150.20." }), opts).subject).toBe("The Weekly Roast, week 3: Kevin's Kitchen put up 150.20.");
+    expect(renderIssueEmail(makeIssue({ dek: "Kevin's Kitchen put up 150.20." }), opts).subject).toBe("Week 3 Recap: Kevin's Kitchen put up 150.20.");
     const grades = makeIssue({ kind: "draft_grades", title: "Draft Grades", week: null, dek: "Most value drafted: Sam I Am (A+). Least: Dev Null (F)." });
     expect(renderIssueEmail(grades, opts).subject).toBe("Draft Grades. Most value drafted: Sam I Am (A+). Least: Dev Null (F).");
+    const daily = makeIssue({ kind: "daily_roast", title: "The Daily Roast", week: null, dek: "Theo took Tavon Reyes at pick 1, 8 spots before his FantasyCalc rank." });
+    expect(renderIssueEmail(daily, opts).subject).toBe("The Daily. Theo took Tavon Reyes at pick 1, 8 spots before his FantasyCalc rank.");
+  });
+
+  it("the writer's headline is the subject and the H1; nothing says Roast", () => {
+    const opts = { unsubscribeUrl: "https://x.test/u", webUrl: null };
+    const headline = "Theo Stacked Two Tight Ends on Top and Still Couldn't Stay Up";
+    // Stored under the old name: it still goes out as The Daily.
+    const issue = makeIssue({ kind: "daily_roast", title: "The Daily Roast", week: null, factsOnly: false, dekSource: "model", dek: headline });
+    const { subject, html, text } = renderIssueEmail(issue, opts);
+    expect(subject).toBe(headline);
+    expect(html).toContain(`>${headline.replace("'", "&#39;")}</h1>`);
+    expect(html).toContain("MSTP Dynasty \u00b7 The Daily</p>");
+    expect(text.split("\n").slice(0, 3)).toEqual(["MSTP DYNASTY \u00b7 THE DAILY", "", headline]);
+    expect(`${subject}\n${html}\n${text}`).not.toMatch(/roast/i);
+    // A facts-only issue keeps its name as the H1 and the fact line under it.
+    const plain = renderIssueEmail(makeIssue({ dek: "Kevin's Kitchen put up 150.20." }), opts).html;
+    expect(plain).toContain(">Week 3 Recap</h1>");
+    expect(plain).toContain("Kevin&#39;s Kitchen put up 150.20.</p>");
   });
 });
 

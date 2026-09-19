@@ -134,7 +134,7 @@ export default async function DraftPage({ searchParams }: { searchParams: Search
       ) : stage === "live" || stage === "paused" ? (
         <>
           <LatestPickPanel board={board} placeholder={placeholder} span={8} />
-          <ClockPanel ctx={ctx} board={board} draft={draft} stage={stage} placeholder={placeholder} span={4} />
+          <ClockPanel board={board} draft={draft} stage={stage} placeholder={placeholder} span={4} />
         </>
       ) : grades ? (
         <>

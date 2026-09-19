@@ -44,7 +44,8 @@ import { draftFacts, tnfFacts, transactionFacts, weeklyFacts } from "@/lib/facts
 import { diffInjuries, lineupAlerts } from "@/lib/jobs/daily-facts";
 import { listJobRuns, readDraftPickTimes, runDaily, runTick } from "@/lib/jobs";
 import { backfillOddsHistory, getPowerRankings, getWinProbabilities, runSeasonSim } from "@/lib/models";
-import { roastIssue, roastItem } from "@/lib/roast";
+import { isRoastConfigured, roastIssue, roastItem } from "@/lib/roast";
+import { ROAST_VOICE } from "@/lib/jobs/tick";
 import { getDraftPicks, getPlayers } from "@/lib/sleeper";
 import * as store from "@/lib/store";
 import type {
@@ -96,7 +97,6 @@ function pick(n: number): DraftPickFact {
     fcPositionRank: null,
     reach: null,
     verdict: "unranked",
-    secondsOnClock: null,
     pickedAt: null,
     positionRun: 1,
   };
@@ -107,7 +107,7 @@ function rawPick(n: number): SleeperDraftPick {
 }
 
 function draftFactsWith(picks: DraftPickFact[], over: Partial<DraftFacts> = {}): DraftFacts {
-  return { draftId: "draft-1", status: "complete", startTime: null, rounds: 34, teams: 4, picks, onTheClock: null, positionRuns: [], grades: null, placeholder: false, ...over };
+  return { draftId: "draft-1", status: "complete", startTime: null, rounds: 34, teams: 4, picks, onTheClock: null, resumesAt: null, positionRuns: [], grades: null, placeholder: false, ...over };
 }
 
 function teamWeek(id: number, points: number): TeamWeekFact {
@@ -415,6 +415,27 @@ describe("runTick", () => {
     });
     await runTick(new Date(now), { ctx, ignoreCooldown: true });
     expect(Object.keys((await store.get<Record<string, unknown>>(indexKey)) ?? {}).sort()).toEqual(["trade:other", "trade:t1"]);
+  });
+
+  it("a voice bump rewrites every item: old-voice posts, and one more try for items the writer gave up on", async () => {
+    const now = Date.now();
+    const ctx = liveCtx(now);
+    vi.mocked(isRoastConfigured).mockReturnValue(true);
+    txNow = { trades: ["old", "gaveup", "gaveup-new", "current"].map((id) => trade(id, now - 60_000)), waivers: [], placeholder: false };
+    vi.mocked(getDraftPicks).mockResolvedValue([]);
+    vi.mocked(draftFacts).mockResolvedValue(draftFactsWith([], { status: "drafting" }));
+    await store.set(store.keys.snapshot(ctx.leagueId, "roast-index"), {
+      "trade:old": { s: "llm", t: now - 1000, w: true, v: ROAST_VOICE - 1 },
+      "trade:gaveup": { s: "facts_only", t: now - 7200_000, w: true, n: 3, v: ROAST_VOICE - 1 },
+      "trade:gaveup-new": { s: "facts_only", t: now - 7200_000, w: true, n: 4, v: ROAST_VOICE },
+      "trade:current": { s: "llm", t: now - 1000, w: true, v: ROAST_VOICE },
+    });
+    try {
+      await runTick(new Date(now), { ctx, ignoreCooldown: true });
+    } finally {
+      vi.mocked(isRoastConfigured).mockReturnValue(false);
+    }
+    expect(vi.mocked(roastItem).mock.calls.map((c) => (c[1] as TradeFact).transactionId).sort()).toEqual(["gaveup", "old"]);
   });
 
   it("takes the cooldown lock before loading the league", async () => {

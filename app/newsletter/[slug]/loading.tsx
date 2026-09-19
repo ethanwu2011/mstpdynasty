@@ -4,7 +4,7 @@ import { Board, Panel } from "@/components/Panel";
 export default function Loading() {
   return (
     <Board aria-label="Loading the issue">
-      <Panel label="The Roast">
+      <Panel label="The newsletter">
         <div className="flex flex-col gap-6">
           <p className="type-display m-0 text-j3 text-paper-shade md:text-j4 xl:text-j5" aria-hidden>
             Printing

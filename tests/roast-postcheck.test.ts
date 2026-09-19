@@ -5,6 +5,8 @@ import {
   bannedWordsIn,
   boxScoreIn,
   checkText,
+  clockClaimsIn,
+  describeDrops,
   limitExclamations,
   numbersIn,
   numberWordsIn,
@@ -135,7 +137,9 @@ describe("banned words", () => {
     expect(bannedWordsIn("Well folks, that happened.")).toEqual(["folks"]);
     expect(bannedWordsIn("Buckle up.")).toEqual(["buckle up"]);
     expect(bannedWordsIn("A folksy take.")).toEqual([]);
-    expect(bannedWordsIn("Absolutely a masterclass, chef\u2019s kiss, no notes.")).toEqual(["absolutely", "masterclass", "chef's kiss", "no notes"]);
+    expect(bannedWordsIn("Absolutely a masterclass, chef\u2019s kiss, no notes.")).toEqual(["masterclass", "chef's kiss", "no notes"]);
+    // "absolutely" is a headline intensifier here, not filler.
+    expect(bannedWordsIn("Holloway Absolutely Fucks Rory From the Bench")).toEqual([]);
     expect(bannedWordsIn("RIP to his season.")).toEqual(["RIP"]);
     expect(bannedWordsIn("He will rip that trade up.")).toEqual([]);
   });
@@ -147,6 +151,91 @@ describe("banned words", () => {
     expect(bannedWordsIn("Graded on a curve, extra credit, summer school, report card.")).toEqual(["extra credit", "on a curve", "summer school", "report card"]);
     // Football words that look close stay legal.
     expect(bannedWordsIn("A late surge from the rookie class, the depth chart and three draft rounds.")).toEqual([]);
+  });
+});
+
+describe("history and hyperbole versus league stats", () => {
+  const facts = JSON.stringify({
+    commissioner: "Hal",
+    draftPicks: [
+      { pick: "1.01", pickNo: 1, manager: "Theo", team: "Theo's Armada", player: { name: "Tavon Reyes", pos: "QB", age: 27 }, fcRank: 9, reach: 8, clockLimitHours: 4 },
+      { pick: "4.03", pickNo: 33, manager: "Gus", team: "Gus Bus", player: { name: "Mack Pruitt", pos: "RB", age: 30 }, fcRank: 35, reach: 2, verdict: "fair" },
+    ],
+    waivers: { claims: [{ manager: "Priya", bid: 38, overpayBy: 34 }] },
+    odds: [{ manager: "Wes", playoffPct: 12.5 }],
+    streaks: [{ manager: "Wes", streak: "4L" }],
+    onTheClock: { manager: "Sully", pick: "5.01", roundsLeft: 30, resumesAt: "8 AM ET" },
+  });
+  const allowed = new AllowedNumbers([facts]);
+  const drops = (text: string) => describeDrops(checkText(text, allowed).dropped);
+
+  it("lets history and hyperbole numbers through", () => {
+    for (const text of [
+      "The Grande Armee crossed the Neman in 1812 with six hundred thousand men and summer uniforms.",
+      "That roster has 200,000 miles on it and one working headlight.",
+      "In 1628 the Vasa left port with sixty-four bronze cannons and sank in front of the whole city.",
+      "The Vasa sat on the bottom of the harbor for three hundred years before anyone came to get it.",
+      "Rome burned for 6 days and nobody fetched water.",
+      "Nobody in that tent had met Theo.",
+    ]) {
+      expect(drops(text), text).toEqual([]);
+    }
+  });
+
+  it("still holds every league stat to FACTS", () => {
+    // Real stats pass: the pick, the spots, the rank, the age, the dollars, the percent, the resume time.
+    expect(drops("Theo took Tavon Reyes at 1.01, the 9th guy on the board, 8 spots early.")).toEqual([]);
+    expect(drops("Gus took a 30-year-old Mack Pruitt at 4.03.")).toEqual([]);
+    expect(drops("Priya paid $38 and overpaid by $34.")).toEqual([]);
+    expect(drops("Wes has a 12.5 percent shot at the playoffs.")).toEqual([]);
+    expect(drops("Picks resume at 8 AM ET, and Sully has 30 rounds left.")).toEqual([]);
+    // Wrong ones fail: a pick label, a digit ordinal, spots, an age, dollars, a percent, points, rounds.
+    expect(drops("Theo took Tavon Reyes at 1.02.")).toEqual(["1.02 (not in FACTS)"]);
+    expect(drops("Theo took the 11th guy on the board.")).toEqual(["11 (not in FACTS)"]);
+    expect(drops("Theo reached 14 spots for a quarterback.")).toEqual(["14 (not in FACTS)"]);
+    expect(drops("Gus took a 31-year-old Mack Pruitt at 4.03.")).toEqual(["31 (not in FACTS)"]);
+    expect(drops("Priya paid $39 for him.")).toEqual(["39 (not in FACTS)"]);
+    expect(drops("Wes is at 17 percent.")).toEqual(["17 (not in FACTS)"]);
+    expect(drops("Wes scored 61.3 on Sunday.")).toEqual(["61.3 (not in FACTS)"]);
+    expect(drops("Sully has 29 rounds left.")).toEqual(["29 (not in FACTS)"]);
+    // Anything next to a name is a stat, even with no stat word: hyperbole goes elsewhere.
+    expect(drops("Theo has been wrong a thousand times.")).toEqual(["1000 (not in FACTS)"]);
+    expect(drops("Napoleon lost fewer men than Theo lost 5,000 brain cells.")).toEqual(["5000 (not in FACTS)"]);
+    // A real stat still has to sit next to its owner.
+    expect(drops("Theo paid $38 for nothing.")).toEqual(["38 next to the wrong name"]);
+    // Streaks are still checked.
+    expect(drops("Wes has lost 5 straight.")).toContain("a streak of 5 that nobody named there has");
+  });
+
+  it("reads scales and hyphenated numbers in words", () => {
+    expect(numberWordsIn("six hundred thousand men, a million reasons, twenty-four hours")).toEqual([600000, 1000000, 24]);
+  });
+
+  it("throws out any claim about time on the clock (FACTS has no pick times)", () => {
+    for (const text of ["Theo took three hours to make that pick.", "Sam sat on the clock for 3.8 hours.", "Gus burned forty minutes on a kicker.", "Two hours on the clock for that."]) {
+      expect(clockClaimsIn(text), text).toEqual(["a claim about time on the clock (FACTS has no pick times)"]);
+    }
+    // The pick clock itself is a rule, and fair to quote.
+    expect(drops("Theo gets four hours per pick and still panics.")).toEqual([]);
+  });
+});
+
+describe("safety and tone", () => {
+  it("drops slurs whatever FACTS says, and logs them only as 'slur'", () => {
+    expect(bannedWordsIn("That pick was gay.")).toEqual(["slur"]);
+    expect(bannedWordsIn("A retarded reach.", '{"team":"retarded"}')).toEqual(["slur"]);
+    expect(bannedWordsIn("No homo, but Theo drafts like a fool.")).toEqual(["slur"]);
+    // Crude insults about a decision, profanity and innuendo stay legal.
+    expect(bannedWordsIn("What the fuck was that, you dumbass. He reached so deep he should have bought dinner first.")).toEqual([]);
+    expect(bannedWordsIn("He watched the whole thing from the cuck chair.")).toEqual([]);
+    // Football words that contain a slur's letters stay legal.
+    expect(bannedWordsIn("The Chinook, the spice, the homework-free Japan trip.")).toEqual(["homework"]);
+  });
+
+  it("drops words that announce the joke, unless a team is really named that", () => {
+    expect(bannedWordsIn("Time to roast Theo.")).toEqual(["roast"]);
+    expect(bannedWordsIn("A savage reach, no offense.")).toEqual(["savage", "no offense"]);
+    expect(bannedWordsIn("Pot Roast lost again.", '{"team":"Pot Roast"}')).toEqual([]);
   });
 });
 

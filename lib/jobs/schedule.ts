@@ -2,9 +2,9 @@
  * Which issues the daily cron builds on a given America/New_York date. Pure (no I/O) so
  * every decision is unit tested with hand-built schedules.
  *
- *   The Daily Roast         every day; it only gets built when there is material
+ *   The Daily               every day; it only gets built when there is material
  *   Thursday Night Fallout  Fridays in season, when the week had an early (Wed/Thu) game
- *   The Weekly Roast        Tuesdays, for the league week that ended in the last six days
+ *   Week N Recap            Tuesdays, for the league week that ended in the last six days
  *                           (also the Tuesday right after the championship week)
  *   Draft Grades            once, after the startup draft completes (within 21 days)
  *
@@ -140,7 +140,7 @@ export function planDaily(input: PlanInput): DailyPlan {
     skipped.push(skip("draft_grades", `Draft finished more than ${DRAFT_GRADES_WINDOW_DAYS} days ago.`));
   } else jobs.push({ job: "draft_grades", key: `draft_grades:${draft.draftId}`, draftId: draft.draftId });
 
-  // The Weekly Roast: Tuesdays, recap of the week that just ended.
+  // Week N Recap: Tuesdays, recap of the week that just ended.
   if (weekday !== TUESDAY) skipped.push(skip("weekly_roast", "Only on Tuesdays."));
   else if (!hasGames) skipped.push(skip("weekly_roast", "No games before the draft is done."));
   else {
@@ -161,7 +161,7 @@ export function planDaily(input: PlanInput): DailyPlan {
     else jobs.push({ job: "thursday_fallout", key: `thursday_fallout:${season}:${week}`, week });
   }
 
-  // The Daily Roast: every day, built only when there is material.
+  // The Daily: every day, built only when there is material.
   jobs.push({ job: "daily_roast", key: `daily_roast:${date}` });
 
   const order = (k: string) => JOB_ORDER.indexOf(k as IssueKind);

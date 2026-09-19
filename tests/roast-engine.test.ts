@@ -8,7 +8,8 @@ import Anthropic from "@anthropic-ai/sdk";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { getLeagueContext } from "@/lib/league";
 import { draftFacts, tnfFacts, transactionFacts, weeklyFacts } from "@/lib/facts";
-import { buildRoastRequest, FACTS_ONLY_NOTE, isRoastConfigured, issueMemory, planIssue, roastIssue, roastItem, setRoastClient, userMessage } from "@/lib/roast";
+import { buildRoastRequest, FACTS_ONLY_NOTE, isRoastConfigured, issueMemory, issueTitle, planIssue, roastIssue, roastItem, setRoastClient, userMessage } from "@/lib/roast";
+import { EMPTY_MEMORY, starterCounts } from "@/lib/roast/memory-shape";
 import type { RoastClient } from "@/lib/roast/llm";
 import { planItem } from "@/lib/roast/items";
 import { AllowedNumbers, numbersIn } from "@/lib/roast/postcheck";
@@ -154,7 +155,7 @@ describe.skipIf(!hasFixtures())("roastIssue", () => {
   it("with no key: facts only, the contract note, every table present", async () => {
     expect(isRoastConfigured()).toBe(false);
     const issue = await roastIssue("weekly_roast", facts, ctx, { now: NOW });
-    expect(issue).toMatchObject({ kind: "weekly_roast", factsOnly: true, note: FACTS_ONLY_NOTE, status: "draft", model: null, usage: null, week: 7, title: "The Weekly Roast" });
+    expect(issue).toMatchObject({ kind: "weekly_roast", factsOnly: true, note: FACTS_ONLY_NOTE, status: "draft", model: null, usage: null, week: 7, title: "Week 7 Recap" });
     expect(issue.slug).toBe(`${etDate(NOW)}-weekly-roast`);
     expect(issue.slug).toMatch(/^[a-z0-9-]+$/);
     const headings = issue.sections.map((s) => s.heading);
@@ -172,7 +173,7 @@ describe.skipIf(!hasFixtures())("roastIssue", () => {
     const issue = await roastIssue("weekly_roast", facts, ctx, { now: NOW });
     expect(calls).toHaveLength(1);
     // The request carries the league memory (rap sheets, crowns, draft slots) in FACTS.
-    const plan = planIssue(facts, ctx, await issueMemory(facts, ctx, NOW));
+    const plan = planIssue(facts, ctx, await issueMemory(facts, ctx));
     expect(calls[0]).toEqual(buildRoastRequest(userMessage(plan, {})));
     expect(issue).toMatchObject({ factsOnly: false, note: null, model: "claude-opus-5", dek: "Week 7 was a group project nobody did.", dekSource: "model" });
     expect(issue.usage).toEqual({ inputTokens: 100, outputTokens: 50, cacheReadInputTokens: 2000, cacheCreationInputTokens: 0 });
@@ -229,6 +230,22 @@ describe.skipIf(!hasFixtures())("roastIssue", () => {
     expect(allText(again)).not.toContain("123.45");
   });
 
+  it("Week N Recap: a headline, a fake epic, per-manager matchup hits and a closer", () => {
+    const plan = planIssue(facts, ctx);
+    expect(plan.title).toBe("Week 7 Recap");
+    expect(plan.header).toBe("ISSUE: Week 7 Recap");
+    const ids = plan.slots.map((x) => x.id);
+    expect(ids.slice(0, 2)).toEqual(["dek", "cold-open"]);
+    expect(ids.at(-1)).toBe("closer");
+    expect(plan.slots[0].brief).toContain("email subject and as the H1");
+    expect(plan.slots[1].brief).toMatch(/^4 to 7 sentences\. A real historical, literary or mythic disaster/);
+    const matchups = plan.slots.filter((x) => x.id.startsWith("m-"));
+    expect(matchups.length).toBe(weekly.matchups.length);
+    for (const m of matchups) expect(m.brief).toMatch(/^4 to 8 sentences on matchup m-\d+: one short paragraph per manager/);
+    expect(plan.sections.at(-1)).toEqual({ heading: "Next week", blocks: [{ type: "slot", slot: "closer", fallback: [] }] });
+    for (const x of plan.slots) expect(x.brief).not.toMatch(/roast|cooked/i);
+  });
+
   it("falls back to facts only when most sentences fail the check", async () => {
     const reply = planIssue(facts, ctx)
       .slots.map((s) => `@@${s.id}\nThey scored 999.99. It was 123.45 of pain.`)
@@ -262,14 +279,14 @@ describe.skipIf(!hasFixtures())("roastIssue", () => {
     }
   });
 
-  it("Thursday Night Fallout, The Daily Roast and Draft Grades render facts only", async () => {
+  it("Thursday Night Fallout, The Daily and Draft Grades render facts only", async () => {
     const winProbs: WinProbWeek = { week: 5, season: ctx.season, generatedAt: 0, basis: "projections", matchups: [], placeholder: false };
     const tnf = await roastIssue("thursday_fallout", { kind: "thursday_fallout", week: 5, tnf: await tnfFacts(5, ctx), winProbs }, ctx, { now: NOW });
     expect(tnf.title).toBe("Thursday Night Fallout");
     expect(tnf.sections.map((s) => s.heading)).toContain("Banked");
     const quiet: DailyRoastFacts = { kind: "daily_roast", date: etDate(NOW), sinceMs: NOW, trades: [], waivers: [], injuries: [], lineupAlerts: [], draftPicks: [], hasMaterial: false };
     const daily = await roastIssue("daily_roast", quiet, ctx, { now: NOW });
-    expect(daily.title).toBe("The Daily Roast");
+    expect(daily.title).toBe("The Daily");
     const tx = await transactionFacts(0, ctx);
     const busy = await roastIssue("daily_roast", { ...quiet, sinceMs: 0, trades: tx.trades, waivers: tx.waivers.slice(0, 12), hasMaterial: true }, ctx, { now: NOW });
     expect(busy.sections.map((s) => s.heading)).toEqual(expect.arrayContaining(["Trades", "Waivers"]));
@@ -355,7 +372,6 @@ function pick(pickNo: number, rosterId: number, name: string, position: string, 
     fcPositionRank: null,
     reach,
     verdict: reach === null ? "unranked" : reach >= 3 ? "reach" : reach <= -3 ? "steal" : "fair",
-    secondsOnClock: 7200,
     pickedAt: 0,
     positionRun: 1,
   };
@@ -452,29 +468,82 @@ describe("roastItem", () => {
     expect(plan.task).toContain("no bids");
   });
 
-  it("draft pick FACTS: position rank, who was passed on, position count, clock at the right scale", () => {
-    const picks = [pick(1, 1, "Case Whitfield", "QB", 3), pick(2, 2, "Tre Holloway", "WR", 1), pick(5, 1, "Colt Easley", "QB", 20)];
+  it("draft pick FACTS: position rank, who was passed on and who took him, position count, the clock limit, never a time on the clock", () => {
+    const picks = [pick(1, 1, "Case Whitfield", "QB", 3), pick(2, 2, "Tre Holloway", "WR", 1), pick(5, 1, "Colt Easley", "QB", 20), { ...pick(6, 2, "Ace Burke", "RB", 2), player: { ...pick(6, 2, "Ace Burke", "RB", 2).player, playerId: "y1" } }];
     const value = (id: string, name: string, position: string, overallRank: number) =>
       ({ sleeperId: id, name, position, team: null, age: 25, value: 5000 - overallRank, overallRank, positionRank: 1, redraftValue: 0, trend30Day: 0 }) as const;
     const fc = [value("x2", "Tre Holloway", "WR", 1), value("y1", "Ace Burke", "RB", 2), value("x1", "Case Whitfield", "QB", 3), value("y2", "Lon Pryor", "WR", 4), value("y3", "Moe Kent", "TE", 25)];
-    const p5 = { ...picks[2], fcPositionRank: 14, secondsOnClock: 540 };
-    const plan = planItem("draft_pick", p5, 100, { picks, draft: { fc: [...fc], pickTimerSeconds: 14400, rookieOnly: false } });
+    const p5 = { ...picks[2], fcPositionRank: 14 };
+    const plan = planItem("draft_pick", p5, 100, { picks, draft: { fc: [...fc], pickTimerSeconds: 14400, rookieOnly: false }, commissioner: "Kevin", starters: { QB: 2, TE: 1 } });
     expect(plan.facts).toMatchObject({
       posRank: "QB14",
-      minutesOnClock: 9,
       clockLimitHours: 4,
       passedOn: [
-        { name: "Ace Burke", pos: "RB", fcRank: 2 },
+        { name: "Ace Burke", pos: "RB", fcRank: 2, takenAt: "2.02", takenBy: "Rory" },
         { name: "Lon Pryor", pos: "WR", fcRank: 4 },
       ],
       posCountForManager: 2,
+      commissioner: "Kevin",
+      starters: { QB: 2, TE: 1 },
     });
-    expect(plan.facts).not.toHaveProperty("hoursOnClock");
+    expect((plan.facts.passedOn as object[])[1]).not.toHaveProperty("takenAt");
+    for (const k of ["secondsOnClock", "minutesOnClock", "hoursOnClock"]) expect(plan.facts).not.toHaveProperty(k);
+    // The commissioner only shows up in FACTS when the item is about him.
+    expect(planItem("draft_pick", p5, 100, { picks, commissioner: "Wes" }).facts).not.toHaveProperty("commissioner");
     // A rookie draft ranks against veterans, so nobody counts as passed on.
     expect(planItem("draft_pick", p5, 100, { picks, draft: { fc: [...fc], pickTimerSeconds: 0, rookieOnly: true } }).facts).not.toHaveProperty("passedOn");
   });
 
-  it("The Daily Roast's code dek leads with the worst fact, not the counts in its first paragraph", () => {
+  it("The Daily: a headline, a fake epic on the worst drafter, one hit per other manager (commissioner last), and a closer with the resume time", () => {
+    // 4-team rounds: Kevin reaches 19 spots, Rory (the commissioner) 7, Priya 1, Wes falls and takes an unranked player.
+    const picks = [pick(1, 1, "Case Whitfield", "QB", 20), pick(2, 2, "Tre Holloway", "WR", 9), pick(3, 3, "Colt Easley", "TE", 4), pick(4, 4, "Ace Burke", "RB", 3), pick(5, 4, "Lon Pryor", "WR", null)];
+    const daily: DailyRoastFacts = { kind: "daily_roast", date: "2030-10-08", sinceMs: 0, trades: [], waivers: [], injuries: [], lineupAlerts: [], draftPicks: picks, hasMaterial: true };
+    const mem = {
+      ...EMPTY_MEMORY,
+      commissioner: "Rory",
+      starters: starterCounts(["QB", "QB", "RB", "RB", "WR", "WR", "WR", "TE", "FLEX", "FLEX", "FLEX"]),
+      onTheClock: { manager: "Priya", team: "Waiver Wire Priya", pick: "2.02", roundsLeft: 33, resumesAt: "8 AM ET" },
+    };
+    const plan = planIssue(daily, ctx, mem);
+    expect(plan.title).toBe("The Daily");
+    expect(plan.header).toBe("ISSUE: The Daily, 2030-10-08");
+    expect(plan.slots.map((x) => x.id)).toEqual(["dek", "cold-open", "d-3", "d-4", "d-2", "closer"]);
+    const brief = (id: string) => plan.slots.find((x) => x.id === id)!.brief;
+    expect(brief("cold-open")).toMatch(/^4 to 7 sentences about Kevin, the worst of it\. A real historical, literary or mythic disaster/);
+    expect(brief("cold-open")).toContain("Kevin gets no paragraph of his own below.");
+    expect(brief("d-3")).toMatch(/^2 or 3 sentences on Priya's pick since the last issue \(1\.03\)/);
+    expect(brief("d-2")).toContain("Rory is the commissioner: he gets it at least as hard as anyone.");
+    expect(brief("closer")).toContain("Say when picks resume");
+    expect(plan.facts).toMatchObject({
+      commissioner: "Rory",
+      starters: { QB: 2, RB: 2, WR: 3, TE: 1, FLEX: 3 },
+      onTheClock: { manager: "Priya", pick: "2.02", roundsLeft: 33, resumesAt: "8 AM ET" },
+    });
+    expect(JSON.stringify(plan.facts)).not.toMatch(/OnClock|hoursSoFar|slowestPick/);
+    // The draft section keeps the code-written pick table; the closer section keeps "on the clock now".
+    const draft = plan.sections.find((x) => x.heading === "The draft")!;
+    expect(draft.blocks.map((b) => b.type)).toEqual(["slot", "slot", "slot", "table"]);
+    expect(plan.sections.at(-1)).toEqual({
+      heading: "On the clock",
+      blocks: [
+        { type: "paragraph", text: "On the clock now: Priya, pick 2.02. Picks resume at 8 AM ET." },
+        { type: "slot", slot: "closer", fallback: [] },
+      ],
+    });
+    // A lopsided trade outranks the draft: the cold open is left to the worst thing, and Kevin gets his own hit.
+    const withTrade = planIssue({ ...daily, trades: [TRADE] }, ctx, mem);
+    expect(withTrade.slots.map((x) => x.id)).toEqual(["dek", "cold-open", "t-1", "d-1", "d-3", "d-4", "d-2", "closer"]);
+    expect(withTrade.slots[1].brief).toContain("the ugliest trade first");
+  });
+
+  it("issue names: The Daily, Week N Recap, never Roast", () => {
+    expect(issueTitle("daily_roast", 3)).toBe("The Daily");
+    expect(issueTitle("weekly_roast", 9)).toBe("Week 9 Recap");
+    expect(issueTitle("thursday_fallout", 9)).toBe("Thursday Night Fallout");
+    expect(issueTitle("draft_grades", null)).toBe("Draft Grades");
+  });
+
+  it("The Daily's code dek leads with the worst fact, not the counts in its first paragraph", () => {
     const daily: DailyRoastFacts = { kind: "daily_roast", date: "2030-10-08", sinceMs: 0, trades: [TRADE], waivers: [WAIVER], injuries: [], lineupAlerts: [], draftPicks: [], hasMaterial: true };
     const plan = planIssue(daily, ctx);
     expect(plan.fallbackDek).toBe("Rory gave Kevin 1,830 in FantasyCalc value in one trade.");
@@ -492,16 +561,25 @@ describe("roastItem", () => {
     expect(plan.facts).toMatchObject({ waiverMode: "faab", faabBudget: 100, claims: [{ manager: "Priya", bid: 38, overpayBy: 34 }, { manager: "Kevin", bid: 1 }] });
   });
 
-  it("draft picks carry their earlier picks and time on the clock into FACTS", async () => {
+  it("draft picks carry their earlier picks into FACTS, and never a time on the clock", async () => {
     const picks = [pick(1, 1, "Case Whitfield", "QB", 3), pick(2, 2, "Tre Holloway", "WR", 1), pick(5, 1, "Colt Easley", "TE", 20)];
-    const { client, calls } = fakeClient([{ text: "@@roast\nKevin took Colt Easley at 2.01 with a fcRank of 20. Two hours on the clock for that." }]);
+    const { client, calls } = fakeClient([{ text: "@@roast\nKevin took Colt Easley at 2.01 with a fcRank of 20. The Light Brigade charged the wrong guns in 1854 with more sense." }]);
     setRoastClient(client);
     const r = await roastItem("draft_pick", picks[2], ctx, { draftPicks: picks });
     expect(r.id).toBe("pick:d1:005");
     const content = String(calls[0].messages[0].content);
     const facts = JSON.parse(content.split("\n").at(-3)!);
-    expect(facts).toMatchObject({ pick: "2.01", reach: 15, verdict: "reach", hoursOnClock: 2, earlierPicks: [{ pick: "1.01", player: "Case Whitfield" }] });
+    expect(facts).toMatchObject({ pick: "2.01", reach: 15, verdict: "reach", earlierPicks: [{ pick: "1.01", player: "Case Whitfield" }] });
+    expect(facts).not.toHaveProperty("hoursOnClock");
     expect(r.source).toBe("llm");
+
+    // A claim about time on the clock is invented (FACTS has none), so it is retried.
+    const { client: c2, calls: calls2 } = fakeClient([{ text: "@@roast\nKevin took Colt Easley at 2.01 and spent two hours on the clock doing it." }]);
+    setRoastClient(c2);
+    const again = await roastItem("draft_pick", picks[2], ctx, { draftPicks: picks });
+    expect(calls2).toHaveLength(2);
+    expect(String(calls2[1].messages[0].content)).toContain("a claim about time on the clock (FACTS has no pick times)");
+    expect(again.source).toBe("facts_only");
   });
 
   it("lore comes from the store and env (env wins), only for managers in the item", async () => {

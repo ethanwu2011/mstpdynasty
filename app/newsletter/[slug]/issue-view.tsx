@@ -13,7 +13,7 @@ import { HeaderBar } from "@/components/HeaderBar";
 import { Board, Panel } from "@/components/Panel";
 import { LiveSquare, SampleMark, Tag } from "@/components/Tag";
 import type { Issue, IssueBlock, IssueSection } from "@/lib/types";
-import { CADENCE, dayLabel, issueName, WHEN } from "../issue-kinds";
+import { CADENCE, dayLabel, issueHeadline, issueName, issueTitleOf, WHEN } from "../issue-kinds";
 
 export interface IssueViewProps {
   issue: Issue;
@@ -113,6 +113,9 @@ function Section({ section, index }: { section: IssueSection; index: number }) {
 
 function Masthead({ issue }: { issue: Issue }) {
   const sent = issue.sentAt ? `Sent to ${issue.recipientCount ?? 0} ${issue.recipientCount === 1 ? "inbox" : "inboxes"}` : null;
+  // The writer's headline is the H1, as in the email; a facts-only issue leads with its name.
+  const name = issueTitleOf(issue);
+  const headline = issueHeadline(issue);
   return (
     <Panel
       label="The newsletter"
@@ -122,17 +125,16 @@ function Masthead({ issue }: { issue: Issue }) {
       <div className="grid lg:grid-cols-[minmax(0,1fr)_auto]">
         <div className="flex flex-col gap-6 px-4 pb-6 pt-7 md:px-8 md:pb-8 md:pt-10">
           <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-            <p className="type-label m-0">{CADENCE[issue.kind]}</p>
+            <p className="type-label m-0">{headline ? name : CADENCE[issue.kind]}</p>
             {issue.placeholder ? <SampleMark /> : issue.factsOnly && !issue.note ? <Tag tone="outline">Facts only</Tag> : null}
           </div>
-          <h1 className="type-display m-0 text-j3 md:text-j4 xl:text-j5">
-            <span className="board-wipe block">{issue.title}</span>
+          <h1 className={cx("type-display m-0 text-j3 md:text-j4", !headline && "xl:text-j5")}>
+            <span className="board-wipe block">{headline ?? name}</span>
           </h1>
-          {issue.dek ? <p className="measure m-0 text-lede font-semibold">{issue.dek}</p> : null}
+          {!headline && issue.dek ? <p className="measure m-0 text-lede font-semibold">{issue.dek}</p> : null}
           <p className="type-label m-0 flex flex-wrap items-center gap-x-3 gap-y-2">
             <LiveSquare size={12} />
             <time dateTime={issue.date}>{dayLabel(issue)}</time>
-            <span className="text-ink-muted">By The Roast</span>
             {sent ? <span className="text-ink-muted">{sent}</span> : null}
           </p>
         </div>
@@ -160,7 +162,7 @@ function Neighbor({ issue, label, align }: { issue: Issue; label: string; align:
         {label} · {dayLabel(issue)}
         {align === "right" ? <PixelArrow /> : null}
       </span>
-      <span className="type-display text-j2 group-hover:underline group-hover:decoration-4">{issue.title}</span>
+      <span className="type-display text-j2 group-hover:underline group-hover:decoration-4">{issueTitleOf(issue)}</span>
       {issue.dek ? <span className="measure text-data text-ink-muted">{issue.dek}</span> : null}
     </Link>
   );

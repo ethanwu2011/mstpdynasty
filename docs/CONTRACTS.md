@@ -180,8 +180,9 @@ ISSUE_TITLES, FACTS_ONLY_NOTE, SYSTEM_PROMPT
   same waiver run (`w-<processing time>`; each free-agent move is its own `fa-<txid>` batch);
   `roastItem("waiver", WaiverFact[])` roasts a batch. `LosingBid.reason` says why a competing claim failed.
 - `DraftPickFact.reach = fcRank - pickNo` (positive = reach). For a rookie-only draft `fcRank` is the rank
-  within the rookie class. `secondsOnClock` excludes the draft's daily autopause window (Sleeper stores it as
-  minutes after midnight UTC) and is null unless the tick saw both this pick and the one before.
+  within the rookie class. There is no time on the clock: `pickedAt` is when the tick first noticed the pick,
+  not when it was made, so it never becomes a pick-clock duration. `DraftFacts.resumesAt` is "8 AM ET"
+  (`config/draft.ts`, set by the commissioner) while the draft is paused, never Sleeper's autopause window.
 - `WeeklyFacts.standings[].previousRank` is the rank one week earlier (null in week 1).
 - Pass `{ draftPicks }` to `roastItem` for a pick when you already have them (the tick does), to skip a
   `draftFacts()` call per pick.
@@ -189,7 +190,8 @@ ISSUE_TITLES, FACTS_ONLY_NOTE, SYSTEM_PROMPT
   issue (`factsOnly: true`, `note: "The roast writer called in sick. Facts only today."`). Status starts as `"draft"`;
   ops decides sending. `slug` must be URL-safe and unique per league (`YYYY-MM-DD-kind`, the ET date the issue was written, kind with hyphens).
 - `IssueBlock` is plain text (no HTML, no markdown) so web and email render the same content.
-- Issue titles: "The Daily Roast", "Thursday Night Fallout", "The Weekly Roast", "Draft Grades"
+- Issue titles: "The Daily", "Thursday Night Fallout", "Week N Recap", "Draft Grades" (`issueTitle(kind, week)`).
+  The writer's headline (the dek) is the email subject and the H1.
   (`ISSUE_TITLES` in `lib/roast`).
 - `config/roast-notes.ts`: empty defaults only (one empty string per manager) and a comment explaining
   that real lore comes from env `ROAST_NOTES` (JSON, manager first name -> text) and/or the store key

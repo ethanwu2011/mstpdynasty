@@ -1,6 +1,6 @@
 /*
  * DIRECTION (Newsletter archive, inside DESIGN.md's Jumbotron Specimen world)
- * THESIS: The Roast's back catalog, filed like a stadium's program stack. The latest issue leads
+ * THESIS: the newsletter's back catalog, filed like a stadium's program stack. The latest issue leads
  *   at full pixel volume; the rest are rows you can scan by date, name and the one-line dek.
  * FIRST VIEWPORT: Left 8, the latest issue (title in Jersey, dek, opening lines, read link).
  *   Right 4, the four issues with cadence and counts, and the subscribe button.
@@ -14,8 +14,8 @@ import { kindFromSlug } from "./issue-kinds";
 import { NewsletterView } from "./view";
 
 export const metadata: Metadata = {
-  title: "The Roast, every issue",
-  description: "Every issue of The Daily Roast, Thursday Night Fallout, The Weekly Roast and Draft Grades for the MSTP Dynasty league.",
+  title: "The newsletter, every issue",
+  description: "Every issue of The Daily, Thursday Night Fallout, the Week N Recap and Draft Grades for the MSTP Dynasty league.",
 };
 
 const one = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v);
@@ -30,7 +30,7 @@ export default async function NewsletterPage({ searchParams }: { searchParams: S
   ]);
   return (
     <>
-      <h1 className="sr-only">The Roast: every newsletter issue</h1>
+      <h1 className="sr-only">Every newsletter issue</h1>
       <NewsletterView issues={issues} kind={kindFromSlug(one(params.kind))} phase={phase} />
     </>
   );

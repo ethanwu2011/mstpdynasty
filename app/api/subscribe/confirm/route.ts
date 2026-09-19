@@ -20,7 +20,7 @@ export async function GET(req: Request): Promise<Response> {
   }
   return htmlPage(
     "Confirm",
-    ["<h1>Get The Roast by email?</h1>", "<p>One click and you're on the list.</p>", postButton(`/api/subscribe/confirm?token=${encodeURIComponent(token)}`, "Confirm")].join("\n"),
+    ["<h1>Get the MSTP Dynasty newsletter by email?</h1>", "<p>One click and you're on the list.</p>", postButton(`/api/subscribe/confirm?token=${encodeURIComponent(token)}`, "Confirm")].join("\n"),
   );
 }
 

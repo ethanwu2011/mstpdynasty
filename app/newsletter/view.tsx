@@ -11,7 +11,7 @@ import { SampleMark, Tag } from "@/components/Tag";
 import { formatEt } from "@/lib/time";
 import type { Issue, IssueKind, SeasonPhase } from "@/lib/types";
 import { issueToBlock } from "../_lib/roast-view";
-import { CADENCE, issueDay, ISSUE_ORDER, issueName, kindSlug, monthLabel } from "./issue-kinds";
+import { CADENCE, issueDay, ISSUE_ORDER, issueName, issueTitleOf, kindSlug, monthLabel } from "./issue-kinds";
 
 export interface NewsletterViewProps {
   /** null when the archive could not be read. */
@@ -26,11 +26,11 @@ function nextIssueLine(phase: SeasonPhase): string {
   switch (phase) {
     case "pre_draft":
     case "drafting":
-      return "The Daily Roast goes out at 8 AM ET on any morning with something to roast, draft picks included. Draft Grades lands the day the startup draft ends.";
+      return "The Daily goes out at 8 AM ET on any morning with material, draft picks included. Draft Grades lands the day the startup draft ends.";
     case "in_season":
-      return "The Weekly Roast goes out Tuesday with the full recap. Thursday Night Fallout goes out Friday. The Daily Roast shows up whenever somebody gives it material.";
+      return "The Week N Recap goes out Tuesday. Thursday Night Fallout goes out Friday. The Daily shows up whenever somebody gives it material.";
     default:
-      return "The Daily Roast wakes up the morning after somebody makes a move.";
+      return "The Daily wakes up the morning after somebody makes a move.";
   }
 }
 
@@ -60,7 +60,7 @@ function leadBlock(issue: Issue): RoastBlockData {
 
 function Masthead({ issues, kind }: { issues: Issue[]; kind: IssueKind | null }) {
   return (
-    <Panel label="The four issues" labelRight={<span className="text-paper-shade">By The Roast</span>} span={4} pad={false}>
+    <Panel label="The four issues" labelRight={<span className="text-paper-shade">MSTP Dynasty</span>} span={4} pad={false}>
       <ul className="m-0 list-none p-0">
         {ISSUE_ORDER.map((k) => {
           const mine = issues.filter((i) => i.kind === k);
@@ -139,7 +139,7 @@ function ArchiveRow({ issue }: { issue: Issue }) {
           />
         </span>
         <span className="flex min-w-0 flex-col gap-1">
-          <span className="type-display text-j2 group-hover:underline group-hover:decoration-4">{issue.title}</span>
+          <span className="type-display text-j2 group-hover:underline group-hover:decoration-4">{issueTitleOf(issue)}</span>
           <span className="type-label text-ink-muted">{issue.week ? `Week ${issue.week}` : `${issue.season} season`}</span>
         </span>
         <span className="col-start-2 flex min-w-0 flex-col gap-1 md:col-start-auto">
@@ -253,7 +253,7 @@ export function NewsletterView({ issues, kind, phase }: NewsletterViewProps) {
           </div>
         ) : (
           <article className="flex flex-1 flex-col gap-6 md:gap-7">
-            <p className="type-label m-0">The newsletter · By The Roast</p>
+            <p className="type-label m-0">The newsletter</p>
             <h3 className="type-display m-0 text-j3 md:text-j4 xl:text-j5">
               <span className="board-wipe block">Nothing has</span>
               <span className="board-wipe block">gone out yet</span>

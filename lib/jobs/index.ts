@@ -4,9 +4,9 @@
  *
  *   runDaily(now)  /api/cron/daily, once a day (Vercel cron, 12:00 UTC = 8 AM EDT / 7 AM EST).
  *                  Plans by America/New_York date and league phase (lib/jobs/schedule.ts):
- *                  The Daily Roast every day when there is material, Thursday Night Fallout on
- *                  Fridays in season, The Weekly Roast on Tuesdays, Draft Grades once after the
- *                  startup draft. The Weekly Roast and Draft Grades also store an odds
+ *                  The Daily every day when there is material, Thursday Night Fallout on
+ *                  Fridays in season, Week N Recap on Tuesdays, Draft Grades once after the
+ *                  startup draft. Week N Recap and Draft Grades also store an odds
  *                  snapshot. Each issue is built and delivered exactly once (lib/jobs/issues.ts).
  *   runTick(now)   /api/tick and page renders via after(). Takes the 2-minute cooldown lock
  *                  FIRST (before loading the league, so a request loop costs one KV command

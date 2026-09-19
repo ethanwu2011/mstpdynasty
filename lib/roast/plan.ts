@@ -1,10 +1,13 @@
 /**
- * Plans for issues and item roasts. A plan is fully deterministic:
+ * Plans for issues and item posts. A plan is fully deterministic:
  *   - `sections`: the issue body with every table and fact line written by code, plus
- *     "slot" blocks where The Roast's prose goes (each slot has a facts-only fallback)
+ *     "slot" blocks where the writer's prose goes (each slot has a facts-only fallback)
  *   - `slots`: what the model is asked to write
  *   - `facts`: the compact FACTS payload the model sees (keys match the glossary in persona.ts)
  * The same plan renders the LLM issue and the facts-only issue, so both look alike.
+ *
+ * Every issue has the same shape: a punchline headline (the dek, which is the email subject
+ * and the H1), a fake-epic cold open, short hits on the managers, and a one-line closer.
  */
 import type {
   DailyRoastFacts,
@@ -27,12 +30,18 @@ import type {
 import { label, money, num, para, pct, pickLabel, pts, r1, r2, sentences, signed, who } from "./format";
 import { EMPTY_MEMORY, type DraftContext, type PayloadMemory } from "./memory-shape";
 
+/** Each kind's name (docs/SITE_SPEC.md DECISIONS ROUND 2). A weekly issue prints as "Week 7 Recap". */
 export const ISSUE_TITLES: Record<IssueKind, string> = {
-  daily_roast: "The Daily Roast",
+  daily_roast: "The Daily",
   thursday_fallout: "Thursday Night Fallout",
-  weekly_roast: "The Weekly Roast",
+  weekly_roast: "Weekly Recap",
   draft_grades: "Draft Grades",
 };
+
+/** The title an issue prints: "Week 7 Recap" for a weekly recap, the kind's name otherwise. */
+export function issueTitle(kind: IssueKind, week: number | null | undefined): string {
+  return kind === "weekly_roast" && week ? `Week ${week} Recap` : ISSUE_TITLES[kind];
+}
 
 export interface SlotSpec {
   id: string;
@@ -49,7 +58,7 @@ export interface PlannedSection {
 export interface IssuePlan {
   kind: IssueKind;
   title: string;
-  /** First line of the user message, e.g. "ISSUE: The Weekly Roast, week 7". */
+  /** First line of the user message, e.g. "ISSUE: Week 7 Recap". */
   header: string;
   task: string;
   slots: SlotSpec[];
@@ -64,8 +73,27 @@ export interface IssuePlan {
 
 const DEK_SLOT: SlotSpec = {
   id: "dek",
-  brief: "At most 14 words. This is also the email subject: name a manager and make him regret opening it.",
+  brief:
+    "The headline: at most 14 words, printed as the email subject and as the H1. A punchline, not a summary: one named manager, one real fact, a crude verb if it earns it.",
 };
+
+/** The last line of every issue. */
+const closerSlot = (brief: string): SlotSpec => ({ id: "closer", brief: `One line, at most 2 short sentences. ${brief}` });
+
+/** "Theo, Gus and Raf". */
+function nameList(names: string[]): string {
+  return names.length <= 2 ? names.join(" and ") : `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
+}
+
+/** Sentence range for one hit per manager: "3 to 6 sentences". */
+function perManager(n: number, max = 16): string {
+  const lo = Math.max(1, Math.min(n, max));
+  const hi = Math.max(lo + 1, Math.min(max, n * 2));
+  return `${lo} to ${hi} sentences`;
+}
+
+/** The commissioner, when the league memory knows him (FACTS key "commissioner"). */
+const commissionerFact = (mem: PayloadMemory) => (mem.commissioner ? { commissioner: mem.commissioner } : {});
 
 /** How waiver claims are decided: FAAB bids, or waiver priority (then bids mean nothing). */
 export type WaiverMode = "faab" | "priority";
@@ -160,24 +188,26 @@ export function waiversPayload(claims: WaiverFact[], faabBudget: number, mode: W
   return { waiverMode: mode, ...(mode === "faab" ? { faabBudget } : {}), claims: claims.map((w) => waiverPayload(w, mode, slots)) };
 }
 
-/** Time on the clock at the scale that reads right: seconds, minutes, or hours. */
-function clockPayload(seconds: number | null): Record<string, number> {
-  if (seconds === null) return {};
-  if (seconds < 60) return { secondsOnClock: seconds };
-  if (seconds < 3600) return { minutesOnClock: Math.round(seconds / 60) };
-  return { hoursOnClock: r1(seconds / 3600) };
-}
-
-/** Players FantasyCalc ranks higher who were still on the board at this pick (top 2). */
-export function passedOn(p: DraftPickFact, d: DraftContext | null | undefined): Array<{ name: string; pos: string; fcRank: number }> {
+/**
+ * Players FantasyCalc ranks higher who were still on the board at this pick (top 2), with the
+ * later pick that took each one and who made it, once somebody has.
+ */
+export function passedOn(
+  p: DraftPickFact,
+  d: DraftContext | null | undefined,
+): Array<{ name: string; pos: string; fcRank: number; takenAt?: string; takenBy?: string }> {
   if (!d?.fc || d.rookieOnly) return [];
-  const taken = new Set(d.picks.filter((x) => x.draftId === p.draftId && x.pickNo <= p.pickNo).map((x) => x.player.playerId));
+  const same = d.picks.filter((x) => x.draftId === p.draftId);
+  const taken = new Set(same.filter((x) => x.pickNo <= p.pickNo).map((x) => x.player.playerId));
   taken.add(p.player.playerId);
   const limit = p.fcRank ?? Number.POSITIVE_INFINITY;
   return d.fc
     .filter((v) => !taken.has(v.sleeperId) && v.overallRank < limit)
     .slice(0, 2)
-    .map((v) => ({ name: v.name, pos: v.position, fcRank: v.overallRank }));
+    .map((v) => {
+      const later = same.filter((x) => x.pickNo > p.pickNo && x.player.playerId === v.sleeperId).sort((a, b) => a.pickNo - b.pickNo)[0];
+      return { name: v.name, pos: v.position, fcRank: v.overallRank, ...(later ? { takenAt: pickLabel(later), takenBy: later.team.managerName } : {}) };
+    });
 }
 
 /** This manager's picks at the pick's position so far, this one included. */
@@ -199,7 +229,6 @@ export function pickPayload(p: DraftPickFact, d: DraftContext | null = null) {
     reach: p.reach,
     verdict: p.verdict,
     ...(p.positionRun > 1 ? { positionRun: p.positionRun } : {}),
-    ...clockPayload(p.secondsOnClock),
   };
   if (d) {
     if (d.pickTimerSeconds) out.clockLimitHours = r1(d.pickTimerSeconds / 3600);
@@ -257,7 +286,7 @@ function oddsSection(odds: SimResult, heading: string, withSlot: boolean): Plann
 }
 
 /* ------------------------------------------------------------------ */
-/* The Weekly Roast                                                    */
+/* Week N Recap                                                        */
 /* ------------------------------------------------------------------ */
 
 function teamWeekPayload(t: TeamWeekFact, slots: DraftSlots = {}) {
@@ -351,19 +380,30 @@ export function planWeekly(f: WeeklyRoastFacts, mem: PayloadMemory = EMPTY_MEMOR
     lowest: wk.lowest ? { ...who(wk.lowest.team), points: wk.lowest.points } : null,
     mostBenchLeft: byBench[0] ? { ...who(byBench[0].team), benchLeft: byBench[0].benchPointsLeft } : null,
   };
-  const slots: SlotSpec[] = [DEK_SLOT, { id: "cold-open", brief: "2 to 4 sentences. Open on the single best storyline of the week." }];
+  Object.assign(facts, commissionerFact(mem));
+  const slots: SlotSpec[] = [
+    DEK_SLOT,
+    {
+      id: "cold-open",
+      brief:
+        "4 to 7 sentences. A real historical, literary or mythic disaster told straight, then turned on the week's worst manager with an anti-climax insult, then the fact that proves it. Plant one image the later slots come back to.",
+    },
+  ];
   if (loser) {
     facts.loserOfTheWeek = {
       ...teamWeekPayload(loser, slotsOf),
       lostTo: loserOpp ? loserOpp.team.managerName : null,
       margin: loserMatchup?.margin ?? null,
     };
-    slots.push({ id: "loser", brief: "2 to 3 sentences crowning the Loser of the Week. No mercy." });
+    slots.push({ id: "loser", brief: "2 to 4 sentences crowning the Loser of the Week: a coronation in reverse, built on his bench, his zero starters, his streak and his crowns." });
   }
   const matchupSlots = wk.matchups.map((m) => ({ id: `m-${m.matchupId}`, m }));
   for (const { id, m } of matchupSlots) {
     facts[id] = matchupPayload(m, slotsOf);
-    slots.push({ id, brief: `3 to 6 sentences on matchup ${id}. Hit both managers. Use a player from topStarter, worstStarter, boomBench or benchMistake, not only team totals.` });
+    slots.push({
+      id,
+      brief: `4 to 8 sentences on matchup ${id}: one short paragraph per manager, winner first. The winner gets suspicion, the loser gets contempt. Use a player from topStarter, worstStarter, boomBench or benchMistake, not only team totals.`,
+    });
   }
   facts.standings = wk.standings.map((s) => ({
     rank: s.rank,
@@ -383,7 +423,7 @@ export function planWeekly(f: WeeklyRoastFacts, mem: PayloadMemory = EMPTY_MEMOR
   facts.odds = oddsPayload(f.odds, mem);
   const history = historyPayload(teams.map((t) => t.team), mem);
   if (history.length) facts.history = history;
-  slots.push({ id: "odds", brief: "1 to 3 sentences on the season odds and who is kidding themselves." });
+  slots.push({ id: "odds", brief: "2 to 4 sentences: the season odds read as a prophecy. Name the doomed and who is kidding himself." });
 
   const sections: PlannedSection[] = [];
   const coldFallback = sentences(
@@ -461,16 +501,19 @@ export function planWeekly(f: WeeklyRoastFacts, mem: PayloadMemory = EMPTY_MEMOR
   }
   if (f.odds.teams.length) sections.push(oddsSection(f.odds, "Season odds", true));
   else slots.splice(slots.findIndex((s) => s.id === "odds"), 1);
+  slots.push(closerSlot("Predict how next week ends for one named manager, and come back to the cold-open image."));
+  sections.push({ heading: "Next week", blocks: [slot("closer", [])] });
 
+  const title = issueTitle("weekly_roast", f.week);
   return {
     kind: "weekly_roast",
-    title: ISSUE_TITLES.weekly_roast,
-    header: `ISSUE: ${ISSUE_TITLES.weekly_roast}, week ${f.week}`,
-    task: `Write The Weekly Roast for week ${f.week}, the full recap. Every matchup gets its own slot. Use bench points, the swap that flipped a result, robbed and fraud flags, zero-point starters and streaks where the facts have them. Spread the damage: every manager takes at least one hit somewhere in the issue.`,
+    title,
+    header: `ISSUE: ${title}`,
+    task: `Write ${title}, the full recap: headline, cold open, then every matchup in its own slot. Use bench points, the swap that flipped a result, robbed and fraud flags, zero-point starters and streaks where the facts have them. Spread the damage: every manager takes at least one hit, the commissioner included.`,
     slots,
     facts,
     sections,
-    // The email subject puts "The Weekly Roast, week N:" in front of a code-written dek.
+    // The email subject puts "Week N Recap:" in front of a code-written dek.
     fallbackDek:
       wk.highest && wk.lowest
         ? `${wk.highest.team.teamName} put up ${pts(wk.highest.points)}, ${wk.lowest.team.teamName} managed ${pts(wk.lowest.points)}.`
@@ -514,15 +557,20 @@ export function planThursday(f: ThursdayFalloutFacts, mem: PayloadMemory = EMPTY
   };
   const history = historyPayload(tnf.teams.map((t) => t.team), mem);
   if (history.length) facts.history = history;
+  Object.assign(facts, commissionerFact(mem));
+  const touched = [...new Set(rostered.map((p) => p.team!.managerName))];
   const slots: SlotSpec[] = [
     DEK_SLOT,
-    { id: "cold-open", brief: "2 to 4 sentences on what the Thursday game did to this league." },
+    {
+      id: "cold-open",
+      brief:
+        "3 to 5 sentences. A short fake epic about what the Thursday game did to this league: a real historical or mythic disaster told straight, then turned on one manager with an anti-climax insult.",
+    },
     {
       id: "banked",
-      brief:
-        "2 to 4 sentences: who got carried, who got cooked, who benched the guy who went off, and any unrostered player (rostered:false) who went off on the waiver wire.",
+      brief: `${perManager(Math.max(2, touched.length), 12)}, one short hit per manager the Thursday game touched${touched.length ? ` (${nameList(touched)})` : ""}: who got carried, who benched the guy who went off, and any unrostered player (rostered:false) who went off while nobody owned him.`,
     },
-    { id: "odds", brief: "1 to 3 sentences on the matchups already decided in spirit: winPct now against winPctBefore." },
+    { id: "odds", brief: "2 to 4 sentences on the matchups already decided in spirit, winPct now against winPctBefore, read as omens. Name the doomed." },
   ];
   const best = tnf.teams[0];
   const worst = tnf.teams[tnf.teams.length - 1];
@@ -575,11 +623,13 @@ export function planThursday(f: ThursdayFalloutFacts, mem: PayloadMemory = EMPTY
   } else {
     slots.pop();
   }
+  slots.push(closerSlot("Predict how the weekend ends for one named manager."));
+  sections.push({ heading: "The weekend", blocks: [slot("closer", [])] });
   return {
     kind: "thursday_fallout",
     title: ISSUE_TITLES.thursday_fallout,
     header: `ISSUE: ${ISSUE_TITLES.thursday_fallout}, week ${f.week}`,
-    task: `Write Thursday Night Fallout for week ${f.week}: who the Thursday game carried, who it cooked, and which matchups are already decided in spirit.`,
+    task: `Write Thursday Night Fallout for week ${f.week}: headline, cold open, who the Thursday game carried and who it buried, and which matchups are already decided in spirit.`,
     slots,
     facts,
     sections,
@@ -591,7 +641,7 @@ export function planThursday(f: ThursdayFalloutFacts, mem: PayloadMemory = EMPTY
 }
 
 /* ------------------------------------------------------------------ */
-/* The Daily Roast                                                     */
+/* The Daily                                                           */
 /* ------------------------------------------------------------------ */
 
 function tradeTable(t: TradeFact): IssueBlock {
@@ -635,7 +685,7 @@ export function waiverLine(w: WaiverFact): string {
 }
 
 /**
- * The Daily Roast's code-written dek: the single worst thing since the last issue (a lopsided
+ * The Daily's code-written dek: the single worst thing since the last issue (a lopsided
  * trade, a $0 bid that lost, an overpay, a lineup hole, a reach), not the counts.
  */
 export function dailyWorstFact(f: DailyRoastFacts): string | null {
@@ -678,9 +728,33 @@ function draftPickTable(picks: DraftPickFact[]): IssueBlock {
   };
 }
 
+interface DraftOffender {
+  team: TeamRef;
+  picks: DraftPickFact[];
+  /** Spots reached, summed over his picks (falls count as zero). */
+  reach: number;
+  unranked: number;
+}
+
+/** Managers with draft picks since the last issue, worst first: most spots reached, most unranked picks, earliest pick. */
+export function draftOffenders(picks: DraftPickFact[]): DraftOffender[] {
+  const byRoster = new Map<number, DraftPickFact[]>();
+  for (const p of picks) byRoster.set(p.team.rosterId, [...(byRoster.get(p.team.rosterId) ?? []), p]);
+  return [...byRoster.values()]
+    .map((own) => {
+      const sorted = [...own].sort((a, b) => a.pickNo - b.pickNo);
+      return {
+        team: sorted[0].team,
+        picks: sorted,
+        reach: sorted.reduce((sum, p) => sum + Math.max(0, p.reach ?? 0), 0),
+        unranked: sorted.filter((p) => p.fcRank === null).length,
+      };
+    })
+    .sort((a, b) => b.reach - a.reach || b.unranked - a.unranked || a.picks[0].pickNo - b.picks[0].pickNo);
+}
+
 export function planDaily(f: DailyRoastFacts, faabBudget: number, mem: PayloadMemory = EMPTY_MEMORY, waiverMode: WaiverMode = "faab"): IssuePlan {
-  const facts: Record<string, unknown> = { date: f.date };
-  const slots: SlotSpec[] = [DEK_SLOT, { id: "cold-open", brief: "1 to 3 sentences on the worst thing that happened since the last issue." }];
+  const facts: Record<string, unknown> = { date: f.date, ...commissionerFact(mem) };
   const sections: PlannedSection[] = [];
   const managers = new Set<string>();
   const counts = sentences(
@@ -689,6 +763,20 @@ export function planDaily(f: DailyRoastFacts, faabBudget: number, mem: PayloadMe
     f.draftPicks.length ? `${f.draftPicks.length} draft pick${f.draftPicks.length === 1 ? "" : "s"}.` : null,
     f.lineupAlerts.length ? `${f.lineupAlerts.length} lineup alert${f.lineupAlerts.length === 1 ? "" : "s"}.` : null,
   );
+
+  // The cold open is about the worst drafter, unless a lopsided trade is worse news.
+  const offenders = draftOffenders(f.draftPicks);
+  const target = !f.trades.some((t) => t.winnerRosterId !== null) && offenders.length ? offenders[0] : null;
+  const epic = "A real historical, literary or mythic disaster told straight for two or three sentences";
+  const slots: SlotSpec[] = [
+    DEK_SLOT,
+    {
+      id: "cold-open",
+      brief: target
+        ? `4 to 7 sentences about ${target.team.managerName}, the worst of it. ${epic}, then turned on ${target.team.managerName} with an anti-climax insult, then his picks since the last issue as the proof. ${target.team.managerName} gets no paragraph of his own below.`
+        : `4 to 7 sentences. ${epic}, then turned on whoever did the worst thing since the last issue (the ugliest trade first, then the worst bid or pick) with an anti-climax insult, then the facts that prove it. Save his other sins for the slots below.`,
+    },
+  ];
   sections.push({ heading: "Since the last issue", blocks: [slot("cold-open", counts ? [para(counts)] : [])] });
 
   if (f.trades.length) {
@@ -699,7 +787,7 @@ export function planDaily(f: DailyRoastFacts, faabBudget: number, mem: PayloadMe
       if (i < MAX_TRADE_SLOTS) {
         const id = `t-${i + 1}`;
         facts[id] = tradePayload(t, mem.draftSlots);
-        slots.push({ id, brief: `2 to 4 sentences on trade ${id}. Say who won it by value.` });
+        slots.push({ id, brief: `2 to 4 sentences on trade ${id}: one hit for each manager in it. Say who won it by value.` });
         blocks.push(slot(id, [para(tradeFallback(t))]));
       } else {
         blocks.push(para(tradeFallback(t)));
@@ -710,13 +798,14 @@ export function planDaily(f: DailyRoastFacts, faabBudget: number, mem: PayloadMe
   }
   if (f.waivers.length) {
     f.waivers.forEach((w) => managers.add(w.team.managerName));
+    const involved = [...new Set(f.waivers.flatMap((w) => [w.team.managerName, ...(w.losingBids as LosingBidLike[]).map((l) => l.team.managerName)]))];
     facts.waivers = waiversPayload(f.waivers, faabBudget, waiverMode, mem.draftSlots);
     slots.push({
       id: "waivers",
       brief:
         waiverMode === "faab"
-          ? "2 to 5 sentences on the waiver moves: $0 bids, overpays, losing bids, bad drops."
-          : "2 to 5 sentences on the waiver moves: who lost a claim on waiver priority, roster-full misses, bad drops. There are no bids in this league.",
+          ? `${perManager(involved.length, 10)}, one short hit per manager involved (${nameList(involved)}): $0 bids, overpays, losing bids, bad drops.`
+          : `${perManager(involved.length, 10)}, one short hit per manager involved (${nameList(involved)}): who lost a claim on waiver priority, roster-full misses, bad drops. There are no bids in this league.`,
     });
     sections.push({
       heading: "Waivers",
@@ -740,9 +829,10 @@ export function planDaily(f: DailyRoastFacts, faabBudget: number, mem: PayloadMe
   }
   if (f.lineupAlerts.length) {
     f.lineupAlerts.forEach((a) => managers.add(a.team.managerName));
+    const negligent = [...new Set(f.lineupAlerts.map((a) => a.team.managerName))];
     const why = { bye: "on a bye", out: "ruled out", ir: "on IR", doubtful: "doubtful", empty_slot: "nobody in the slot" } as const;
     facts.lineupAlerts = f.lineupAlerts.map((a) => ({ ...who(a.team), player: a.player.name, pos: a.player.position, slot: a.slot, why: a.reason }));
-    slots.push({ id: "lineup", brief: "1 to 3 sentences shaming the lineup negligence below before kickoff." });
+    slots.push({ id: "lineup", brief: `${perManager(negligent.length, 8)}, one short hit per manager with a hole in his lineup before kickoff (${nameList(negligent)}).` });
     sections.push({
       heading: "Fix your lineup",
       blocks: [
@@ -761,19 +851,41 @@ export function planDaily(f: DailyRoastFacts, faabBudget: number, mem: PayloadMe
   }
   if (f.draftPicks.length) {
     f.draftPicks.forEach((p) => managers.add(p.team.managerName));
+    if (mem.starters) facts.starters = mem.starters;
     facts.draftPicks = f.draftPicks.map((p) => pickPayload(p, mem.draft));
     if (mem.onTheClock) facts.onTheClock = mem.onTheClock;
-    slots.push({
-      id: "draft",
-      brief: "2 to 5 sentences on the draft picks since the last issue: reaches, steals, who was passed on, runs, time on the clock, who is on the clock now.",
+    // One hit per manager: worst first, the commissioner last (he is never spared, he just waits).
+    const rest = offenders.filter((o) => o !== target);
+    const boss = (o: DraftOffender) => mem.commissioner !== null && o.team.managerName === mem.commissioner;
+    const ordered = [...rest.filter((o) => !boss(o)), ...rest.filter(boss)];
+    const blocks: PlannedBlock[] = [];
+    ordered.forEach((o, i) => {
+      const id = `d-${o.team.rosterId}`;
+      const name = o.team.managerName;
+      const plural = o.picks.length === 1 ? "pick" : "picks";
+      slots.push({
+        id,
+        brief: `${i < 2 ? "2 or 3" : "1 or 2"} sentences on ${name}'s ${plural} since the last issue (${o.picks.map(pickLabel).join(", ")}): the worst reach, who he passed on and who took that player, how many at that position he has now. The hardest word last.${boss(o) ? ` ${name} is the commissioner: he gets it at least as hard as anyone.` : ""}`,
+      });
+      blocks.push(slot(id, []));
     });
-    sections.push({ heading: "The draft", blocks: [slot("draft", []), draftPickTable(f.draftPicks)] });
+    blocks.push(draftPickTable(f.draftPicks));
+    sections.push({ heading: "The draft", blocks });
   }
+
+  const clock = mem.onTheClock;
+  const resume = clock?.resumesAt ? ` Picks resume at ${clock.resumesAt}.` : "";
+  slots.push(closerSlot(`Predict how this ends for one named manager, back on the cold-open image.${resume ? " Say when picks resume (onTheClock.resumesAt)." : ""}`));
+  sections.push({
+    heading: clock ? "On the clock" : "Up next",
+    blocks: [...(clock ? [para(`On the clock now: ${clock.manager}, pick ${clock.pick}.${resume}`)] : []), slot("closer", [])],
+  });
+
   return {
     kind: "daily_roast",
     title: ISSUE_TITLES.daily_roast,
     header: `ISSUE: ${ISSUE_TITLES.daily_roast}, ${f.date}`,
-    task: "Write The Daily Roast: everything that happened in the league since the last issue. Only what is in FACTS.",
+    task: "Write The Daily: everything in the league since the last issue, only what is in FACTS. Headline, cold open, one short hit per manager in the slots below, then the closer. One manager may get a one-sentence dismissal.",
     slots,
     facts,
     sections,
@@ -794,15 +906,11 @@ export function draftSummary(own: DraftPickFact[]) {
   for (const p of own) byPosition[p.player.position || "?"] = (byPosition[p.player.position || "?"] ?? 0) + 1;
   const aged = own.filter((p) => p.player.age !== null);
   const oldest = [...aged].sort((a, b) => (b.player.age ?? 0) - (a.player.age ?? 0) || a.pickNo - b.pickNo)[0];
-  const timed = own.filter((p) => p.secondsOnClock !== null);
-  const slowest = [...timed].sort((a, b) => (b.secondsOnClock ?? 0) - (a.secondsOnClock ?? 0) || a.pickNo - b.pickNo)[0];
   return {
     byPosition,
     ...(aged.length ? { avgAge: r1(aged.reduce((s, p) => s + (p.player.age ?? 0), 0) / aged.length) } : {}),
     ...(oldest ? { oldestPick: { name: oldest.player.name, age: oldest.player.age, pick: pickLabel(oldest) } } : {}),
     unrankedCount: own.filter((p) => p.fcRank === null).length,
-    ...(slowest ? { slowestPick: { name: slowest.player.name, pick: pickLabel(slowest), hoursOnClock: r1((slowest.secondsOnClock ?? 0) / 3600) } } : {}),
-    ...(timed.length ? { totalHoursOnClock: r1(timed.reduce((s, p) => s + (p.secondsOnClock ?? 0), 0) / 3600) } : {}),
   };
 }
 
@@ -812,8 +920,21 @@ export function planDraftGrades(f: DraftGradesFacts, mem: PayloadMemory = EMPTY_
   const ranked = d.picks.filter((p) => p.reach !== null);
   const reaches = [...ranked].filter((p) => p.verdict === "reach").sort((a, b) => (b.reach ?? 0) - (a.reach ?? 0) || a.pickNo - b.pickNo).slice(0, 5);
   const steals = [...ranked].filter((p) => p.verdict === "steal").sort((a, b) => (a.reach ?? 0) - (b.reach ?? 0) || a.pickNo - b.pickNo).slice(0, 5);
-  const facts: Record<string, unknown> = { picks: d.picks.length, rounds: d.rounds, teams: d.teams };
-  const slots: SlotSpec[] = [DEK_SLOT, { id: "cold-open", brief: "2 to 4 sentences on the draft as a whole: who won it, who should be embarrassed." }];
+  const facts: Record<string, unknown> = {
+    picks: d.picks.length,
+    rounds: d.rounds,
+    teams: d.teams,
+    ...commissionerFact(mem),
+    ...(mem.starters ? { starters: mem.starters } : {}),
+  };
+  const slots: SlotSpec[] = [
+    DEK_SLOT,
+    {
+      id: "cold-open",
+      brief:
+        "4 to 7 sentences. The draft as a founding myth: a real coronation, treaty, partition or doomed expedition told straight, then turned on the manager with the worst draft with an anti-climax insult, then the pick that proves it.",
+    },
+  ];
   const sections: PlannedSection[] = [];
   const top = grades[0];
   const bottom = grades[grades.length - 1];
@@ -843,7 +964,10 @@ export function planDraftGrades(f: DraftGradesFacts, mem: PayloadMemory = EMPTY_
         best: g.bestPick ? pickPayload(g.bestPick, mem.draft) : null,
         worst: g.worstPick ? pickPayload(g.worstPick, mem.draft) : null,
       };
-      slots.push({ id, brief: `2 to 4 sentences grading ${g.team.managerName}'s draft. The grade is already decided: ${g.grade}.` });
+      slots.push({
+        id,
+        brief: `3 to 5 sentences on ${g.team.managerName}'s draft. The grade is already decided: ${g.grade}. The pick that defines the team, who he passed on, the positional crime, a verdict. An A still gets suspicion, an F gets obliterated.`,
+      });
       teamBlocks.push({ type: "heading", text: `${g.team.teamName} (${g.team.managerName}): ${g.grade}` });
       teamBlocks.push(slot(id, []));
       const lines = [
@@ -861,14 +985,16 @@ export function planDraftGrades(f: DraftGradesFacts, mem: PayloadMemory = EMPTY_
   if (steals.length) sections.push({ heading: "Biggest steals", blocks: [draftPickTable(steals)] });
   if (f.odds.teams.length) {
     facts.odds = oddsPayload(f.odds, mem);
-    slots.push({ id: "odds", brief: "1 to 3 sentences on the projected season odds after the draft." });
+    slots.push({ id: "odds", brief: "2 to 4 sentences: the projected season odds after the draft, read as a prophecy. Name the doomed." });
     sections.push(oddsSection(f.odds, "Projected season odds", true));
   }
+  slots.push(closerSlot("Predict how the season ends for one named manager, back on the cold-open image."));
+  sections.push({ heading: "The season", blocks: [slot("closer", [])] });
   return {
     kind: "draft_grades",
     title: ISSUE_TITLES.draft_grades,
     header: `ISSUE: ${ISSUE_TITLES.draft_grades}`,
-    task: "Write Draft Grades for the draft that just finished: one verdict per team, using the grades and picks in FACTS.",
+    task: "Write Draft Grades for the draft that just finished: headline, cold open, one verdict per team using the grades and picks in FACTS, then the closer.",
     slots,
     facts,
     sections,

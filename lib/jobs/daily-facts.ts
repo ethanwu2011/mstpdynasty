@@ -1,7 +1,7 @@
 /**
- * Assembles DailyRoastFacts for The Daily Roast.
+ * Assembles DailyRoastFacts for The Daily.
  *
- *   trades, waivers   lib/facts transactionFacts(since last Daily Roast), minus plain cuts
+ *   trades, waivers   lib/facts transactionFacts(since last Daily), minus plain cuts
  *                     (a drop with no add, of a player who is not a notable drop)
  *   draft picks       lib/facts draftFacts, picks after the last reported pick number
  *   injuries          rostered players whose status turned serious since yesterday's snapshot
@@ -34,7 +34,7 @@ import type {
 } from "@/lib/types";
 import { addDays, DAY_MS, mainDateOfWeek, upcomingWeekFor } from "./schedule";
 
-/** Injury statuses worth a line in the Daily Roast. "Questionable" is too noisy. */
+/** Injury statuses worth a line in The Daily. "Questionable" is too noisy. */
 export const SERIOUS_INJURY = new Set(["Doubtful", "Out", "IR", "PUP", "Sus", "COV"]);
 /** Bench players still count as news when FantasyCalc ranks them this high. */
 export const NOTABLE_RANK = 100;
@@ -183,7 +183,7 @@ export async function buildDailyRoastFacts(ctx: LeagueContext, now: number, sche
   // A plain cut of a nobody is not news (rookie drafts bring dozens): keep adds and notable drops.
   const waivers = tx.waivers.filter((w) => w.added.length > 0 || w.notableDrop || w.type === "waiver");
 
-  // Draft picks since the last Daily Roast.
+  // Draft picks since the last Daily.
   let draftPicks: DraftPickFact[] = [];
   let nextPicks = cursor?.picks ?? null;
   const draft = ctx.draft;

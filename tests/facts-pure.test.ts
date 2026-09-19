@@ -6,7 +6,7 @@ import { describe, expect, it } from "vitest";
 import { bestSwap, benchPointsLeft, flipSwapFor, swapCandidates, teamOptimal, zeroStarterReason, type TeamWeekInput } from "@/lib/facts/lineup";
 import { draftGrade, ordinal, tradeGrade } from "@/lib/facts/util";
 import { approxPickValue, buildTrade, buildWaivers, type LosingBidFact, type TransactionEnv } from "@/lib/facts/transactions";
-import { autopausedMs, buildDraftPicks, clockSeconds, parsePickSeen, positionRunLengths, positionRuns, rosterForPick, slotForPick, verdictFor } from "@/lib/facts/draft";
+import { buildDraftPicks, parsePickSeen, resumesAtFor, positionRunLengths, positionRuns, rosterForPick, slotForPick, verdictFor } from "@/lib/facts/draft";
 import { standingsThrough, streakOf, weekResults } from "@/lib/facts/weekly";
 import type { FactsLoader } from "@/lib/facts/load";
 import { assembleShame, transactionShame } from "@/lib/facts/shame";
@@ -355,21 +355,9 @@ describe("draft math (hand-checked)", () => {
     expect(parsePickSeen(null, "d1").size).toBe(0);
   });
 
-  it("time on the clock skips the overnight autopause (UTC minutes, window may wrap midnight)", () => {
-    const H = 3600_000;
-    // MSTP: 180-840 UTC = 11 PM to 10 AM EDT.
-    const mstp = { rounds: 34, teams: 10, autopause_enabled: 1, autopause_start_time: 180, autopause_end_time: 840 };
-    const day = Date.UTC(2026, 8, 19);
-    // Picked 10:30 PM EDT (02:30 UTC), next pick 10:30 AM EDT (14:30 UTC): 30 min before the pause, 30 after.
-    expect(autopausedMs(day + 2.5 * H, day + 14.5 * H, mstp)).toBe(11 * H);
-    expect(clockSeconds(day + 2.5 * H, day + 14.5 * H, mstp)).toBe(3600);
-    // No pause enabled: wall time.
-    expect(clockSeconds(day + 2.5 * H, day + 14.5 * H, { ...mstp, autopause_enabled: 0 })).toBe(12 * 3600);
-    // A window that wraps midnight UTC (22:00 to 06:00), across two nights.
-    const wrap = { rounds: 1, teams: 2, autopause_enabled: 1, autopause_start_time: 22 * 60, autopause_end_time: 6 * 60 };
-    expect(autopausedMs(day + 20 * H, day + 24 * H + 23 * H, wrap)).toBe(8 * H + 1 * H);
-    expect(clockSeconds(null, day, mstp)).toBeNull();
-    expect(clockSeconds(day + H, day, mstp)).toBeNull();
+  it("picks resume at the commissioner's 8 AM ET while the draft is paused, never from Sleeper's autopause", () => {
+    expect(resumesAtFor("paused")).toBe("8 AM ET");
+    for (const s of ["drafting", "pre_draft", "complete"] as const) expect(resumesAtFor(s)).toBeNull();
   });
 
   it("reach thresholds scale with the pick", () => {
@@ -390,7 +378,9 @@ describe("draft math (hand-checked)", () => {
     ];
     const facts = buildDraftPicks({ ctx, draft, picks, traded: [], players: PLAYERS, snap: SNAP, seen: new Map([[1, 60_000], [2, 3_660_000]]) });
     // Talley is FantasyCalc #40 taken 1st: reach +39. Easley #90 at 2: reach +88.
-    expect(facts[0]).toMatchObject({ fcRank: 40, reach: 39, verdict: "reach", secondsOnClock: 60, pickedAt: 60_000 });
-    expect(facts[1]).toMatchObject({ fcRank: 90, reach: 88, secondsOnClock: 3600 });
+    expect(facts[0]).toMatchObject({ fcRank: 40, reach: 39, verdict: "reach", pickedAt: 60_000 });
+    expect(facts[1]).toMatchObject({ fcRank: 90, reach: 88, pickedAt: 3_660_000 });
+    // First-seen times are when the site noticed a pick, never a time on the clock.
+    for (const f of facts) expect(f).not.toHaveProperty("secondsOnClock");
   });
 });

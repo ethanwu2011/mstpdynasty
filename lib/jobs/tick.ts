@@ -33,8 +33,12 @@ export const TICK_LOOKBACK_MS = 7 * DAY_MS;
 const ROAST_CONCURRENCY = 3;
 /** A roast written with the writer configured but kept facts-only (post-check failed) is retried after this. */
 const REROAST_AFTER_MS = 30 * 60_000;
-/** Bump when the writer's voice changes: every item written in an older voice is written again. */
-export const ROAST_VOICE = 2;
+/**
+ * Bump when the writer's voice changes: every item written in an older voice is written again.
+ * 3: the fake-epic voice of the approved Daily (headline, cold open, per-manager hits), with no
+ * pick-clock times.
+ */
+export const ROAST_VOICE = 3;
 /** Give up on the writer for an item after this many facts-only results while it was configured. */
 const MAX_WRITER_ATTEMPTS = 3;
 const RETRY_ERROR_AFTER_MS = 3600_000;
@@ -80,7 +84,8 @@ function wants(idx: RoastIndex, id: string, now: number, writerConfigured: boole
   if (e.s === "llm") return (e.v ?? 1) < ROAST_VOICE;
   // Written before the writer existed (for example before the API key was added): redo it now.
   if (!e.w) return true;
-  if ((e.n ?? 0) >= MAX_WRITER_ATTEMPTS) return false;
+  // Gave up on the writer: a new voice (and its new checks) gets one more try.
+  if ((e.n ?? 0) >= MAX_WRITER_ATTEMPTS) return (e.v ?? 1) < ROAST_VOICE;
   return now - e.t > REROAST_AFTER_MS;
 }
 
