@@ -44,6 +44,24 @@ export const ISSUE_REQUEST: RoastRequestOptions = { timeout: 180_000, maxRetries
 
 let override: RoastClient | null | undefined;
 let sdkClient: RoastClient | null = null;
+let keyIndex = 0;
+
+/**
+ * ANTHROPIC_API_KEY as pasted can hold more than one key or stray whitespace
+ * (seen in production: three keys in one value). Use each sk-ant token in turn.
+ */
+export function apiKeyCandidates(raw = process.env.ANTHROPIC_API_KEY ?? ""): string[] {
+  const tokens = raw.match(/sk-ant-[A-Za-z0-9_-]+/g) ?? [];
+  const unique = [...new Set(tokens)];
+  if (unique.length) return unique;
+  const trimmed = raw.trim();
+  return trimmed ? [trimmed.split(/\s+/)[0]] : [];
+}
+
+/** Remove anything key-shaped before text reaches a log or the store. */
+export function scrubSecrets(text: string): string {
+  return text.replace(/sk-ant-[A-Za-z0-9_-]+/g, "[key]");
+}
 
 /**
  * Tests: inject a fake client (or null to force "not configured"). Pass undefined to go back
@@ -57,7 +75,9 @@ function getClient(): RoastClient | null {
   if (override !== undefined) return override;
   if (!configured.anthropic()) return null;
   // Exactly as the spec says: `new Anthropic()` reads ANTHROPIC_API_KEY from the environment.
-  sdkClient ??= new Anthropic() as unknown as RoastClient;
+  const keys = apiKeyCandidates();
+  if (!keys.length) return null;
+  sdkClient ??= new Anthropic({ apiKey: keys[Math.min(keyIndex, keys.length - 1)] }) as unknown as RoastClient;
   return sdkClient;
 }
 
@@ -121,7 +141,12 @@ export async function callRoastModel(userContent: string, label = "roast", optio
   try {
     msg = await client.beta.messages.create(buildRoastRequest(userContent), options);
   } catch (err) {
-    const detail = describeError(err);
+    const detail = scrubSecrets(describeError(err));
+    // A rejected key: move to the next candidate for the following call.
+    if (err instanceof Anthropic.AuthenticationError && override === undefined && keyIndex < apiKeyCandidates().length - 1) {
+      keyIndex += 1;
+      sdkClient = null;
+    }
     console.warn(`[roast] ${label}: ${detail}`);
     await recordWriterStatus({ ok: false, at: Date.now(), reason: "error", detail });
     return { ok: false, reason: "error", detail, model: null, usage: null };
