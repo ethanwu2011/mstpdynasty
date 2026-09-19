@@ -1,18 +1,20 @@
 import { configured } from "@/lib/env";
 import { pickBackend } from "@/lib/store";
 import { readWriterStatus } from "@/lib/roast/status";
+import { readEmailStatus } from "@/lib/email";
 
 export const dynamic = "force-dynamic";
 
 /** Operational status only: which services are configured and how the last writer call went. */
 export async function GET() {
-  const writer = await readWriterStatus();
+  const [writer, email] = await Promise.all([readWriterStatus(), readEmailStatus()]);
   return Response.json(
     {
       store: pickBackend(),
       writerConfigured: configured.anthropic(),
       emailConfigured: configured.resend(),
       lastWriterCall: writer,
+      lastEmail: email,
       // Names only, never values: which relevant settings this deployment can see.
       envPresent: Object.fromEntries(
         [

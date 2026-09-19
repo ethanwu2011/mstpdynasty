@@ -336,7 +336,8 @@ describe("subscriptions", () => {
     expect((await unsubscribe(`${token}x`)).status).toBe("bad_signature");
     expect((await unsubscribe("")).status).toBe("bad_signature");
     expect(await unsubscribe(token)).toEqual({ ok: true, status: "unsubscribed" });
-    expect((await unsubscribe(token)).status).toBe("not_found");
+    // Idempotent: a second click still reads as unsubscribed (the opt-out marker stays).
+    expect((await unsubscribe(token)).status).toBe("unsubscribed");
     expect((await listSubscribers(MSTP_LEAGUE_ID)).map((s) => s.email)).toEqual(["b@example.com"]);
   });
 });

@@ -123,6 +123,38 @@ export async function listSubscribers(leagueId: string = currentLeagueId()): Pro
   return subs.sort((a, b) => a.createdAt - b.createdAt);
 }
 
+const optOutKey = (leagueId: string, ref: string) => `league:${leagueId}:optout:${ref}`;
+
+/** Addresses from the private LEAGUE_EMAILS setting (comma separated). Never logged. */
+function leagueEmails(): string[] {
+  return (process.env.LEAGUE_EMAILS ?? "")
+    .split(/[,;\s]+/)
+    .map((e) => normalizeEmail(e))
+    .filter((e): e is string => Boolean(e));
+}
+
+/** Everyone who gets the league send: LEAGUE_EMAILS plus confirmed subscribers, minus opt-outs. */
+export async function recipients(leagueId: string = currentLeagueId()): Promise<string[]> {
+  const subs = (await listSubscribers(leagueId)).filter((s) => s.confirmed).map((s) => s.email);
+  const out: string[] = [];
+  for (const e of [...new Set([...leagueEmails(), ...subs])]) {
+    const r = subscriberRef(e);
+    if (r && (await store.get(optOutKey(leagueId, r)))) continue;
+    out.push(e);
+  }
+  return out.slice(0, MAX_SUBSCRIBERS);
+}
+
+/** Last send outcome for /api/health: counts and scrubbed errors only, never addresses. */
+async function recordEmailStatus(result: SendResult): Promise<void> {
+  const error = result.error ? result.error.replace(/[^\s@<>"']+@[^\s@<>"']+/g, "[email]").slice(0, 240) : undefined;
+  await store.set("ops:email-status", { at: Date.now(), status: result.status, recipients: result.recipients, error }).catch(() => {});
+}
+
+export async function readEmailStatus(): Promise<unknown> {
+  return store.get("ops:email-status").catch(() => null);
+}
+
 async function findByRef(leagueId: string, ref: string): Promise<Subscriber | null> {
   for (const s of await listSubscribers(leagueId)) {
     const r = subscriberRef(s.email);
@@ -147,11 +179,14 @@ export async function sendIssue(issue: Issue, mode: NewsletterMode = newsletterM
   if (!adminSecret()) return notConfigured("ADMIN_SECRET is not set (it signs the approve and unsubscribe links).");
   if (isDevLeague(issue.leagueId)) return skipped("Dev league: never emailed.");
   if (issue.placeholder) return skipped("Placeholder issue: never emailed.");
+  let result: SendResult;
   try {
-    return mode === "review" ? await sendReview(issue, transport) : await sendToSubscribers(issue, transport);
+    result = mode === "review" ? await sendReview(issue, transport) : await sendToSubscribers(issue, transport);
   } catch (err) {
-    return { status: "error", recipients: 0, messageIds: [], error: errText(err) };
+    result = { status: "error", recipients: 0, messageIds: [], error: errText(err) };
   }
+  await recordEmailStatus(result);
+  return result;
 }
 
 /**
@@ -209,16 +244,16 @@ async function sendToSubscribers(issue: Issue, transport: EmailTransport): Promi
   if (claim === "done") return skipped("Already sent to the league.");
   if (claim === "busy") return skipped("Being sent right now.");
   try {
-    const subs = (await listSubscribers(l)).filter((s) => s.confirmed).slice(0, MAX_SUBSCRIBERS);
+    const tos = await recipients(l);
     const webUrl = link(`/newsletter/${encodeURIComponent(current.slug)}`, {});
     const messages: EmailMessage[] = [];
-    for (const s of subs) {
-      const unsub = unsubscribeLink(l, s.email);
+    for (const to of tos) {
+      const unsub = unsubscribeLink(l, to);
       if (!unsub) throw new Error("Could not sign unsubscribe links.");
-      messages.push({ to: s.email, ...renderIssueEmail(current, { unsubscribeUrl: unsub, webUrl }), headers: unsubscribeHeaders(unsub) });
+      messages.push({ to, ...renderIssueEmail(current, { unsubscribeUrl: unsub, webUrl }), headers: unsubscribeHeaders(unsub) });
     }
     const ids = messages.length
-      ? (await transport.send(messages, { idempotencyKey: `send/${l}/${current.slug}/${shortHash(subs.map((s) => s.email).join(","))}` })).ids
+      ? (await transport.send(messages, { idempotencyKey: `send/${l}/${current.slug}/${shortHash(tos.join(","))}` })).ids
       : [];
     const sentAt = Date.now();
     await saveIssue({ ...current, status: "sent", sentAt, recipientCount: messages.length });
@@ -453,9 +488,10 @@ export async function unsubscribe(token: string): Promise<UnsubscribeResult> {
   const v = verifyToken(token, "unsub");
   if (!v.ok || !v.payload.r) return { ok: false, status: "bad_signature" };
   try {
+    // Opt-out marker covers addresses that come from LEAGUE_EMAILS as well as subscribers.
+    await store.set(optOutKey(v.payload.l, v.payload.r), { at: Date.now() });
     const sub = await findByRef(v.payload.l, v.payload.r);
-    if (!sub) return { ok: false, status: "not_found" };
-    await store.del(store.keys.subscriber(v.payload.l, sub.email));
+    if (sub) await store.del(store.keys.subscriber(v.payload.l, sub.email));
     return { ok: true, status: "unsubscribed" };
   } catch {
     return { ok: false, status: "error" };
