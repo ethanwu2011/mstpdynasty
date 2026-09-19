@@ -15,6 +15,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { configured } from "@/lib/env";
 import type { RoastUsage } from "@/lib/types";
 import { SYSTEM_PROMPT } from "./persona";
+import { recordWriterStatus } from "./status";
 
 export const ROAST_MODEL = "claude-opus-5";
 export const ROAST_MAX_TOKENS = 16000;
@@ -122,12 +123,20 @@ export async function callRoastModel(userContent: string, label = "roast", optio
   } catch (err) {
     const detail = describeError(err);
     console.warn(`[roast] ${label}: ${detail}`);
+    await recordWriterStatus({ ok: false, at: Date.now(), reason: "error", detail });
     return { ok: false, reason: "error", detail, model: null, usage: null };
   }
   const usage = usageOf(msg);
   console.info(
     `[roast] ${label}: model=${msg.model} stop=${msg.stop_reason} in=${usage.inputTokens} out=${usage.outputTokens} cache_read=${usage.cacheReadInputTokens} cache_write=${usage.cacheCreationInputTokens}`,
   );
+  await recordWriterStatus({
+    ok: msg.stop_reason !== "refusal",
+    at: Date.now(),
+    model: msg.model,
+    reason: msg.stop_reason === "refusal" ? "refusal" : undefined,
+    detail: msg.stop_reason === "refusal" ? String(msg.stop_details?.category ?? "refused") : undefined,
+  });
   if (msg.stop_reason === "refusal") {
     return { ok: false, reason: "refusal", detail: msg.stop_details?.category ?? "refused", model: msg.model, usage };
   }
