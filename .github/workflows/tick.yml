@@ -1,0 +1,16 @@
+# Wakes the site's writer every 10 minutes so new picks, trades and waiver results get their
+# lines even when nobody has the site open. The tick endpoint has its own 2-minute cooldown
+# and only writes when something new happened, so extra pings cost nothing.
+name: tick
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch: {}
+permissions: {}
+jobs:
+  tick:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - name: Ping the tick endpoint
+        run: curl -fsS -X POST --max-time 300 https://www.mstpdynasty.com/api/tick || true
