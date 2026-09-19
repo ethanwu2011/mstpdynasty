@@ -107,13 +107,14 @@ export default async function TeamPage({ params, searchParams }: { params: Param
   const draftStage = stage === "pre" || stage === "live" || stage === "paused";
   const slot = board?.columns.find((c) => c.rosterId === id)?.slot ?? null;
 
+  const showSlot = Boolean(slot && hasRoster);
   const kicker =
-    (slot && hasRoster) || manager.isCommissioner || (standing && played) ? (
-    <>
-      {slot && hasRoster ? <Tag>Draft slot {slot}</Tag> : null}
-      {manager.isCommissioner ? <Tag tone="outline">Commissioner</Tag> : null}
-      {standing && played ? <span className="type-label">{ordinal(standing.rank)} place</span> : null}
-    </>
+    showSlot || manager.isCommissioner || (standing && played) ? (
+      <>
+        {showSlot ? <Tag>Draft slot {slot}</Tag> : null}
+        {manager.isCommissioner ? <Tag tone="outline">Commissioner</Tag> : null}
+        {standing && played ? <span className="type-label">{ordinal(standing.rank)} place</span> : null}
+      </>
     ) : null;
 
   let stats: LeadStat[];
