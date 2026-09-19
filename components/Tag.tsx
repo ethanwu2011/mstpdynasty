@@ -50,7 +50,7 @@ export function LiveSquare({ blink = false, size = 8, className }: LiveSquarePro
 /** The "sample data" marker for any result with `placeholder: true`. */
 export function SampleMark({ onInk = false }: { onInk?: boolean }) {
   return (
-    <Tag tone={onInk ? "paper" : "outline"} title="Placeholder numbers until the real model is wired in">
+    <Tag tone={onInk ? "paper" : "outline"} title="Sample numbers, not this league's.">
       Sample data
     </Tag>
   );

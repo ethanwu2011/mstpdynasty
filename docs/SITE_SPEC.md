@@ -2,6 +2,12 @@
 
 Single source of truth for the site and the roast agent. Every agent reads this first.
 
+## DECISIONS ROUND 3 (Ethan, 2026-09-18 22:20 ET), override everything else
+- MOBILE IS HARD TO READ (seen on a real iPhone). Rules: never set text on a halftone or dot-matrix texture (textures are ornament blocks with no text on them); small text (status line, panel labels, tags, nav) must be solid, legible pixel caps (Silkscreen) or the grotesk, never Doto or any dotted/dithered rendering; Doto only for big numerals (32px and up); body text 16px or more on phones; the roast panel must be plain paper behind text. Check at 375x812 and 390x844.
+- NO SUBSCRIBE BUTTON anywhere. Remove the public subscribe page, link, nav item and API. Recipients come from the private env var LEAGUE_EMAILS (comma-separated, Secret in Vercel, never in the repo). Keep signed unsubscribe links (opt-outs stored in the store).
+- Email testing: NEWSLETTER_MODE=review sends every issue only to COMMISSIONER_EMAIL (Ethan's own address, set only in the private env) with an approve link first. Add POST /api/admin/test-email (Authorization: Bearer ADMIN_SECRET) that sends the latest issue, or a sample built from current facts, to COMMISSIONER_EMAIL only.
+- Upstash is not connected yet in production (store is "file" there). /api/health shows it. Nothing to build for this, Ethan is connecting it.
+
 ## DECISIONS ROUND 2 (Ethan, 2026-09-18 21:45 ET), override everything else
 - NEVER announce the roast. No copy that says "roast", "roasting", "burn", "cooked" etc. about itself ("The roasting starts at pick 1.01" is corny). The roast is just stated, flat and brutal, like it is obviously true. Panel labels name the EVENT, not the genre ("PICK 1.08", "WEEK 5 FINAL", "TRADE, SEP 21"), never "THE LATEST ROAST".
 - Therefore: no persona byline. Newsletters are from "MSTP Dynasty" (email from "MSTP Dynasty <league@mstpdynasty.com>"). Issue names: "The Daily" (daily, only with material), "Thursday Night Fallout" (Friday), "Week N Recap" (Tuesday), "Draft Grades" (after the startup draft). Never "The Daily Roast" / "The Weekly Roast" / "The Roast".
@@ -11,9 +17,9 @@ Single source of truth for the site and the roast agent. Every agent reads this 
 
 ## DECISIONS FROM ETHAN (2026-09-18 20:10 ET), override anything below
 - NO MED THEME AT ALL. No "Attending", no hospital/chart/rounds/M&M/autopsy language anywhere: not in the persona, issue names, page labels, or design. Straight fantasy roasting.
-- Persona: an unnamed, merciless fantasy football columnist (sports-radio / roast-comic energy). Byline "The Roast". Email from "The Roast <roast@mstpdynasty.com>".
-- Issue names: "The Daily Roast" (daily 8 AM ET, only when there is material), "Thursday Night Fallout" (Friday, in season), "The Weekly Roast" (Tuesday full recap), "Draft Grades" (once, after the startup draft).
-- Home page in season: the LATEST ROAST leads, live scores and win odds come right after it.
+- Persona: an unnamed, merciless fantasy football columnist (sports-radio / roast-comic energy). (Byline and sender superseded by ROUND 2: no byline, from "MSTP Dynasty".)
+- Issue names (renamed by ROUND 2): "The Daily" (daily 8 AM ET, only when there is material), "Thursday Night Fallout" (Friday, in season), "Week N Recap" (Tuesday full recap), "Draft Grades" (once, after the startup draft).
+- Home page in season: the latest write-up leads (its panel labelled by the event, per ROUND 2), live scores and win odds come right after it.
 - Audience: the 10 managers, equally on phones during games and on laptops reading during the week. Both layouts are first-class.
 - Visual direction is being decided separately (PRODUCT.md / DESIGN.md at the repo root, written with the impeccable skill). If DESIGN.md exists, it overrides the "Design direction" section below.
 
@@ -42,21 +48,21 @@ Next.js 16 (App Router) + React 19 + TypeScript + Tailwind v4, same as Ethan's p
 
 Packages: @anthropic-ai/sdk, resend, @upstash/redis, zod, vitest. Nothing else without a reason.
 
-Storage: `lib/store.ts` = tiny KV interface (get/set/list/lock). Uses Upstash Redis when KV_REST_API_URL + KV_REST_API_TOKEN (or UPSTASH_REDIS_REST_URL + UPSTASH_REDIS_REST_TOKEN) are set, otherwise a JSON file store in `.data/` for local dev. Stored: trimmed players, issues (newsletters), roasts (trades, waivers, draft picks) keyed by transaction/pick id, sim history per week, subscribers, job run log, last-seen snapshots (injury status etc).
+Storage: `lib/store.ts` = tiny KV interface (get/set/list/lock). Uses Upstash Redis when KV_REST_API_URL + KV_REST_API_TOKEN (or UPSTASH_REDIS_REST_URL + UPSTASH_REDIS_REST_TOKEN) are set, otherwise a JSON file store in `.data/` for local dev. Stored: trimmed players, issues (newsletters), roasts (trades, waivers, draft picks) keyed by transaction/pick id, sim history per week, one-liners per stat surface, daily FantasyCalc snapshots, newsletter opt-outs (HMAC refs, never addresses), job run log, last-seen snapshots (injury status etc).
 
 ## Env vars (document all in .env.example, never commit values)
-LEAGUE_ID, ANTHROPIC_API_KEY, RESEND_API_KEY, EMAIL_FROM ("The Roast <roast@mstpdynasty.com>"), COMMISSIONER_EMAIL, NEWSLETTER_MODE (review | auto, default review), SITE_PASSWORD (if set, whole site is gated), CRON_SECRET, ADMIN_SECRET (HMAC for approve/unsubscribe links), SITE_URL, KV_* / UPSTASH_*, IMAGE_PROVIDER (none | openai | gemini, default none) + OPENAI_API_KEY / GEMINI_API_KEY.
+LEAGUE_ID, ANTHROPIC_API_KEY, RESEND_API_KEY, EMAIL_FROM (defaults to "MSTP Dynasty" at the league's own address), LEAGUE_EMAILS (recipients, comma-separated, private env only), COMMISSIONER_EMAIL, NEWSLETTER_MODE (review | auto, default review), SITE_PASSWORD (if set, whole site is gated), CRON_SECRET, ADMIN_SECRET (HMAC for approve/unsubscribe links, bearer for POST /api/admin/test-email), SITE_URL, KV_* / UPSTASH_*, IMAGE_PROVIDER (none | openai | gemini, default none) + OPENAI_API_KEY / GEMINI_API_KEY.
 Everything must work with NO keys set: the site renders, models run, and roast/email features show a clear "not configured yet" state instead of crashing.
 
 ## Roast engine (the core feature)
 Rule 1: code computes every fact; the LLM only writes jokes about facts it is handed. The prompt forbids inventing stats, and a post-check verifies every number in the output appears in the facts payload (drop or regenerate otherwise).
 
-Persona: "The Roast", an unnamed, merciless fantasy football columnist (sports-radio / roast-comic energy) who writes the league's newsletter. No medical, hospital or school theme anywhere (see DECISIONS). Toxic in the way a friend group is toxic: goes hard at fantasy decisions, bad luck, bad trades, cheap FAAB bids, lineup negligence, and whatever running jokes the commissioner sets as lore (env `ROAST_NOTES` or the store key `roast-notes`; `config/roast-notes.ts` ships empty defaults only). Hard limits in the system prompt: nothing about race, ethnicity, religion, sexuality, gender, disability, bodies, family, or real academic/medical/personal failures unless the lore sets it up. No slurs. It roasts decisions, not identities.
+Persona: an unnamed, unsigned, merciless fantasy football columnist (sports-radio / roast-comic energy) who writes the league's newsletter. No medical, hospital or school theme anywhere (see DECISIONS). Toxic in the way a friend group is toxic: goes hard at fantasy decisions, bad luck, bad trades, cheap FAAB bids, lineup negligence, and whatever running jokes the commissioner sets as lore (env `ROAST_NOTES` or the store key `roast-notes`; `config/roast-notes.ts` ships empty defaults only). Hard limits in the system prompt: nothing about race, ethnicity, religion, sexuality, gender, disability, bodies, family, or real academic/medical/personal failures unless the lore sets it up. No slurs. It roasts decisions, not identities.
 
-Issues (newsletters), all written by The Roast:
-- "The Daily Roast" (daily, 8 AM ET): transactions since last run (trades with value-based grades, waiver claims with winning and losing bids, "$0 bid" and big-overpay callouts, notable drops), injuries to rostered starters, lineup negligence alerts (a starter on bye/out/IR for this week's games: shame them BEFORE kickoff), draft picks since last run while the startup draft is live. Only sends when there is material. Quiet days send nothing.
+Issues (newsletters), from "MSTP Dynasty" with no byline:
+- "The Daily" (daily, 8 AM ET): transactions since last run (trades with value-based grades, waiver claims with winning and losing bids, "$0 bid" and big-overpay callouts, notable drops), injuries to rostered starters, lineup negligence alerts (a starter on bye/out/IR for this week's games: shame them BEFORE kickoff), draft picks since last run while the startup draft is live. Only sends when there is material. Quiet days send nothing.
 - "Thursday Night Fallout" (Friday 8 AM ET, in season): who got cooked or carried by the Thursday game, matchups already decided in spirit, live win probabilities after TNF.
-- "The Weekly Roast" (Tuesday, after Monday night): the weekly recap. Every matchup, points left on the bench, the start/sit call that flipped a result, highest/lowest score, lost with a top-3 score (robbed) / won with a bottom-3 score (fraud), standings, updated season odds, power rankings, Loser of the Week.
+- "Week N Recap" (Tuesday, after Monday night): the weekly recap. Every matchup, points left on the bench, the start/sit call that flipped a result, highest/lowest score, lost with a top-3 score (robbed) / won with a bottom-3 score (fraud), standings, updated season odds, power rankings, Loser of the Week.
 - "Draft Grades" (once, after the startup draft completes): grades for every team using FantasyCalc value, reaches and steals, and projected season odds.
 - Instant roasts (site only, no email): each trade, waiver claim batch, and startup draft pick gets a 1-3 sentence roast shortly after it happens.
 
@@ -66,7 +72,7 @@ Facts engine (`lib/facts/*`), deterministic and unit tested on the dev fixture l
 - Draft: each pick with overall pick number, FantasyCalc overall rank => reach (+) or steal (-), age, position, time on the clock if available from pick metadata, position runs.
 - TNF: players in the Thursday game, their points, which teams they helped or hurt.
 
-Claude API usage (from the claude-api skill, use exactly): `import Anthropic from "@anthropic-ai/sdk"; const client = new Anthropic();` model `claude-opus-5`. Use `client.beta.messages.create({ model: "claude-opus-5", max_tokens: 16000, betas: ["server-side-fallback-2026-07-01"], fallbacks: "default", cache_control: { type: "ephemeral" }, system: <frozen persona + rules, byte-stable so it caches>, messages: [{ role: "user", content: <facts JSON + issue type> }] })`. Do not send temperature/top_p, budget_tokens, or an assistant prefill (all 400 on this model). Always check `stop_reason === "refusal"` before reading content; on refusal or any API error, publish a facts-only version with the one-line note "The roast writer called in sick. Facts only today." (`FACTS_ONLY_NOTE`). Narrow content blocks by `block.type === "text"`. If the installed SDK's types reject `fallbacks`, keep the call shape and cast narrowly, then note it. Log usage.cache_read_input_tokens.
+Claude API usage (from the claude-api skill, use exactly): `import Anthropic from "@anthropic-ai/sdk"; const client = new Anthropic();` model `claude-opus-5`. Use `client.beta.messages.create({ model: "claude-opus-5", max_tokens: 16000, betas: ["server-side-fallback-2026-07-01"], fallbacks: "default", cache_control: { type: "ephemeral" }, system: <frozen persona + rules, byte-stable so it caches>, messages: [{ role: "user", content: <facts JSON + issue type> }] })`. Do not send temperature/top_p, budget_tokens, or an assistant prefill (all 400 on this model). Always check `stop_reason === "refusal"` before reading content; on refusal or any API error, publish a facts-only version with no note (`FACTS_ONLY_NOTE` is null: per ROUND 2 nothing a reader sees talks about the writer, the facts simply run). Narrow content blocks by `block.type === "text"`. If the installed SDK's types reject `fallbacks`, keep the call shape and cast narrowly, then note it. Log usage.cache_read_input_tokens.
 
 Images (phase 2, behind IMAGE_PROVIDER): "Loser of the Week" cartoon of the losing team's NAME or mascot in misery. Never real faces (no managers, no NFL players). Build the interface and a no-op provider now; real providers get added once Ethan picks one.
 
@@ -87,12 +93,12 @@ Images (phase 2, behind IMAGE_PROVIDER): "Loser of the Week" cartoon of the losi
 - `/shame`: Wall of Shame, all-time (bench points left, zero-point starters, worst trades by value lost, $0 bids that lost, biggest overpays).
 - `/trades`: every trade with value delta and roast.
 - `/newsletter` and `/newsletter/[slug]`: issue archive and issue pages (the same content as the email).
-- `/subscribe`: pick your name from the 10 managers, enter email. Confirmation + unsubscribe link in every email.
+- No `/subscribe` page (ROUND 3): recipients come from the private env `LEAGUE_EMAILS`. Every email carries a signed unsubscribe link.
 - Password gate when SITE_PASSWORD is set (`/enter` page, httpOnly cookie).
-- API: `/api/cron/daily` (Vercel cron, once a day, `Authorization: Bearer ${CRON_SECRET}`) decides by date and league state which jobs run (The Daily Roast every day, Thursday Night Fallout on Fridays in season, The Weekly Roast on Tuesdays in season, Draft Grades once after the draft completes). `/api/tick` is fired from page renders via Next's after() and, under a KV lock with a 2-minute cooldown, roasts any new trades, waiver results and draft picks (this is how roasts appear quickly on Vercel Hobby, which only allows daily cron). `/api/admin/approve?issue=...&sig=...` sends a reviewed issue. `/api/unsubscribe`.
+- API: `/api/cron/daily` (Vercel cron, once a day, `Authorization: Bearer ${CRON_SECRET}`) decides by date and league state which jobs run (The Daily every day, Thursday Night Fallout on Fridays in season, Week N Recap on Tuesdays in season, Draft Grades once after the draft completes). `/api/tick` is fired from page renders via Next's after() and, under a KV lock with a 2-minute cooldown, roasts any new trades, waiver results and draft picks (this is how roasts appear quickly on Vercel Hobby, which only allows daily cron). `/api/admin/approve?issue=...&sig=...` sends a reviewed issue. `POST /api/admin/test-email` (Bearer ADMIN_SECRET) sends a test copy to COMMISSIONER_EMAIL only. `/api/unsubscribe`. `/api/health`.
 
 ## Email
-Resend. One clean, text-first HTML email per issue (single column, readable serif body, the league name in small caps at the top, no stock header images, no big colored buttons) + a plain-text part. NEWSLETTER_MODE=review sends the draft only to COMMISSIONER_EMAIL with an "Approve and send to the league" link (HMAC-signed, single use); auto sends to all subscribers directly. Every email has an unsubscribe link ("in case you can't take it").
+Resend. One clean, text-first HTML email per issue (single column, readable serif body, the league name in small caps at the top, no stock header images, no big colored buttons) + a plain-text part. NEWSLETTER_MODE=review sends the draft only to COMMISSIONER_EMAIL with an "Approve and send to the league" link (HMAC-signed, single use); auto sends to LEAGUE_EMAILS minus opt-outs directly. Every email has an unsubscribe link ("in case you can't take it").
 
 ## Design direction
 Superseded by DESIGN.md at the repo root (see DECISIONS). What still holds: no medical or hospital labels anywhere, tabular numerals for scores, a readable serif for newsletter body text, dense tables over cards, mobile works at 375 px, and the `impeccable` skill's anti-pattern / AI-slop checks.
@@ -102,7 +108,7 @@ Superseded by DESIGN.md at the repo root (see DECISIONS). What still holds: no m
 - Roast lore must NOT live in the repo. config/roast-notes.ts only holds empty defaults. Real lore is read at runtime from env ROAST_NOTES (JSON object: manager first name -> text) and/or the store key "roast-notes"; env wins. Document this in .env.example and docs/DEV.md.
 
 ## Security
-No secrets in client bundles. Cron and admin routes verify secrets with constant-time compare. Approve and unsubscribe links are HMAC signed. Rate-limit /api/tick with the KV lock. Escape all user-provided text (team names come from Sleeper and are user-controlled) in HTML and email. Subscribe endpoint validates email and caps subscribers at 30.
+No secrets in client bundles. Cron and admin routes verify secrets with constant-time compare. Approve and unsubscribe links are HMAC signed. Rate-limit /api/tick with the KV lock. Escape all user-provided text (team names come from Sleeper and are user-controlled) in HTML and email. League sends are capped at 30 recipients, and no address is ever written to the repo, the store, a response or a log.
 
 ## Out of scope for now
 Deploying, creating the GitHub repo, DNS, buying anything. Work locally in /Users/ethanwu/mstpdynasty only. Never touch /Users/ethanwu/Ethan_Personal_Website.

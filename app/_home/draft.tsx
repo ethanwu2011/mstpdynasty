@@ -7,9 +7,10 @@ import { BarLink } from "@/components/HeaderBar";
 import { Numeral } from "@/components/Numeral";
 import { Panel, type PanelSpan } from "@/components/Panel";
 import { Receipt, RoastBlock, type RoastBlockData } from "@/components/RoastBlock";
+import { lineOf, RowLine } from "@/components/RowLine";
 import { LiveSquare, SampleMark, Tag } from "@/components/Tag";
 import { managerFor } from "@/lib/league";
-import type { DraftFacts, DraftPickFact, LeagueContext, Roast } from "@/lib/types";
+import type { DraftFacts, DraftPickFact, LeagueContext, Roast, SurfaceLineMap } from "@/lib/types";
 import { clockLength, etStamp, ordinal, pickLabel } from "../_lib/format";
 import { draftOrder, pickAt, slotPicks } from "../_lib/draft";
 import { roastToBlock } from "../_lib/roast-view";
@@ -24,7 +25,7 @@ function orderLabel(ctx: LeagueContext): string {
 
 /* ------------------------------ the countdown lead ------------------------------ */
 
-/** The pre-draft lead: no roast yet, so the clock to pick 1.01 is the headline. */
+/** The pre-draft lead: nothing has happened yet, so the clock to pick 1.01 is the headline. */
 export function DraftCountdownLead({ ctx, serverNow }: { ctx: LeagueContext; serverNow: number }) {
   const d = ctx.draft;
   const commish = ctx.managers.find((m) => m.isCommissioner)?.name ?? "the commissioner";
@@ -41,19 +42,19 @@ export function DraftCountdownLead({ ctx, serverNow }: { ctx: LeagueContext; ser
       </p>
 
       <h3 className="type-display m-0 text-j3 md:text-j4 xl:text-j5">
-        <span className="board-wipe block">The roasting starts at pick 1.01</span>
+        <span className="board-wipe block">Ten teams.</span>
+        <span className="board-wipe block">Zero players.</span>
       </h3>
 
       {start ? (
         <Countdown
           target={start}
           serverNow={serverNow}
-          ghost
           digitClassName="text-d60 sm:text-d80 xl:text-d100"
           label={`Draft scheduled for ${etStamp(start)}`}
           expired={
             <div className="flex flex-col gap-3">
-              <Numeral value="00:00:00" ghost label="Zero" className="text-d60 sm:text-d80 xl:text-d100" />
+              <Numeral value="00:00:00" label="Zero" className="text-d60 sm:text-d80 xl:text-d100" />
               <p className="type-label m-0 flex items-center gap-2">
                 <LiveSquare blink size={10} />
                 {autostart ? "Starting any second" : `Past the scheduled start. The draft opens when ${commish} hits start.`}
@@ -66,8 +67,7 @@ export function DraftCountdownLead({ ctx, serverNow }: { ctx: LeagueContext; ser
       )}
 
       <p className="measure m-0 text-body md:text-lede">
-        Every pick is checked against FantasyCalc&apos;s dynasty rankings the moment it lands. Reaches get called out by name, steals get
-        noticed, and nobody gets through {rounds * teams || "all the"} picks clean. Draft Grades goes out when the board is full.
+        Every pick lands here with its FantasyCalc rank. Draft Grades goes out when {rounds * teams ? `all ${rounds * teams}` : "they all"} are in.
       </p>
 
       <Receipt
@@ -82,8 +82,7 @@ export function DraftCountdownLead({ ctx, serverNow }: { ctx: LeagueContext; ser
       <footer className="type-label mt-auto flex flex-wrap items-center gap-x-3 gap-y-2">
         <LiveSquare size={12} />
         {start ? <time dateTime={new Date(start).toISOString()}>{etStamp(start)}</time> : <span>Start time not set</span>}
-        <span className="text-ink-muted">By The Roast</span>
-        <Link href="/draft" className="link-ink ml-auto px-0.5">
+        <Link href="/draft" className="link-ink hit-area ml-auto px-0.5">
           Draft board
         </Link>
       </footer>
@@ -218,7 +217,7 @@ export function OnTheClockPanel({ ctx, facts, serverNow, span = 4 }: { ctx: Leag
               <span className="type-display truncate text-j3">{next.manager}</span>
               <span className="truncate text-fine text-ink-muted">{next.team}</span>
             </div>
-            <Numeral value={next.label} size="d60" ghost label={`Pick ${next.label}`} />
+            <Numeral value={next.label} size="d60" label={`Pick ${next.label}`} />
           </div>
 
           {since ? (
@@ -264,7 +263,7 @@ function RoundDots({ round, rounds, made, total }: { round: number; rounds: numb
   const teams = total / rounds;
   const done = Math.floor(made / teams);
   return (
-    <div className="mt-auto flex flex-col gap-2">
+    <div className="flex flex-col gap-2">
       <div className="flex items-baseline justify-between">
         <span className="type-label text-ink-muted">
           Round {Math.min(round || 1, rounds)} of {rounds}
@@ -307,8 +306,8 @@ function Verdict({ p }: { p: DraftPickFact }) {
   return null;
 }
 
-export function BoardStrip({ facts, count = 10 }: { facts: DraftFacts | null; count?: number }) {
-  // Newest first: the latest pick is the first cell. Phones show 4, tablets 5, wide screens 10.
+export function BoardStrip({ facts, lines, count = 10 }: { facts: DraftFacts | null; lines?: SurfaceLineMap; count?: number }) {
+  // Newest first: the latest pick is the first cell. Phones list 4 with their lines, tablets 5, wide screens 10.
   const picks = facts ? [...facts.picks].sort((a, b) => b.pickNo - a.pickNo).slice(0, count) : [];
   const newest = picks[0]?.pickNo;
   return (
@@ -323,31 +322,39 @@ export function BoardStrip({ facts, count = 10 }: { facts: DraftFacts | null; co
       pad={picks.length === 0}
     >
       {picks.length ? (
-        <ol className="m-0 grid list-none grid-cols-2 gap-px bg-ink p-0 sm:grid-cols-5 xl:grid-cols-10">
-          {picks.map((p, i) => (
-            <li
-              key={p.pickNo}
-              id={`strip-pick-${p.pickNo}`}
-              className={cx("min-w-0 flex-col gap-2 bg-paper px-3 py-3", i < 4 ? "flex" : i < 5 ? "hidden sm:flex" : "hidden xl:flex")}
-            >
-              <div className="flex items-center justify-between gap-2">
-                <span className="type-label">{pickLabel(p.round, p.pickInRound)}</span>
-                {p.pickNo === newest ? <Tag>Latest</Tag> : <Verdict p={p} />}
-              </div>
-              <p className="m-0 line-clamp-2 font-bold leading-tight">{p.player.name}</p>
-              <p className="type-label m-0 text-ink-muted">
-                {p.player.position}
-                {p.player.nflTeam ? ` · ${p.player.nflTeam}` : ""}
-              </p>
-              <p className="m-0 mt-auto truncate text-fine text-ink-muted">
-                {p.team.managerName}
-                {p.fcRank ? ` · FC ${ordinal(p.fcRank)}` : ""}
-              </p>
-            </li>
-          ))}
+        <ol className="m-0 grid list-none grid-cols-1 gap-px bg-ink p-0 sm:grid-cols-5 xl:grid-cols-10">
+          {picks.map((p, i) => {
+            const quip = lineOf(lines, p.pickNo);
+            return (
+              <li
+                key={p.pickNo}
+                id={`strip-pick-${p.pickNo}`}
+                className={cx("min-w-0 flex-col gap-2 bg-paper px-4 py-3 sm:px-3", i < 4 ? "flex" : i < 5 ? "hidden sm:flex" : "hidden xl:flex")}
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <Link href={`/draft#pick-${p.pickNo}`} className="type-label link-ink hit-area whitespace-nowrap px-0.5">
+                    <span className="sm:hidden">Pick </span>
+                    {pickLabel(p.round, p.pickInRound)}
+                  </Link>
+                  {p.pickNo === newest ? <Tag>Latest</Tag> : <Verdict p={p} />}
+                </div>
+                <p className="m-0 flex min-w-0 flex-wrap items-baseline gap-x-2 sm:flex-col sm:gap-y-1">
+                  <b className="leading-tight sm:line-clamp-2">{p.player.name}</b>
+                  <span className="text-data text-ink-muted md:text-fine">
+                    {[p.player.position, p.player.nflTeam].filter(Boolean).join(", ")}
+                  </span>
+                </p>
+                <p className="m-0 truncate text-data text-ink-muted sm:mt-auto md:text-fine">
+                  {p.team.managerName}
+                  {p.fcRank ? ` · FC ${ordinal(p.fcRank)}` : ""}
+                </p>
+                {quip ? <RowLine text={quip} className="sm:text-fine" /> : null}
+              </li>
+            );
+          })}
         </ol>
       ) : (
-        <DotMatrixFill state="loading" label="No picks yet. The board fills in as they land." rows={5} />
+        <DotMatrixFill state="loading" label="No picks yet." rows={5} />
       )}
     </Panel>
   );
@@ -355,10 +362,14 @@ export function BoardStrip({ facts, count = 10 }: { facts: DraftFacts | null; co
 
 /* ------------------------------ earlier roasts ------------------------------ */
 
-export function EarlierRoastsPanel({ roasts, span = 8 }: { roasts: Roast[]; span?: PanelSpan }) {
-  const blocks: RoastBlockData[] = roasts.map(roastToBlock);
+export function EarlierRoastsPanel({ roasts, lines, span = 8 }: { roasts: Roast[]; lines?: SurfaceLineMap; span?: PanelSpan }) {
+  const blocks: RoastBlockData[] = roasts.map((r) => {
+    const f = r.facts;
+    const line = !Array.isArray(f) && f.kind === "draft_pick" ? lineOf(lines, f.pickNo) : null;
+    return { ...roastToBlock(r), lede: line };
+  });
   return (
-    <Panel label="Earlier picks, roasted" span={span} pad={false}>
+    <Panel label="Earlier picks" span={span} pad={false}>
       <div className="grid flex-1 grid-cols-1 gap-px bg-ink md:grid-cols-2">
         {blocks.map((b, i) => (
           <div key={i} className="flex bg-paper px-4 pb-5 pt-6 md:px-6">

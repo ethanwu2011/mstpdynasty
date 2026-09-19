@@ -13,9 +13,11 @@
  *   draftFacts        every pick with reach/steal, position runs, on the clock, grades
  *   tnfFacts          the Thursday game: who got cooked or carried
  *   shameEntries      the all-time Wall of Shame
+ *   tradeHindsight    every trade valued at the time and today, with a value-over-time series
+ *   worstTrades       the worst-trade-in-league-history leaderboard (value lost as of today)
  *
  * Also: standingsAsOf (regular-season standings at the end of any week) and lastCompletedWeek.
- * The Daily Roast's injuries and lineup alerts are assembled by the ops agent
+ * The Daily's injuries and lineup alerts are assembled by the ops agent
  * (lib/jobs/daily-facts.ts) from these facts plus its own snapshots.
  */
 import { getLeagueContext } from "@/lib/league";
@@ -26,10 +28,13 @@ import type {
   ShameBoard,
   StandingRow,
   TnfFacts,
+  TradeHindsight,
+  TradeHindsightBoard,
   TransactionFacts,
   WeeklyFacts,
 } from "@/lib/types";
 import { computeDraftFacts } from "./draft";
+import { computeHindsightBoard, rankWorstTrades } from "./hindsight";
 import { createLoader, type FactsLoader } from "./load";
 import { assembleShame, draftShame, transactionShame, weeklyShame } from "./shame";
 import { computeTnfFacts } from "./tnf";
@@ -37,6 +42,7 @@ import { computeTransactionFacts } from "./transactions";
 import { computeWeeklyFacts, lastCompletedWeek, standingsThrough } from "./weekly";
 
 export { lastCompletedWeek } from "./weekly";
+export { HINDSIGHT_THEN_WINDOW_DAYS, MAX_SERIES_POINTS } from "./hindsight";
 export type { LosingBidFact, LosingBidReason } from "./transactions";
 
 async function loaderFor(ctx?: LeagueContext): Promise<FactsLoader> {
@@ -88,7 +94,7 @@ async function finalWeekFacts(week: number, loader: FactsLoader): Promise<Weekly
 
 /**
  * Loser of the Week crowns per roster over weeks 1..throughWeek (only weeks already final),
- * for The Roast's league memory. Uses the same per-week cache as the Wall of Shame.
+ * for the writer's league memory. Uses the same per-week cache as the Wall of Shame.
  */
 export async function loserOfTheWeekCounts(throughWeek: number, ctx?: LeagueContext): Promise<Record<number, number>> {
   const loader = await loaderFor(ctx);
@@ -114,4 +120,18 @@ export async function shameEntries(ctx?: LeagueContext): Promise<ShameBoard> {
     ...transactionShame(c.season, tx, c.league.settings.waiver_budget ?? 100),
     ...draftShame(c.season, draft),
   ]);
+}
+
+/**
+ * Every trade in hindsight, newest first: value at the time (the stored FantasyCalc snapshot
+ * nearest the trade, null before snapshots existed) and today per side, the change, and a
+ * sampled daily series for a value-over-time dot chart.
+ */
+export async function tradeHindsight(ctx?: LeagueContext): Promise<TradeHindsightBoard> {
+  return computeHindsightBoard(await loaderFor(ctx));
+}
+
+/** Worst trades in league history: most value the losing side has given away as of today. */
+export async function worstTrades(limit = 10, ctx?: LeagueContext): Promise<TradeHindsight[]> {
+  return rankWorstTrades((await tradeHindsight(ctx)).trades, limit);
 }

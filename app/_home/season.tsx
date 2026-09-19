@@ -6,9 +6,10 @@ import { BarLink } from "@/components/HeaderBar";
 import { MatchupRow, matchupFromWinProb } from "@/components/MatchupRow";
 import { Numeral } from "@/components/Numeral";
 import { Panel, type PanelSpan } from "@/components/Panel";
+import { lineOf, RowLine } from "@/components/RowLine";
 import { LiveSquare, SampleMark, Tag } from "@/components/Tag";
 import { cx } from "@/components/cx";
-import type { RosterId, StandingRow, TeamWeekFact, WeeklyFacts, WinProbWeek } from "@/lib/types";
+import type { RosterId, StandingRow, SurfaceLineMap, TeamWeekFact, WeeklyFacts, WinProbWeek } from "@/lib/types";
 import { fmtPts, record } from "../_lib/format";
 
 /* ------------------------------ the week in numbers ------------------------------ */
@@ -67,11 +68,12 @@ const BASIS_LABEL: Record<WinProbWeek["basis"], string> = {
   none: "No games",
 };
 
-export function Scoreboard({ wp, week, span = 4 }: { wp: WinProbWeek | null; week: number; span?: PanelSpan }) {
+export function Scoreboard({ wp, week, lines, span = 4 }: { wp: WinProbWeek | null; week: number; lines?: SurfaceLineMap; span?: PanelSpan }) {
   const live = wp?.basis === "live";
+  const state = wp?.basis === "final" ? "final" : live ? "live" : null;
   return (
     <Panel
-      label={`Scoreboard · Week ${week}`}
+      label={state === "final" ? `Week ${week} final` : live ? `Week ${week}, live` : `Week ${week}`}
       live={live}
       labelRight={
         <>
@@ -87,11 +89,17 @@ export function Scoreboard({ wp, week, span = 4 }: { wp: WinProbWeek | null; wee
         <>
           <div className="divide-y divide-ink">
             {wp.matchups.map((m) => (
-              <MatchupRow key={m.matchupId} {...matchupFromWinProb(m, wp.basis)} href={`/scores/${week}#m${m.matchupId}`} animate />
+              <MatchupRow
+                key={m.matchupId}
+                {...matchupFromWinProb(m, wp.basis)}
+                href={`/scores/${week}#m${m.matchupId}`}
+                line={lineOf(lines, m.matchupId)}
+                animate
+              />
             ))}
           </div>
           <div className="mt-auto border-t-2 border-ink py-3">
-            <BarLinkOnPaper href={`/scores/${week}`}>Every starter, every score</BarLinkOnPaper>
+            <BarLinkOnPaper href={`/scores/${week}`}>Box scores</BarLinkOnPaper>
           </div>
         </>
       ) : (
@@ -105,7 +113,7 @@ export function Scoreboard({ wp, week, span = 4 }: { wp: WinProbWeek | null; wee
 
 function BarLinkOnPaper({ href, children }: { href: string; children: ReactNode }) {
   return (
-    <Link href={href} className="type-label link-ink px-0.5">
+    <Link href={href} className="type-label link-ink inline-flex min-h-11 items-center px-0.5">
       {children}
     </Link>
   );
@@ -114,7 +122,17 @@ function BarLinkOnPaper({ href, children }: { href: string; children: ReactNode 
 /* ------------------------------ standings strip ------------------------------ */
 
 /** A stadium ribbon: all ten teams in order, rank in dots, record in dots. */
-export function StandingsStrip({ rows, label = "Standings", span = 12 }: { rows: StandingRow[]; label?: string; span?: PanelSpan }) {
+export function StandingsStrip({
+  rows,
+  lines,
+  label = "Standings",
+  span = 12,
+}: {
+  rows: StandingRow[];
+  lines?: SurfaceLineMap;
+  label?: string;
+  span?: PanelSpan;
+}) {
   const last = rows.length ? rows[rows.length - 1].team.rosterId : null;
   const played = rows.some((r) => r.wins + r.losses + r.ties > 0);
   return (
@@ -151,6 +169,9 @@ export function StandingsStrip({ rows, label = "Standings", span = 12 }: { rows:
                 <Numeral value={record(r.wins, r.losses, r.ties)} size="d20" label={`Record ${record(r.wins, r.losses, r.ties)}`} />
                 <span className="type-data whitespace-nowrap text-fine text-ink-muted">{fmtPts(r.pointsFor, 1)} PF</span>
               </div>
+              {lineOf(lines, r.team.rosterId) ? (
+                <RowLine text={lineOf(lines, r.team.rosterId)} className="col-span-3 mt-1.5 sm:mt-0 sm:text-fine" />
+              ) : null}
             </li>
           );
         })}

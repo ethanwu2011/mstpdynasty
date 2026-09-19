@@ -14,6 +14,7 @@ import {
   getMatchups,
   getPlayers,
   getSchedule,
+  getSeasonProjections,
   getTradedPicks,
   getWeekProjections,
   getWinnersBracket,
@@ -382,13 +383,71 @@ export async function playerRates(
   return out;
 }
 
-/** Projected optimal-lineup points for one roster. */
+/**
+ * Per-game rates from Sleeper's season projections, in league scoring: a player's projected
+ * season line scored with `scoring_settings`, divided by his projected games (`gp`). Players
+ * with no projected games are left out (the weekly rates cover them). Empty on failure,
+ * including in fixture mode, where no season file is recorded.
+ */
+export async function seasonRates(ctx: LeagueContext): Promise<Map<PlayerId, PlayerRate>> {
+  const out = new Map<PlayerId, PlayerRate>();
+  let rows;
+  try {
+    rows = await getSeasonProjections(ctx.season);
+  } catch {
+    return out;
+  }
+  for (const [id, row] of Object.entries(rows)) {
+    const gp = row.stats.gp;
+    if (typeof gp !== "number" || !(gp >= 1)) continue;
+    // Sleeper's season lines carry gp 18 (the weeks, bye included) for a full-time starter: a
+    // team plays 17 games, so dividing by more than that understates every per-game rate.
+    out.set(id, { points: pointsFromStats(row.stats, ctx.scoring, row.position) / Math.min(gp, NFL_GAMES), position: row.position });
+  }
+  return out;
+}
+
+/** Regular-season games per NFL team. */
+export const NFL_GAMES = 17;
+
+/**
+ * Replacement level per position: the per-game rate of the best player at that position who is
+ * on nobody's roster (while the startup draft runs: whom nobody has drafted yet). Any team can
+ * still get him, so an open starting spot is worth at least that, never zero.
+ */
+export function replacementRates(rates: Map<PlayerId, PlayerRate>, players: PlayersMap, taken: Set<PlayerId>): Map<string, number> {
+  const out = new Map<string, number>();
+  for (const [id, rate] of rates) {
+    if (taken.has(id) || !(rate.points > 0)) continue;
+    const info = players[id];
+    const positions = info?.positions?.length ? info.positions : [info?.pos || rate.position || ""];
+    for (const pos of positions) {
+      if (!pos) continue;
+      if (rate.points > (out.get(pos) ?? 0)) out.set(pos, rate.points);
+    }
+  }
+  return out;
+}
+
+/** Season rates first, weekly rates for everyone the season projections do not cover. */
+export function mergeRates(season: Map<PlayerId, PlayerRate>, weekly: Map<PlayerId, PlayerRate>): Map<PlayerId, PlayerRate> {
+  const out = new Map(weekly);
+  for (const [id, r] of season) out.set(id, r);
+  return out;
+}
+
+/**
+ * Projected optimal-lineup points for one roster. With `replacement` (position -> points), a
+ * replacement-level player at each position is available to every slot he can fill, so a
+ * starting spot the roster cannot fill yet scores replacement level instead of zero.
+ */
 export function lineupStrength(
   ctx: LeagueContext,
   playerIds: PlayerId[],
   rates: Map<PlayerId, PlayerRate>,
   players: PlayersMap,
   fallbacks: Map<string, number>,
+  replacement?: Map<string, number>,
 ): number {
   const candidates = playerIds.map((id) => {
     const info = players[id];
@@ -398,6 +457,13 @@ export function lineupStrength(
     const points = rate ? rate.points : (fallbacks.get(position) ?? 0);
     return { playerId: id, positions, points };
   });
+  if (replacement) {
+    for (const [pos, points] of replacement) {
+      // One stand-in per slot he could fill, so every open slot has one to take.
+      const fits = ctx.starterSlots.filter((slot) => SLOT_ELIGIBILITY[slot]?.includes(pos)).length;
+      for (let i = 0; i < fits; i++) candidates.push({ playerId: `replacement:${pos}:${i}`, positions: [pos], points });
+    }
+  }
   return optimalLineup(ctx.starterSlots, candidates).total;
 }
 

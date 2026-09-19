@@ -4,16 +4,44 @@
  * Keys follow lib/store.ts `keys`.
  */
 import * as store from "./store";
-import type { Issue, OddsSnapshot, Roast, RoastItemKind } from "./types";
+import type { Issue, IssueKind, LegacyIssueKind, OddsSnapshot, Roast, RoastItemKind } from "./types";
 
 /* ------------------------------ issues ------------------------------ */
+
+const LEGACY_KINDS: Record<LegacyIssueKind, IssueKind> = { daily_roast: "daily", weekly_roast: "weekly_recap" };
+const LEGACY_TITLES: Record<string, (i: Issue) => string> = {
+  "The Daily Roast": () => "The Daily",
+  "The Weekly Roast": (i) => (i.week ? `Week ${i.week} Recap` : "Week N Recap"),
+};
+
+/** Notes older facts-only issues carried. A facts-only issue now has no note: the facts simply run. */
+const LEGACY_NOTES = new Set(["The writer called in sick. Facts only today."]);
+
+/**
+ * An issue stored before the 2026-09-18 rename, read as the current kind and title
+ * ("daily_roast" -> "daily", "The Weekly Roast" -> "Week 5 Recap"), without the old facts-only
+ * note. The slug stays, so old links work.
+ */
+export function upgradeIssue(issue: Issue): Issue {
+  const kind = LEGACY_KINDS[issue.kind as unknown as LegacyIssueKind];
+  const retitle = LEGACY_TITLES[issue.title];
+  const dropNote = issue.note !== null && LEGACY_NOTES.has(issue.note);
+  if (!kind && !retitle && !dropNote) return issue;
+  return {
+    ...issue,
+    kind: kind ?? issue.kind,
+    title: retitle ? retitle(issue) : issue.title,
+    note: dropNote ? null : issue.note,
+  };
+}
 
 export async function saveIssue(issue: Issue): Promise<void> {
   await store.set(store.keys.issue(issue.leagueId, issue.slug), issue);
 }
 
 export async function getIssue(leagueId: string, slug: string): Promise<Issue | null> {
-  return store.get<Issue>(store.keys.issue(leagueId, slug));
+  const issue = await store.get<Issue>(store.keys.issue(leagueId, slug));
+  return issue ? upgradeIssue(issue) : null;
 }
 
 /** Newest first (by date, then createdAt). `includeUnsent` also returns drafts awaiting review. */
@@ -22,7 +50,7 @@ export async function listIssues(
   opts: { limit?: number; includeUnsent?: boolean } = {},
 ): Promise<Issue[]> {
   const ks = await store.list(store.keys.issuePrefix(leagueId));
-  const issues = (await Promise.all(ks.map((k) => store.get<Issue>(k)))).filter((x): x is Issue => Boolean(x));
+  const issues = (await Promise.all(ks.map((k) => store.get<Issue>(k)))).filter((x): x is Issue => Boolean(x)).map(upgradeIssue);
   const visible = opts.includeUnsent ? issues : issues.filter((i) => i.status === "sent" || i.status === "approved");
   visible.sort((a, b) => b.date.localeCompare(a.date) || b.createdAt - a.createdAt);
   return opts.limit ? visible.slice(0, opts.limit) : visible;

@@ -1,19 +1,19 @@
 /**
  * One issue, the same content as the email: a pixel masthead, then every section under its own
- * header bar in a 68ch grotesk column, with the table of contents and the subscribe link beside it.
+ * header bar in a 68ch grotesk column, with the table of contents beside it.
  * Issue text is plain (no HTML, no markdown), so it renders exactly as the facts engine wrote it.
  */
 import Link from "next/link";
 import type { ReactNode } from "react";
-import { Button, PixelArrow } from "@/components/Button";
+import { PixelArrow } from "@/components/Button";
 import { cx } from "@/components/cx";
 import { DataTable } from "@/components/DataTable";
 import { Dither } from "@/components/Dither";
 import { HeaderBar } from "@/components/HeaderBar";
 import { Board, Panel } from "@/components/Panel";
-import { LiveSquare, SampleMark, Tag } from "@/components/Tag";
+import { LiveSquare, SampleMark } from "@/components/Tag";
 import type { Issue, IssueBlock, IssueSection } from "@/lib/types";
-import { CADENCE, dayLabel, issueName, WHEN } from "../issue-kinds";
+import { CADENCE, dayLabel, WHEN } from "../issue-kinds";
 
 export interface IssueViewProps {
   issue: Issue;
@@ -86,12 +86,7 @@ function Block({ block, caption, first }: { block: IssueBlock; caption: string; 
     case "table":
       return <IssueTable block={block} fallbackCaption={caption} />;
     case "note":
-      return (
-        <p className="measure m-0 flex items-baseline gap-2.5 text-fine text-ink-muted">
-          <span className="type-label shrink-0 text-ink">Note</span>
-          <span>{block.text}</span>
-        </p>
-      );
+      return <p className="measure m-0 text-fine text-ink-muted">{block.text}</p>;
   }
 }
 
@@ -123,7 +118,7 @@ function Masthead({ issue }: { issue: Issue }) {
         <div className="flex flex-col gap-6 px-4 pb-6 pt-7 md:px-8 md:pb-8 md:pt-10">
           <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
             <p className="type-label m-0">{CADENCE[issue.kind]}</p>
-            {issue.placeholder ? <SampleMark /> : issue.factsOnly && !issue.note ? <Tag tone="outline">Facts only</Tag> : null}
+            {issue.placeholder ? <SampleMark /> : null}
           </div>
           <h1 className="type-display m-0 text-j3 md:text-j4 xl:text-j5">
             <span className="board-wipe block">{issue.title}</span>
@@ -132,7 +127,6 @@ function Masthead({ issue }: { issue: Issue }) {
           <p className="type-label m-0 flex flex-wrap items-center gap-x-3 gap-y-2">
             <LiveSquare size={12} />
             <time dateTime={issue.date}>{dayLabel(issue)}</time>
-            <span className="text-ink-muted">By The Roast</span>
             {sent ? <span className="text-ink-muted">{sent}</span> : null}
           </p>
         </div>
@@ -176,14 +170,9 @@ export function IssueView({ issue, older, newer }: IssueViewProps) {
 
       <Panel as="article" span={8} pad={false}>
         {issue.note ? (
-          <div className="px-4 pt-6 md:px-8 md:pt-8">
-            <div role="note" className="measure flex flex-col gap-2 border-2 border-ink px-4 py-3 sm:flex-row sm:items-center sm:gap-4">
-              <Tag tone="ink" className="self-start sm:self-auto">
-                {issue.factsOnly ? "Facts only" : "Note"}
-              </Tag>
-              <p className="m-0 text-data">{issue.note}</p>
-            </div>
-          </div>
+          <p role="note" className="measure m-0 px-4 pt-6 text-data text-ink-muted md:px-8 md:pt-8">
+            {issue.note}
+          </p>
         ) : null}
         {sections.length ? (
           <div className={cx(issue.note && "mt-6 md:mt-8")}>
@@ -214,16 +203,10 @@ export function IssueView({ issue, older, newer }: IssueViewProps) {
             </ol>
           </nav>
           <div className="flex flex-col gap-4 px-4 pb-6 pt-6 xl:px-6">
-            <p className="type-display m-0 text-j2">Get it by email</p>
             <p className="m-0 text-data text-ink-muted">
-              {issueName(issue.kind)} goes out {WHEN[issue.kind]}. Same words, in your inbox, with an unsubscribe link for when you
-              can&apos;t take it.
+              {issue.title} goes out {WHEN[issue.kind]}, by email to the ten managers. The same words live here.
             </p>
-            <Button href="/subscribe" variant="primary" className="w-full">
-              Subscribe to the roast
-              <PixelArrow />
-            </Button>
-            <Link href="/newsletter" className="type-label link-ink self-start px-0.5">
+            <Link href="/newsletter" className="type-label link-ink hit-area self-start px-0.5">
               Every issue
             </Link>
           </div>

@@ -7,13 +7,16 @@ import { DotMatrixFill } from "@/components/DotMatrixFill";
 import { PageHead } from "@/components/PageHead";
 import { Board, Panel } from "@/components/Panel";
 import { SampleMark, Tag } from "@/components/Tag";
+import { lineOf } from "@/components/RowLine";
 import { weeklyFacts } from "@/lib/facts";
 import { getWinProbabilities } from "@/lib/models";
+import { surfaceKeys } from "@/lib/roast";
 import { getSchedule, getWinnersBracket } from "@/lib/sleeper";
 import type { LeagueContext, MatchupFact, NflGame, SeasonPhase, SleeperBracketMatch, TeamWeekFact, WinProb, WinProbWeek } from "@/lib/types";
 import { WeekInNumbers } from "../../_home/season";
 import { formatEt } from "@/lib/time";
 import { etStamp } from "../../_lib/format";
+import { surfaceLinesFor } from "../../_lib/lines";
 import { safe } from "../../_lib/phase";
 import { MatchupPanel } from "./matchup";
 import { WeekRail } from "./rail";
@@ -91,12 +94,14 @@ function UnlitScore({ className }: { className?: string }) {
 }
 
 function UnlitGame({ n }: { n: number }) {
+  // Two ghost scores need 276px side by side, more than a 375px phone has next to the label:
+  // they stack, one per team, like the board's two lines.
   return (
     <li className="grid grid-cols-[4.5rem_minmax(0,1fr)] items-center gap-x-4 bg-paper px-4 py-3 sm:flex sm:flex-col sm:items-stretch sm:gap-3 sm:py-5 md:px-5">
       <span className="type-label text-ink-muted">Game {n}</span>
-      <div className="flex items-center justify-between gap-3 sm:flex-col sm:items-start sm:gap-1">
-        <UnlitScore className="text-d30 lg:text-d40 xl:text-d60" />
-        <UnlitScore className="text-d30 lg:text-d40 xl:text-d60" />
+      <div className="flex min-w-0 flex-col items-start gap-1 overflow-hidden">
+        <UnlitScore className="text-d40 xl:text-d60" />
+        <UnlitScore className="text-d40 xl:text-d60" />
       </div>
       <span aria-hidden className="col-span-2 mt-1 grid gap-[2px] sm:mt-auto" style={{ gridTemplateColumns: "repeat(20, minmax(0, 1fr))" }}>
         {Array.from({ length: 20 }, (_, i) => (
@@ -116,7 +121,7 @@ export function DarkBoard({ ctx, phase }: { ctx: LeagueContext; phase: "pre_draf
       <PageHead
         bar="Scoreboard"
         span={8}
-        title={drafting ? "Drafting, not scoring" : "The board is dark"}
+        title={drafting ? "Drafting, not scoring" : "No games yet"}
         meta={
           drafting ? (
             <>
@@ -130,8 +135,8 @@ export function DarkBoard({ ctx, phase }: { ctx: LeagueContext; phase: "pre_draf
       >
         <p className="measure m-0 text-body md:text-lede">
           {drafting
-            ? "Rosters are still being built, so there is nothing to score. Matchups post when the last pick is in, and this board lights up at the first kickoff after that."
-            : "Nobody has a roster yet, so nobody has a score. Matchups post when the startup draft ends, and this board lights up at the first kickoff after that."}
+            ? "Rosters are still being built, so there is nothing to score. Matchups post when the last pick is in, and scores start at the first kickoff after that."
+            : "Nobody has a roster yet, so nobody has a score. Matchups post when the startup draft ends, and scores start at the first kickoff after that."}
         </p>
         <div className="mt-auto">
           <Button href="/draft" variant="secondary">
@@ -141,7 +146,7 @@ export function DarkBoard({ ctx, phase }: { ctx: LeagueContext; phase: "pre_draf
         </div>
       </PageHead>
 
-      <Panel label="What lights up here" span={4}>
+      <Panel label="How the scoreboard works" span={4}>
         <ul className="m-0 list-none border-t-2 border-ink p-0">
           {[
             ["Scores", `All ${inWords(games)} matchups, refreshed every minute while games are on.`],
@@ -157,7 +162,7 @@ export function DarkBoard({ ctx, phase }: { ctx: LeagueContext; phase: "pre_draf
         </ul>
       </Panel>
 
-      <Panel label="Scoreboard · Lights off" labelRight={<span className="hidden text-paper-shade sm:inline">{inWords(games)} games a week</span>} pad={false}>
+      <Panel label="Scoreboard" labelRight={<span className="hidden text-paper-shade sm:inline">{inWords(games)} games a week</span>} pad={false}>
         <ol
           aria-label={`${games} matchups, no scores yet`}
           className="m-0 grid list-none grid-cols-1 gap-px bg-ink p-0 sm:grid-cols-[repeat(var(--games),minmax(0,1fr))]"
@@ -218,11 +223,12 @@ const BASIS: Record<WinProbWeek["basis"], string> = {
 export async function WeekScores({ ctx, phase, week }: { ctx: LeagueContext; phase: SeasonPhase; week: number }) {
   const through = playedThrough(ctx, phase);
   const factsWanted = week <= through;
-  const [wp, facts, bracket, schedule] = await Promise.all([
+  const [wp, facts, bracket, schedule, lines] = await Promise.all([
     safe(getWinProbabilities(week, ctx), null, "win probabilities"),
     factsWanted ? safe(weeklyFacts(week, ctx), null, "weekly facts") : Promise.resolve(null),
     week >= ctx.playoffWeekStart ? safe(getWinnersBracket(ctx.leagueId), [] as SleeperBracketMatch[], "bracket") : Promise.resolve([]),
     safe(getSchedule(ctx.season), [] as NflGame[], "schedule"),
+    surfaceLinesFor(ctx, "matchups", surfaceKeys.matchups(ctx.season, week)),
   ]);
 
   const basis = wp?.basis ?? "none";
@@ -242,18 +248,10 @@ export async function WeekScores({ ctx, phase, week }: { ctx: LeagueContext; pha
         bar={`Scoreboard · ${ctx.season}`}
         barRight={wp?.placeholder || (showFacts && facts?.placeholder) ? <SampleMark onInk /> : null}
         live={live}
-        title={`Week ${week}`}
+        title={basis === "final" ? `Week ${week} final` : `Week ${week}`}
         meta={
           <>
-            {wp ? (
-              basis === "live" ? (
-                <Tag square="blink">Live</Tag>
-              ) : basis === "final" ? (
-                <Tag>Final</Tag>
-              ) : (
-                <Tag tone="outline">{BASIS[basis]}</Tag>
-              )
-            ) : null}
+            {wp && basis !== "final" ? basis === "live" ? <Tag square="blink">Live</Tag> : <Tag tone="outline">{BASIS[basis]}</Tag> : null}
             {round ? <span className="text-ink">Playoffs, round {round}</span> : null}
             {dates ? <span>{dates}</span> : null}
             {live && wp ? <span>Updated {formatEt(wp.generatedAt, { hour: "numeric", minute: "2-digit" })} ET</span> : null}
@@ -293,6 +291,7 @@ export async function WeekScores({ ctx, phase, week }: { ctx: LeagueContext; pha
               facts={teamFacts}
               matchupFact={showFacts ? matchupFactFor(facts?.matchups, m) : undefined}
               tag={bracketTag(bracket, ctx, week, m)}
+              line={lineOf(lines, m.matchupId)}
               pair
             />
           ))}

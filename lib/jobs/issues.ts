@@ -8,7 +8,7 @@
  * Delivery policy:
  *   dev league                 stored as a draft only, never emailed or published
  *   review mode                review copy to the commissioner; published when approved
- *   auto mode                  emailed to subscribers and published
+ *   auto mode                  emailed to the league list (LEAGUE_EMAILS minus opt-outs) and published
  *   auto, email not set up     published on the site without email ("approved")
  *   review, email not set up   stays a draft (nobody can approve it yet)
  */
@@ -20,7 +20,7 @@ import { backfillOddsHistory, getPowerRankings, getWinProbabilities, runSeasonSi
 import { roastIssue } from "@/lib/roast";
 import * as store from "@/lib/store";
 import type { Issue, IssueFacts, JobOutcome, LeagueContext, NflGame } from "@/lib/types";
-import { buildDailyRoastFacts } from "./daily-facts";
+import { buildDailyFacts } from "./daily-facts";
 import { claimOnce, markDone, releaseClaim } from "./once";
 import type { PlannedJob } from "./schedule";
 
@@ -35,10 +35,10 @@ const skipStep = (detail: string, final: boolean, commit?: () => Promise<void>):
 
 async function factsFor(job: PlannedJob, ctx: LeagueContext, now: number, schedule: NflGame[]): Promise<FactsStep> {
   switch (job.job) {
-    case "daily_roast": {
-      const b = await buildDailyRoastFacts(ctx, now, schedule);
+    case "daily": {
+      const b = await buildDailyFacts(ctx, now, schedule);
       if (b.placeholder) return skipStep(NOT_READY, false);
-      if (!b.facts.hasMaterial) return skipStep("Quiet day: nothing to roast, nothing sent.", true, b.commit);
+      if (!b.facts.hasMaterial) return skipStep("Quiet day: nothing happened, nothing sent.", true, b.commit);
       return { kind: "facts", facts: b.facts, commit: b.commit };
     }
     case "thursday_fallout": {
@@ -49,7 +49,7 @@ async function factsFor(job: PlannedJob, ctx: LeagueContext, now: number, schedu
       if (winProbs.placeholder) return skipStep(NOT_READY, false);
       return { kind: "facts", facts: { kind: "thursday_fallout", week: job.week, tnf, winProbs } };
     }
-    case "weekly_roast": {
+    case "weekly_recap": {
       const weekly = await weeklyFacts(job.week, ctx);
       if (weekly.placeholder) return skipStep(NOT_READY, false);
       if (weekly.teams.length === 0 || weekly.teams.every((t) => !t.points)) return skipStep(`No scores for week ${job.week} yet.`, false);
@@ -60,13 +60,15 @@ async function factsFor(job: PlannedJob, ctx: LeagueContext, now: number, schedu
       if (odds.placeholder) return skipStep(NOT_READY, false);
       // Fill any week the odds chart is missing (a skipped cron, a wiped store). Best effort.
       await backfillOddsHistory(ctx).catch(() => []);
-      return { kind: "facts", facts: { kind: "weekly_roast", week: job.week, weekly, odds, power } };
+      return { kind: "facts", facts: { kind: "weekly_recap", week: job.week, weekly, odds, power } };
     }
     case "draft_grades": {
       const draft = await draftFacts(ctx);
       if (draft.placeholder) return skipStep(NOT_READY, false);
       if (draft.status !== "complete" || !draft.grades?.length) return skipStep("Draft grades are not computed yet.", false);
-      const odds = await runSeasonSim({ ctx, persist: true });
+      // Same model as the "if the season started today" odds on the site (draftOdds): rosters
+      // rated by Sleeper's season projections, stored as the preseason odds snapshot.
+      const odds = await runSeasonSim({ ctx, persist: true, strength: "season" });
       if (odds.placeholder) return skipStep(NOT_READY, false);
       return { kind: "facts", facts: { kind: "draft_grades", draft, odds } };
     }
@@ -85,7 +87,7 @@ export async function deliverIssue(issue: Issue, ctx: LeagueContext): Promise<De
   const res = await sendIssue(issue, mode);
   switch (res.status) {
     case "sent":
-      return { ok: true, detail: `Emailed to ${res.recipients} subscriber${res.recipients === 1 ? "" : "s"} and published.` };
+      return { ok: true, detail: `Emailed to ${res.recipients} league address${res.recipients === 1 ? "" : "es"} and published.` };
     case "review_sent":
       return { ok: true, detail: "Review copy sent to the commissioner. Published once approved." };
     case "skipped":
@@ -133,7 +135,7 @@ export async function runIssueJob(job: PlannedJob, ctx: LeagueContext, now: numb
       const built = await roastIssue(job.job, step.facts, ctx, { now });
       if (built.placeholder) {
         await releaseClaim(l, job.key);
-        return { job: job.job, status: "skipped", detail: "The roast engine returned a placeholder issue, so nothing was stored." };
+        return { job: job.job, status: "skipped", detail: "The writer returned a placeholder issue, so nothing was stored." };
       }
       const existing = await getIssue(l, built.slug);
       if (existing && published(existing)) {
@@ -158,7 +160,7 @@ export async function runIssueJob(job: PlannedJob, ctx: LeagueContext, now: numb
       return { job: job.job, status: "error", detail: d.detail, issueSlug: issue.slug };
     }
     await markDone(l, job.key, { at: Date.now(), slug: issue.slug });
-    const how = issue.factsOnly ? " Facts only (no roast writer)." : "";
+    const how = issue.factsOnly ? " Facts only (no writer)." : "";
     return { job: job.job, status: "ran", detail: `${d.detail}${how}`, issueSlug: issue.slug };
   } catch (err) {
     await releaseClaim(l, job.key).catch(() => {});

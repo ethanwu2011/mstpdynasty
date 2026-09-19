@@ -1,9 +1,10 @@
 /**
- * Password gate page. OWNER: ops agent. Minimal and unstyled on purpose; the designer
- * restyles it. Posts to /api/enter, which sets the cookie.
+ * Password gate page. Posts to /api/enter, which sets the cookie. Plain paper, one field, big
+ * targets: it is the first thing a phone sees when the gate is on.
  */
 import type { Metadata } from "next";
-import Link from "next/link";
+import { Button, PixelArrow } from "@/components/Button";
+import { Board, Panel } from "@/components/Panel";
 import { gateEnabled, safeNextPath } from "@/lib/email/gate";
 
 export const metadata: Metadata = { title: "Enter", robots: { index: false } };
@@ -17,30 +18,56 @@ export default async function EnterPage({ searchParams }: { searchParams: Search
   const next = safeNextPath(first(sp.next));
   const error = first(sp.error);
 
-  if (!gateEnabled()) {
-    return (
-      <main>
-        <h1>MSTP Dynasty</h1>
-        <p>No password is set, so the site is open.</p>
-        <p>
-          <Link href={next}>Go in</Link>
-        </p>
-      </main>
-    );
-  }
-
   return (
-    <main>
-      <h1>MSTP Dynasty</h1>
-      <p>League members only.</p>
-      <form method="post" action="/api/enter">
-        <input type="hidden" name="next" value={next} />
-        <label htmlFor="password">Password</label>{" "}
-        <input id="password" name="password" type="password" required autoComplete="current-password" autoFocus />{" "}
-        <button type="submit">Enter</button>
-      </form>
-      {error === "1" ? <p role="alert">Wrong password.</p> : null}
-      {error === "locked" ? <p role="alert">Too many tries. Wait 15 minutes and try again.</p> : null}
-    </main>
+    <Board>
+      <Panel label="League members only">
+        <div className="flex max-w-md flex-col gap-6">
+          <h1 className="type-display m-0 text-j3 md:text-j4">MSTP Dynasty</h1>
+          {gateEnabled() ? (
+            <form method="post" action="/api/enter" className="flex flex-col gap-4">
+              <input type="hidden" name="next" value={next} />
+              <label htmlFor="password" className="type-label">
+                Password
+              </label>
+              <input
+                id="password"
+                name="password"
+                type="password"
+                required
+                autoComplete="current-password"
+                autoFocus
+                className="min-h-12 w-full border-2 border-ink bg-paper px-3 text-[1.0625rem] text-ink outline-none focus-visible:shadow-hard"
+              />
+              {error === "1" ? (
+                <p role="alert" className="m-0 text-body font-semibold">
+                  Wrong password.
+                </p>
+              ) : null}
+              {error === "locked" ? (
+                <p role="alert" className="m-0 text-body font-semibold">
+                  Too many tries. Wait 15 minutes and try again.
+                </p>
+              ) : null}
+              <div>
+                <Button type="submit" variant="primary">
+                  Enter
+                  <PixelArrow />
+                </Button>
+              </div>
+            </form>
+          ) : (
+            <>
+              <p className="m-0 text-body">No password is set, so the site is open.</p>
+              <div>
+                <Button href={next} variant="secondary">
+                  Go in
+                  <PixelArrow />
+                </Button>
+              </div>
+            </>
+          )}
+        </div>
+      </Panel>
+    </Board>
   );
 }

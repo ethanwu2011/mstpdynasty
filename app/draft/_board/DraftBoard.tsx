@@ -1,14 +1,15 @@
 /**
  * The startup draft board: rounds by draft slots on a desktop, a per-round list with a sticky
- * round bar on a phone. Every made pick opens its roast in a popover card (tap or click, never
- * hover), so the proof is one tap away on any screen.
+ * round bar on a phone. Every made pick opens its card in a popover (tap or click, never hover):
+ * the verdict, the line and the proof, one tap away on any screen.
  */
 import Link from "next/link";
 import type { CSSProperties } from "react";
 import { PixelArrow } from "@/components/Button";
 import { cx } from "@/components/cx";
+import { lineOf, RowLine } from "@/components/RowLine";
 import { LiveSquare, Tag } from "@/components/Tag";
-import type { DraftPickFact } from "@/lib/types";
+import type { DraftPickFact, SurfaceLineMap } from "@/lib/types";
 import { fmtInt } from "../../_lib/format";
 import { cardData, type PickCardData } from "./card";
 import { CARD_ID, PickCardHost } from "./PickCardHost";
@@ -60,13 +61,13 @@ function TeamHead({ columns }: { columns: BoardColumn[] }) {
             className="group flex min-w-0 flex-col gap-1 bg-ink px-2 pb-2 pt-2.5 text-paper no-underline hover:bg-paper hover:text-ink focus-visible:outline-offset-[-4px]"
           >
             <span className="type-label text-paper-shade group-hover:text-ink-muted">Slot {c.slot}</span>
-            <span className="type-label truncate text-[1rem] leading-tight">{c.manager}</span>
+            <span className="type-label truncate text-row leading-tight">{c.manager}</span>
             <span className="truncate text-fine text-paper-shade group-hover:text-ink-muted">{c.teamName}</span>
           </Link>
         ) : (
           <div key={c.slot} className="flex min-w-0 flex-col gap-1 bg-ink px-2 pb-2 pt-2.5 text-paper">
             <span className="type-label text-paper-shade">Slot {c.slot}</span>
-            <span className="type-label truncate text-[1rem] leading-tight">Open</span>
+            <span className="type-label truncate text-row leading-tight">Open</span>
             <span className="truncate text-fine text-paper-shade">Order not set</span>
           </div>
         ),
@@ -106,7 +107,8 @@ function RoundHead({ r, teams }: { r: BoardRound; teams: number }) {
       </span>
       {/* lg: the gutter */}
       <span aria-hidden className="hidden h-full flex-col items-center justify-center gap-1 py-1.5 lg:flex">
-        <span className="type-numeral text-d20 leading-none">{r.round}</span>
+        {/* 20px: solid grotesk digits, never Doto (Doto is for numerals of 32px and up). */}
+        <span className="font-sans text-numeral-solid font-extrabold leading-none tnum">{r.round}</span>
         <Direction forward={r.forward} className="text-paper-shade" />
         {r.reversal ? <span className="type-label text-paper">Flip</span> : null}
       </span>
@@ -116,7 +118,7 @@ function RoundHead({ r, teams }: { r: BoardRound; teams: number }) {
 
 /* ------------------------------ cells ------------------------------ */
 
-function MadeCell({ c }: { c: BoardCell }) {
+function MadeCell({ c, line }: { c: BoardCell; line: string | null }) {
   const p = c.pick as DraftPickFact;
   const { first, last } = splitName(p.player.name);
   const anchor = { "--anchor": `--pick-${c.pickNo}` } as Vars;
@@ -126,7 +128,7 @@ function MadeCell({ c }: { c: BoardCell }) {
     `${p.player.name}, ${p.player.position}${p.player.nflTeam ? `, ${p.player.nflTeam}` : ""}`,
     p.verdict === "reach" || p.verdict === "steal" ? verdictText(p) : null,
     c.latest ? "Latest pick" : null,
-    "Show the roast",
+    "Show the pick",
   ]
     .filter(Boolean)
     .join(". ");
@@ -158,6 +160,7 @@ function MadeCell({ c }: { c: BoardCell }) {
             {c.latest ? <Tag>Latest</Tag> : null}
             <Verdict pick={p} />
           </span>
+          {line ? <RowLine as="span" text={line} className="col-start-2 col-end-4 pt-1.5" /> : null}
         </span>
 
         {/* lg: a board cell */}
@@ -199,7 +202,7 @@ function ClockCell({ c, paused }: { c: BoardCell; paused: boolean }) {
           <LiveSquare blink={!paused} />
         </span>
         <span className="type-label mt-1 text-paper-shade">{what}</span>
-        <span className="type-label mt-auto truncate text-[1rem] leading-tight">{c.ownerName ?? "--"}</span>
+        <span className="type-label mt-auto truncate text-row leading-tight">{c.ownerName ?? "--"}</span>
       </span>
     </div>
   );
@@ -213,18 +216,18 @@ function FutureCell({ c }: { c: BoardCell }) {
         {c.ownerName ? `, ${c.ownerName}` : ""}
         {c.traded ? ", traded" : ""}
       </span>
-      <span aria-hidden className="type-label bg-paper px-1 text-ink-muted">
+      <span aria-hidden className="type-label text-ink-muted">
         {c.label}
       </span>
       {/* Phones list who holds each pick. The grid shows it only when the pick changed hands. */}
-      <span aria-hidden className={cx("type-label min-w-0 truncate bg-paper px-1", c.traded ? "text-ink" : "text-ink-muted lg:hidden")}>
+      <span aria-hidden className={cx("type-label min-w-0 truncate", c.traded ? "text-ink" : "text-ink-muted lg:hidden")}>
         {c.traded ? `To ${c.ownerName}` : (c.ownerName ?? "")}
       </span>
     </div>
   );
 }
 
-function Cell({ c, paused }: { c: BoardCell; paused: boolean }) {
+function Cell({ c, paused, lines }: { c: BoardCell; paused: boolean; lines?: SurfaceLineMap }) {
   return (
     <li
       id={`pick-${c.pickNo}`}
@@ -232,7 +235,7 @@ function Cell({ c, paused }: { c: BoardCell; paused: boolean }) {
       className={s.cell}
       style={{ "--r": c.round, "--c": c.slot + 1 } as Vars}
     >
-      {c.state === "made" ? <MadeCell c={c} /> : c.state === "clock" ? <ClockCell c={c} paused={paused} /> : <FutureCell c={c} />}
+      {c.state === "made" ? <MadeCell c={c} line={lineOf(lines, c.pickNo)} /> : c.state === "clock" ? <ClockCell c={c} paused={paused} /> : <FutureCell c={c} />}
     </li>
   );
 }
@@ -243,7 +246,7 @@ function Filler({ span, at }: { span: number; at: "sm" | "md" }) {
   return <li aria-hidden className={at === "sm" ? s.fillSm : s.fillMd} style={{ "--span": span } as Vars} />;
 }
 
-function RoundLists({ r, paused }: { r: BoardRound; paused: boolean }) {
+function RoundLists({ r, paused, lines }: { r: BoardRound; paused: boolean; lines?: SurfaceLineMap }) {
   const made = r.cells.filter((c) => c.state !== "future");
   const todo = r.cells.filter((c) => c.state === "future");
   return (
@@ -251,7 +254,7 @@ function RoundLists({ r, paused }: { r: BoardRound; paused: boolean }) {
       {made.length ? (
         <ol className={s.made}>
           {made.map((c) => (
-            <Cell key={c.pickNo} c={c} paused={paused} />
+            <Cell key={c.pickNo} c={c} paused={paused} lines={lines} />
           ))}
           <Filler span={made.length % 2} at="md" />
         </ol>
@@ -285,7 +288,7 @@ export function RoundJump({ board }: { board: BoardModel }) {
                 aria-current={current ? "location" : undefined}
                 aria-label={`Round ${r.round}${done ? ", done" : current ? ", current round" : ""}`}
                 className={cx(
-                  "type-label relative flex size-8 items-center justify-center border-2 border-ink no-underline hover:bg-ink hover:text-paper",
+                  "type-label relative flex size-11 items-center justify-center border-2 border-ink no-underline hover:bg-ink hover:text-paper",
                   done ? "bg-ink text-paper" : "bg-paper text-ink",
                   current && "bg-paper text-ink shadow-hard",
                 )}
@@ -309,13 +312,13 @@ export function BoardLegend({ board }: { board: BoardModel }) {
     {
       key: "dir",
       mark: <PixelArrow className="size-3" />,
-      text: board.reversalRound > 0 ? `Pick order. Round ${board.reversalRound} runs like round ${board.reversalRound - 1}` : "Pick order",
+      text: board.reversalRound > 0 ? `Round ${board.reversalRound} runs like round ${board.reversalRound - 1}` : "Pick order",
     },
   ];
   return (
     <ul className="m-0 flex list-none flex-wrap gap-x-5 gap-y-2 p-0">
       {items.map((i) => (
-        <li key={i.key} className="type-label flex items-center gap-2 text-ink-muted">
+        <li key={i.key} className="flex items-center gap-2 text-data text-ink-muted">
           {i.mark}
           {i.text}
         </li>
@@ -326,11 +329,27 @@ export function BoardLegend({ board }: { board: BoardModel }) {
 
 /* ------------------------------ the board ------------------------------ */
 
-export function DraftBoard({ board, placeholder, paused = false }: { board: BoardModel; placeholder: boolean; paused?: boolean }) {
+export function DraftBoard({
+  board,
+  placeholder,
+  paused = false,
+  lines,
+}: {
+  board: BoardModel;
+  placeholder: boolean;
+  paused?: boolean;
+  /** One-liners by pick number (the draft surface), shown on each pick's card. */
+  lines?: SurfaceLineMap;
+}) {
   const cards = board.roundRows
     .flatMap((r) => r.cells)
-    .map((c) => cardData(c, placeholder))
+    .map((c) => cardData(c, placeholder, lineOf(lines, c.pickNo)))
     .filter((x): x is PickCardData => x !== null);
+  // Phones list the rounds with picks in them, the round on the clock and the next one. Rounds
+  // further out are only the snake order, so they stay folded until a round tab opens one.
+  const lastOpen = board.currentRound + 1;
+  const isFar = (r: BoardRound) => r.round > lastOpen && r.made === 0 && !r.cells.some((c) => c.state !== "future");
+  const far = board.roundRows.filter(isFar);
   return (
     <div style={{ "--teams": board.teams } as Vars}>
       <a
@@ -342,12 +361,18 @@ export function DraftBoard({ board, placeholder, paused = false }: { board: Boar
       <TeamHead columns={board.columns} />
       <div className={s.grid}>
         {board.roundRows.map((r) => (
-          <section key={r.round} aria-labelledby={`round-${r.round}`} className={s.round}>
+          <section key={r.round} aria-labelledby={`round-${r.round}`} className={cx(s.round, isFar(r) && s.far)}>
             <RoundHead r={r} teams={board.teams} />
-            <RoundLists r={r} paused={paused} />
+            <RoundLists r={r} paused={paused} lines={lines} />
           </section>
         ))}
       </div>
+      {far.length ? (
+        <p className="m-0 border-t-2 border-ink px-4 py-4 text-body text-ink-muted md:hidden">
+          {far.length === 1 ? `Round ${far[0].round} is` : `Rounds ${far[0].round} to ${far[far.length - 1].round} are`} still to
+          come. Tap a round number above to see who picks when.
+        </p>
+      ) : null}
       <div id="board-end" tabIndex={-1} className="outline-none" />
       <PickCardHost cards={cards} />
     </div>

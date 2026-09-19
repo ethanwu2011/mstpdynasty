@@ -1,10 +1,10 @@
 "use client";
 
 /**
- * The one roast card on the draft board. Every made pick is a button that shows this popover
+ * The one pick card on the draft board. Every made pick is a button that shows this popover
  * (popovertarget, so it opens by tap, click or keyboard, never hover); the click fills it with
- * that pick's roast before it appears and anchors it to the pick on a wide screen. Escape, a
- * tap outside or Close hides it. /draft#pick-17 scrolls to pick 17 and opens its card.
+ * that pick before it appears and anchors it to the pick on a wide screen. Escape, a tap
+ * outside or Close hides it. /draft#pick-17 scrolls to pick 17 and opens its card.
  */
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
@@ -100,13 +100,13 @@ export function PickCardHost({ cards }: { cards: PickCardData[] }) {
     <div ref={ref} id={CARD_ID} popover="auto" role="dialog" aria-labelledby="pick-card-title" className={s.card} style={style}>
       <HeaderBar
         as="div"
-        label={c ? `Pick ${c.label} · Round ${c.round}` : "Pick"}
+        label={c ? `Pick ${c.label}, round ${c.round}` : "Pick"}
         right={
           <button
             type="button"
             popoverTarget={CARD_ID}
             popoverTargetAction="hide"
-            className="type-label -my-1 px-1 py-1 text-paper underline decoration-2 underline-offset-[3px] hover:bg-paper hover:text-ink"
+            className="type-label hit-area -my-1 px-1 py-1 text-paper underline decoration-2 underline-offset-[3px] hover:bg-paper hover:text-ink"
           >
             Close
           </button>
@@ -119,14 +119,16 @@ export function PickCardHost({ cards }: { cards: PickCardData[] }) {
             <span className="font-bold">{c.player}</span>
             <span className="type-label text-ink-muted">{c.nflTeam}</span>
             {c.via ? <Tag tone="outline">Via {c.via}</Tag> : null}
-            {c.source === "sample" ? <SampleMark /> : c.source === "facts" ? <Tag tone="outline">Facts only</Tag> : null}
+            {c.source === "sample" ? <SampleMark /> : null}
           </div>
 
-          <h4 id="pick-card-title" className="type-display m-0 break-words text-j2">
+          <h4 id="pick-card-title" className="type-display m-0 break-words text-j2 [text-wrap:balance]">
             <span className="block">{c.manager}</span>
             <span className="sr-only">: </span>
             <span className="block">{c.stat}</span>
           </h4>
+
+          {c.line ? <p className="m-0 text-body font-semibold leading-snug">{c.line}</p> : null}
 
           <div className="flex flex-col gap-2.5 text-body">
             {paragraphs.map((t, i) => (
@@ -140,27 +142,30 @@ export function PickCardHost({ cards }: { cards: PickCardData[] }) {
             {c.receipt.map((r, i) => (
               <div key={r.label} className={`flex min-w-0 flex-col gap-1 px-3 py-2.5 ${i % 2 ? "border-l border-ink" : ""} ${i >= 2 ? "border-t border-ink" : ""}`}>
                 <dt className="type-label text-ink-muted">{r.label}</dt>
-                <dd className="type-data m-0 truncate text-[1.0625rem] font-semibold">{r.value}</dd>
+                <dd className="type-data m-0 text-[1.0625rem] font-semibold leading-snug [overflow-wrap:anywhere]">{r.value}</dd>
               </div>
             ))}
           </dl>
 
-          <footer className="type-label flex flex-wrap items-center gap-x-3 gap-y-2">
-            <LiveSquare size={12} />
-            {c.atIso ? <time dateTime={c.atIso}>{c.atLabel}</time> : null}
-            <span className="text-ink-muted">By {c.byline}</span>
-            <span className="ml-auto flex gap-3">
-              <Link href={`/teams/${c.rosterId}`} className="link-ink px-0.5">
+          <footer className="type-label flex min-h-11 flex-wrap items-center gap-x-3 gap-y-2">
+            {c.atIso ? (
+              <>
+                <LiveSquare size={12} />
+                <time dateTime={c.atIso}>{c.atLabel}</time>
+              </>
+            ) : null}
+            <span className="ml-auto flex">
+              <Link href={`/teams/${c.rosterId}`} className="link-ink inline-flex min-h-11 items-center px-2">
                 Team
               </Link>
-              <a href={`#pick-${c.pickNo}`} className="link-ink px-0.5">
-                Permalink
+              <a href={`#pick-${c.pickNo}`} className="link-ink inline-flex min-h-11 items-center px-2">
+                Link
               </a>
             </span>
           </footer>
         </div>
       ) : (
-        <p className="type-label m-0 px-4 py-5 text-ink-muted">Pick a square on the board to see its roast.</p>
+        <p className="type-label m-0 px-4 py-5 text-ink-muted">Tap any pick on the board.</p>
       )}
     </div>
   );

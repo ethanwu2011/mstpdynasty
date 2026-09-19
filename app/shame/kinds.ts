@@ -138,6 +138,15 @@ export function damageText(e: Pick<ShameEntry, "amount" | "unit">): string {
   }
 }
 
+/**
+ * The headline next to its own number: where the page already shows the damage ("17 spots"),
+ * a draft reach reads "Took George Pickens at pick 20" instead of repeating the spots.
+ */
+export function shortHeadline(e: Pick<ShameEntry, "kind" | "headline">): string {
+  if (e.kind === "draft_reach") return e.headline.replace(/,\s*\d+\s+spots?\s+before\s+his\s+FantasyCalc\s+rank$/i, "");
+  return e.headline;
+}
+
 /** Where an entry's receipt lives on the site, when there is one. */
 export function entryHref(e: ShameEntry): string | null {
   switch (e.kind) {

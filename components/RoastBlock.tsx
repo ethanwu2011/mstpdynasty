@@ -1,5 +1,5 @@
 import Link from "next/link";
-import type { ReactNode } from "react";
+import type { CSSProperties, ReactNode } from "react";
 import { formatEt } from "@/lib/time";
 import { cx } from "./cx";
 import { LiveSquare } from "./Tag";
@@ -8,60 +8,79 @@ export interface RoastReceiptItem {
   /** Silkscreen caption: "Pick", "FC rank", "Bench left". */
   label: string;
   value: ReactNode;
+  /** A long value (a player's name, a list of names): two columns wide, so it never gets cut. */
+  wide?: boolean;
 }
 
 /** Everything a roast needs, independent of where it is shown. */
 export interface RoastBlockData {
-  /** Small line over the headline: "Trade · Week 9", "Pick 4.07". */
+  /**
+   * The event, named plainly: "Pick 3.07", "Trade, Sep 21", "Week 5 final". It labels the
+   * panel when the block leads one, and is the first line of the kicker in a list.
+   */
+  event?: string;
+  /** Small line over the headline with anything the event does not say: "Round 3", "Week 9". */
   kicker?: string;
-  /** Who got roasted: a manager's first name, or an issue title. */
+  /** Who it is about: a manager's first name, or an issue title. */
   victim: string;
   /** The number that earned it, in pixel caps: "-1,800 value", "$0 bid". */
   stat?: string | null;
   /** Optional larger grotesk line under the headline (an issue dek). */
   lede?: string | null;
-  /** The roast itself, plain text. Blank lines split paragraphs. */
+  /** The text itself, plain. Blank lines split paragraphs. */
   text: string;
   /** The proof: a short box-score line of the facts behind the joke. */
   receipt?: RoastReceiptItem[];
   /** When it happened (epoch ms). */
   at?: number | null;
-  /** Permalink to where this roast lives. */
+  /** Link to where this lives. */
   href?: string | null;
-  /** Byline in the footer (default "The Roast"). */
-  byline?: string;
-  /** Tags beside the kicker: FACTS ONLY, SAMPLE DATA. */
+  /** Markers beside the kicker. Only SAMPLE DATA in practice: a line never announces itself. */
   tags?: ReactNode;
 }
 
 export interface RoastBlockProps extends RoastBlockData {
-  /** hero = the home lead (up to 5px-pixel Jersey); compact = lists of roasts. */
+  /** hero = the home lead (up to 5px-pixel Jersey); compact = lists. */
   size?: "hero" | "compact";
+  /** The event already labels the panel above: leave it out of the kicker. */
+  eventInPanel?: boolean;
   /** Light the headline in pixel steps on first paint. */
   animate?: boolean;
   headingLevel?: 2 | 3;
   className?: string;
 }
 
-/** The proof line: a ruled box score of labeled facts (2 across on phones, one row from sm). */
+/**
+ * The proof line: a ruled box score of labeled facts. Sized by its own width, not the screen's:
+ * one row when the block is 520px or wider, two across below that (a phone, a narrow column).
+ * Values wrap instead of being cut, and a wide item (a player's name) takes two columns. Wide
+ * items go first so the two-across grid never leaves a hole, and an odd last item spans the row.
+ */
 export function Receipt({ items, className }: { items: RoastReceiptItem[]; className?: string }) {
+  const ordered = [...items.filter((r) => r.wide), ...items.filter((r) => !r.wide)];
+  const narrowCount = ordered.filter((r) => !r.wide).length;
+  const cols = ordered.reduce((n, r) => n + (r.wide ? 2 : 1), 0);
   return (
-    <dl className={cx("m-0 grid grid-cols-2 border-y-2 border-ink sm:auto-cols-fr sm:grid-flow-col sm:grid-cols-none", className)}>
-      {items.map((r, i) => (
-        <div
-          key={r.label}
-          className={cx(
-            "flex min-w-0 flex-col gap-1 px-3 py-2.5",
-            i % 2 === 1 && "border-l border-ink",
-            i >= 2 && "border-t border-ink sm:border-t-0",
-            i > 0 && "sm:border-l",
-          )}
-        >
-          <dt className="type-label text-ink-muted">{r.label}</dt>
-          <dd className="m-0 truncate type-data text-[1.0625rem] font-semibold">{r.value}</dd>
-        </div>
-      ))}
-    </dl>
+    <div className={cx("@container", className)}>
+      <dl
+        className="m-0 grid grid-cols-2 gap-px border-y-2 border-ink bg-ink @min-[32.5rem]:grid-cols-[repeat(var(--cols),minmax(0,1fr))]"
+        style={{ "--cols": cols } as CSSProperties}
+      >
+        {ordered.map((r, i) => (
+          <div
+            key={r.label}
+            className={cx(
+              "flex min-w-0 flex-col gap-1 bg-paper px-3 py-2.5",
+              r.wide && "col-span-2",
+              !r.wide && narrowCount % 2 === 1 && i === ordered.length - 1 && "col-span-2 @min-[32.5rem]:col-span-1",
+            )}
+          >
+            <dt className="type-label text-ink-muted">{r.label}</dt>
+            <dd className="m-0 type-data text-[1.0625rem] font-semibold leading-snug [overflow-wrap:anywhere]">{r.value}</dd>
+          </div>
+        ))}
+      </dl>
+    </div>
   );
 }
 
@@ -71,11 +90,25 @@ function stamp(ms: number): string {
   return `${day} · ${time} ET`;
 }
 
+/*
+ * Headline steps that fit a 375px phone without a word stranded on its own line. Jersey 10 runs
+ * about 0.37em a character, so j3 (56px) holds 15 to 16 characters in a 343px column and j2
+ * (37px) about 24. Each line takes its own step: the name stays loud even when the stat is long.
+ */
+function headlineSize(line: string, hero: boolean): string {
+  const n = line.length;
+  if (!hero) return n <= 24 ? "text-j2 md:text-j3" : "text-j2";
+  if (n <= 15) return "text-j3 md:text-j4 xl:text-j5";
+  if (n <= 24) return "text-j2 sm:text-j3 md:text-j4 xl:text-j5";
+  return "text-j2 md:text-j3 xl:text-j4";
+}
+
 /**
- * A roast: the victim and the stat shouted in Jersey 10, the roast in grotesk under it, the
- * receipt that proves it, and a footer with the red square, the time and a permalink.
+ * The lead block: who and the number shouted in Jersey 10, the text in grotesk under it on plain
+ * paper, the receipt that proves it, and a footer with the red square, the time and a link.
  */
 export function RoastBlock({
+  event,
   kicker,
   victim,
   stat,
@@ -84,9 +117,9 @@ export function RoastBlock({
   receipt,
   at,
   href,
-  byline = "The Roast",
   tags,
   size = "hero",
+  eventInPanel = false,
   animate = false,
   headingLevel = 2,
   className,
@@ -97,26 +130,23 @@ export function RoastBlock({
     .split(/\n\s*\n/)
     .map((p) => p.trim())
     .filter(Boolean);
+  const top = [eventInPanel ? null : event, kicker].filter(Boolean).join(" · ");
 
   return (
     <article className={cx("flex w-full min-w-0 flex-col", hero ? "gap-6 md:gap-7" : "gap-4", className)}>
-      {kicker || tags ? (
+      {top || tags ? (
         <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-          {kicker ? <p className="type-label m-0 text-ink">{kicker}</p> : null}
+          {top ? <p className="type-label m-0 text-ink">{top}</p> : null}
           {tags}
         </div>
       ) : null}
 
-      <H className={cx("type-display m-0 break-words", hero ? "text-j3 md:text-j4 xl:text-j5" : "text-j2 md:text-j3")}>
-        <span className={cx("block", animate && "board-wipe")}>
-          {victim}
-        </span>
+      <H className="type-display m-0 break-words [text-wrap:balance]">
+        <span className={cx("block", headlineSize(victim, hero), animate && "board-wipe")}>{victim}</span>
         {stat ? (
           <>
             <span className="sr-only">: </span>
-            <span className={cx("block", animate && "board-wipe")}>
-              {stat}
-            </span>
+            <span className={cx("block", headlineSize(stat, hero), animate && "board-wipe")}>{stat}</span>
           </>
         ) : null}
       </H>
@@ -135,16 +165,21 @@ export function RoastBlock({
 
       {receipt?.length ? <Receipt items={receipt} /> : null}
 
-      <footer className={cx("type-label flex flex-wrap items-center gap-x-3 gap-y-2", hero && "pt-1")}>
-        <LiveSquare size={12} />
-        {at ? <time dateTime={new Date(at).toISOString()}>{stamp(at)}</time> : null}
-        <span className="text-ink-muted">By {byline}</span>
-        {href ? (
-          <Link href={href} className="link-ink ml-auto px-0.5">
-            Permalink
-          </Link>
-        ) : null}
-      </footer>
+      {at || href ? (
+        <footer className={cx("type-label flex flex-wrap items-center gap-x-3 gap-y-2", hero && "pt-1")}>
+          {at ? (
+            <>
+              <LiveSquare size={12} />
+              <time dateTime={new Date(at).toISOString()}>{stamp(at)}</time>
+            </>
+          ) : null}
+          {href ? (
+            <Link href={href} className="link-ink hit-area ml-auto px-0.5">
+              Link
+            </Link>
+          ) : null}
+        </footer>
+      ) : null}
     </article>
   );
 }

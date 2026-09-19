@@ -61,6 +61,19 @@
   scroll-margin-top: 3rem;
 }
 
+/*
+ * Phones: a round that is only the snake order (nothing picked, not on the clock or next up)
+ * stays folded. A round tab (#round-N) or a pick link (#pick-N) into it opens it.
+ */
+@media (max-width: 47.9375rem) {
+  .far {
+    display: none;
+  }
+  .far:has(:target) {
+    display: block;
+  }
+}
+
 @media (min-width: 48rem) {
   .made {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -76,15 +89,11 @@
   }
 }
 
-/* Picks still to come: the board's bulbs, unlit. */
+/* Picks still to come: plain shade, so the pick number and holder read clean on a phone. */
 .future,
 .fillSm,
 .fillMd {
   background-color: var(--color-paper-shade);
-  background-image:
-    linear-gradient(to right, var(--color-paper) 3px, transparent 3px),
-    linear-gradient(to bottom, var(--color-paper) 3px, transparent 3px);
-  background-size: 9px 9px;
 }
 
 /* ------------------------------ lg: the full grid ------------------------------ */
@@ -164,19 +173,29 @@
   z-index: 10;
 }
 
-/* The newest pick sits lifted off the board, like the active panel. */
+/*
+ * The newest pick. In the full-bleed phone and tablet list it is framed in place (a lift would
+ * hang it off the left edge of the screen); on the full grid it sits lifted off the board,
+ * like the active panel.
+ */
 .latest {
   z-index: 9;
-  transform: translate(-4px, -4px);
-  box-shadow: var(--shadow-hard);
+  box-shadow: inset 0 0 0 2px var(--color-ink);
 }
 
-/* While its roast is open, the pick stays lifted. */
+/* While its card is open, the pick stays marked (lifted on the full grid). */
 .pick[data-active] {
   z-index: 11;
-  transform: translate(-4px, -4px);
-  box-shadow: var(--shadow-hard);
+  box-shadow: inset 0 0 0 2px var(--color-ink);
   background: var(--color-paper-shade);
+}
+
+@media (min-width: 64rem) {
+  .latest,
+  .pick[data-active] {
+    transform: translate(-4px, -4px);
+    box-shadow: var(--shadow-hard);
+  }
 }
 
 /* ------------------------------ the roast card (popover) ------------------------------ */
@@ -203,10 +222,9 @@
   flex-direction: column;
 }
 
-/* A halftone screen over the board while the card is up on a phone. */
+/* A flat ink scrim over the board while the card is up on a phone. */
 .card::backdrop {
-  background-image: radial-gradient(circle at center, rgb(10 10 10 / 0.85) 1.3px, transparent 1.9px);
-  background-size: 5px 5px;
+  background: rgb(10 10 10 / 0.6);
 }
 
 @media (min-width: 48rem) {

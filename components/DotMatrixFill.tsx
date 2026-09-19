@@ -3,7 +3,7 @@ import { cx } from "./cx";
 import { bayer, rampAt, type DitherRamp } from "./Dither";
 
 export interface DotMatrixFillProps {
-  /** One plain line that says what is missing or what is loading. */
+  /** One plain line that says what is missing or what is loading, set in the grotesk (never pixel caps). */
   label: ReactNode;
   /** empty = a mostly unlit board; loading = dots light in dither order, over and over. */
   state?: "empty" | "loading";
@@ -59,7 +59,7 @@ export function DotMatrixFill({ label, state = "empty", rows = 6, cell = 9, dens
         {unlit ? <path d={unlit} className="fill-paper-shade" /> : null}
         <g fill="currentColor">{cells}</g>
       </svg>
-      <p className="type-label m-0 text-ink-muted">{label}</p>
+      <p className="m-0 text-body text-ink-muted">{label}</p>
     </div>
   );
 }

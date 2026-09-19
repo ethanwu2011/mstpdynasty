@@ -18,7 +18,7 @@ Sleeper shows the numbers. This site says what they mean about you. Roasts are w
 ## Operating Context
 - League platform: Sleeper, league 1406497799725424640 ("MSTP Dynasty"): 10-team dynasty, true 2QB, 3 WR, full PPR, +0.5 TE premium, 6-point passing TDs.
 - The league group chat is where things get shared, mostly as phone screenshots.
-- Newsletters by email, all bylined "The Roast": The Daily Roast (daily, only when something happened), Thursday Night Fallout (Fridays in season), The Weekly Roast (Tuesdays, full recap), Draft Grades (once, after the startup draft).
+- Newsletters by email, from "MSTP Dynasty" with no byline: The Daily (daily, only when something happened), Thursday Night Fallout (Fridays in season), Week N Recap (Tuesdays, full recap), Draft Grades (once, after the startup draft). Recipients come from a private env list (LEAGUE_EMAILS); there is no public sign-up.
 - Season states the site must handle: pre-draft (now, 2026-09-18), startup draft in progress, in season, offseason.
 
 ## Capabilities and Constraints
@@ -30,7 +30,7 @@ Sleeper shows the numbers. This site says what they mean about you. Roasts are w
 
 ## Brand Commitments
 - Name: MSTP Dynasty, at mstpdynasty.com.
-- Voice: "The Roast", a merciless fantasy football columnist. Savage about fantasy decisions, never about identity (race, religion, sexuality, gender, bodies, family).
+- Voice: an unnamed, merciless fantasy football columnist. Savage about fantasy decisions, never about identity (race, religion, sexuality, gender, bodies, family). It never announces itself: no copy, label, issue name or byline says roast, burn or cooked. Labels name the event ("PICK 3.01", "WEEK 5 FINAL", "TRADE, SEP 21").
 - No medical or school theme anywhere, in copy or design. Ethan decided this explicitly.
 - The owner strongly dislikes anything that looks AI-generated.
 

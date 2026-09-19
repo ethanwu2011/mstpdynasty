@@ -10,9 +10,17 @@
  *
  * Refusal is checked before content is read; any API error becomes a typed failure so the
  * caller can publish facts only. Nothing here throws.
+ *
+ * Two spend guards sit in front of every call:
+ *   - On Vercel the writer only runs with the shared store (Upstash). Without it each instance
+ *     keeps its own /tmp store, so every cold start would find no locks and no stored lines and
+ *     write everything again, and nothing it wrote would reach the other instances' pages.
+ *   - A store-backed cap of MAX_WRITER_CALLS_PER_DAY calls per Eastern day, across instances.
  */
 import Anthropic from "@anthropic-ai/sdk";
 import { configured } from "@/lib/env";
+import * as store from "@/lib/store";
+import { etDate } from "@/lib/time";
 import type { RoastUsage } from "@/lib/types";
 import { SYSTEM_PROMPT } from "./persona";
 import { recordWriterStatus } from "./status";
@@ -42,6 +50,26 @@ export interface RoastClient {
 export const ITEM_REQUEST: RoastRequestOptions = { timeout: 90_000, maxRetries: 1 };
 export const ISSUE_REQUEST: RoastRequestOptions = { timeout: 180_000, maxRetries: 1 };
 
+/** Writer calls allowed per Eastern day, across every instance (a runaway guard, far above normal use). */
+export const MAX_WRITER_CALLS_PER_DAY = 400;
+
+/**
+ * True on Vercel while the store is not the shared one (Upstash): then the writer stays off, so
+ * per-instance /tmp stores cannot multiply model calls by the number of instances.
+ */
+export function sharedStoreMissing(): boolean {
+  return Boolean(process.env.VERCEL) && store.pickBackend() !== "upstash";
+}
+
+/** Count one call against today's cap. Fails closed: a store that cannot count cannot store the result either. */
+async function withinDailyCap(now = Date.now()): Promise<boolean> {
+  try {
+    return (await store.incr(store.keys.rate(`writer-calls:${etDate(now)}`), 86_400)) <= MAX_WRITER_CALLS_PER_DAY;
+  } catch {
+    return false;
+  }
+}
+
 let override: RoastClient | null | undefined;
 let sdkClient: RoastClient | null = null;
 
@@ -54,6 +82,7 @@ export function setRoastClient(client: RoastClient | null | undefined): void {
 }
 
 function getClient(): RoastClient | null {
+  if (sharedStoreMissing()) return null;
   if (override !== undefined) return override;
   if (!configured.anthropic()) return null;
   // Exactly as the spec says: `new Anthropic()` reads ANTHROPIC_API_KEY from the environment.
@@ -61,8 +90,9 @@ function getClient(): RoastClient | null {
   return sdkClient;
 }
 
-/** True when a call would actually be attempted (key set, or a test client injected). */
+/** True when a call would actually be attempted (key set, or a test client injected, and a shared store on Vercel). */
 export function hasRoastClient(): boolean {
+  if (sharedStoreMissing()) return false;
   return override !== undefined ? override !== null : configured.anthropic();
 }
 
@@ -113,10 +143,19 @@ function describeError(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
-/** One call to The Roast. `label` is only for the log line. */
+/** One call to the writer. `label` is only for the log line. */
 export async function callRoastModel(userContent: string, label = "roast", options: RoastRequestOptions = ITEM_REQUEST): Promise<RoastCallResult> {
   const client = getClient();
-  if (!client) return { ok: false, reason: "not_configured", detail: "ANTHROPIC_API_KEY is not set", model: null, usage: null };
+  if (!client) {
+    const detail = sharedStoreMissing() ? "the writer needs the shared store (Upstash) on Vercel" : "ANTHROPIC_API_KEY is not set";
+    return { ok: false, reason: "not_configured", detail, model: null, usage: null };
+  }
+  if (!(await withinDailyCap())) {
+    const detail = `daily cap of ${MAX_WRITER_CALLS_PER_DAY} writer calls reached`;
+    console.warn(`[roast] ${label}: ${detail}`);
+    await recordWriterStatus({ ok: false, at: Date.now(), reason: "error", detail });
+    return { ok: false, reason: "error", detail, model: null, usage: null };
+  }
   let msg: BetaMessage;
   try {
     msg = await client.beta.messages.create(buildRoastRequest(userContent), options);

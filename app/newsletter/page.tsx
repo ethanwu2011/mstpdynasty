@@ -1,22 +1,30 @@
 /*
  * DIRECTION (Newsletter archive, inside DESIGN.md's Jumbotron Specimen world)
- * THESIS: The Roast's back catalog, filed like a stadium's program stack. The latest issue leads
- *   at full pixel volume; the rest are rows you can scan by date, name and the one-line dek.
+ * THESIS: The league newsletter's back catalog, filed like a stadium's program stack. The latest
+ *   issue leads at full pixel volume; the rest are rows you can scan by date, name and dek.
  * FIRST VIEWPORT: Left 8, the latest issue (title in Jersey, dek, opening lines, read link).
- *   Right 4, the four issues with cadence and counts, and the subscribe button.
+ *   Right 4, the four issues with cadence and counts.
  */
 import type { Metadata } from "next";
 import { listIssues } from "@/lib/archive";
 import { getLeagueContext } from "@/lib/league";
 import { pagePhase, safe, type SearchParams } from "../_lib/phase";
 import { fireTick } from "../_lib/tick";
-import { kindFromSlug } from "./issue-kinds";
+import { issueLabel, kindFromSlug, recapWeek } from "./issue-kinds";
 import { NewsletterView } from "./view";
 
-export const metadata: Metadata = {
-  title: "The Roast, every issue",
-  description: "Every issue of The Daily Roast, Thursday Night Fallout, The Weekly Roast and Draft Grades for the MSTP Dynasty league.",
-};
+export async function generateMetadata(): Promise<Metadata> {
+  let recap = issueLabel("weekly_recap", 1);
+  try {
+    recap = issueLabel("weekly_recap", recapWeek(await getLeagueContext()));
+  } catch {
+    // The league did not load: name the first recap.
+  }
+  return {
+    title: "Every issue",
+    description: `Every issue of The Daily, Thursday Night Fallout, ${recap} and Draft Grades for the MSTP Dynasty league.`,
+  };
+}
 
 const one = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v);
 
@@ -30,8 +38,8 @@ export default async function NewsletterPage({ searchParams }: { searchParams: S
   ]);
   return (
     <>
-      <h1 className="sr-only">The Roast: every newsletter issue</h1>
-      <NewsletterView issues={issues} kind={kindFromSlug(one(params.kind))} phase={phase} />
+      <h1 className="sr-only">Every newsletter issue</h1>
+      <NewsletterView issues={issues} kind={kindFromSlug(one(params.kind))} phase={phase} recapWeek={recapWeek({ phase, week: ctx.week }, issues ?? [])} />
     </>
   );
 }

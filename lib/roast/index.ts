@@ -2,7 +2,7 @@
  * Roast engine public API. OWNER: roast agent (lib/facts/**, lib/roast/**, config/roast-notes.ts,
  * tests/facts*, tests/roast*).
  *
- * Rule 1: code computes every fact; The Roast only writes jokes about the facts it is handed.
+ * Rule 1: code computes every fact; the writer only writes jokes about the facts it is handed.
  *   1. plan (lib/roast/plan.ts, items.ts, memory.ts): deterministic sections, tables and fact
  *      lines, the slots the model fills, and the compact FACTS payload (plus league memory:
  *      rap sheets, Loser of the Week crowns, draft slots, odds movement)
@@ -14,7 +14,7 @@
  *      saying what failed), and if it fails again its code-written fallback is used in full
  *   4. render: slots become paragraphs; anything missing falls back to code-written lines
  * Never throws for LLM reasons: no key, refusal, API error or too many failed slots all
- * publish facts only with FACTS_ONLY_NOTE.
+ * publish facts only (factsOnly: true, note FACTS_ONLY_NOTE, which is null: no apology).
  */
 import "server-only";
 import { getLeagueContext } from "@/lib/league";
@@ -35,20 +35,57 @@ import type {
 } from "@/lib/types";
 import { configured } from "@/lib/env";
 import { draftFacts } from "@/lib/facts";
-import { planItem, type ItemPlan } from "./items";
-import { addUsage, callRoastModel, hasRoastClient, ISSUE_REQUEST, ITEM_REQUEST } from "./llm";
+import { ITEM_SLOT_ID, planItem, type ItemPlan } from "./items";
+import { addUsage, callRoastModel, hasRoastClient, ISSUE_REQUEST, ITEM_REQUEST, sharedStoreMissing } from "./llm";
 import { draftContext, EMPTY_MEMORY, issueMemory, type PayloadMemory } from "./memory";
 import { loadRoastNotes, notesFor } from "./notes";
-import { ISSUE_TITLES, planDaily, planDraftGrades, planThursday, planWeekly, type IssuePlan, type SlotSpec, type WaiverMode } from "./plan";
+import { planDaily, planDraftGrades, planThursday, planWeekly, type IssuePlan, type SlotSpec, type WaiverMode } from "./plan";
 import { AllowedNumbers, checkText, describeDrops, limitExclamations, parseSlots, sanitize, type Dropped } from "./postcheck";
 
-export { ISSUE_TITLES } from "./plan";
+export { ISSUE_TITLES, issueTitle } from "./plan";
 export { SYSTEM_PROMPT } from "./persona";
 export { issueMemory } from "./memory";
-export { buildRoastRequest, ROAST_MODEL, setRoastClient } from "./llm";
+export { buildRoastRequest, hasRoastClient, MAX_WRITER_CALLS_PER_DAY, ROAST_MODEL, setRoastClient, sharedStoreMissing } from "./llm";
+export {
+  checkLine,
+  getStoredSurfaceLines,
+  getSurfaceLines,
+  linesMessage,
+  MAX_ROW_ATTEMPTS,
+  MAX_ROWS_PER_CALL,
+  parseLinesReply,
+  refreshSurfaceLines,
+  ROW_RETRY_AFTER_MS,
+  rowHash,
+  SURFACE_MAX_AGE_MS,
+  SURFACES,
+  surfaceFactsHash,
+  surfaceKeys,
+  surfaceLines,
+  type RefreshOptions,
+  type RefreshResult,
+} from "./surfaces";
+export {
+  draftOddsRows,
+  draftRows,
+  finalMatchupRows,
+  oddsRows,
+  powerRows,
+  pregameMatchupRows,
+  SHAME_LISTS,
+  shameRows,
+  standingsRows,
+  teamRows,
+  tradeRows,
+  type TeamPageInput,
+} from "./surface-rows";
+export { draftContext } from "./memory";
 
-/** The one-line note on every facts-only issue (docs/CONTRACTS.md). */
-export const FACTS_ONLY_NOTE = "The roast writer called in sick. Facts only today.";
+/**
+ * The note on a facts-only issue: none. The facts simply run (docs/SITE_SPEC.md ROUND 2: nothing
+ * a reader sees talks about the writer). Kept as an export so callers and tests read one value.
+ */
+export const FACTS_ONLY_NOTE: string | null = null;
 
 /** An issue falls back to facts only when more than this share of its slots fail twice. */
 export const MAX_FAILED_SLOT_SHARE = 0.5;
@@ -66,9 +103,12 @@ export interface RoastOptions {
   draftPicks?: DraftPickFact[];
 }
 
-/** True when ANTHROPIC_API_KEY is set. When false, show "not configured yet" and publish facts only. */
+/**
+ * True when ANTHROPIC_API_KEY is set (and, on Vercel, the shared store is connected). When
+ * false, show "not configured yet" and publish facts only.
+ */
 export function isRoastConfigured(): boolean {
-  return configured.anthropic();
+  return configured.anthropic() && !sharedStoreMissing();
 }
 
 /** FAAB when the league's waiver_type is 2; otherwise claims are decided by priority. */
@@ -127,11 +167,11 @@ function retryNote(reasons: string[], extra = ""): string {
  */
 export function planIssue(facts: IssueFacts, ctx: LeagueContext, memory: PayloadMemory = EMPTY_MEMORY): IssuePlan {
   switch (facts.kind) {
-    case "weekly_roast":
+    case "weekly_recap":
       return planWeekly(facts, memory);
     case "thursday_fallout":
       return planThursday(facts, memory);
-    case "daily_roast":
+    case "daily":
       return planDaily(facts, ctx.league.settings.waiver_budget ?? 100, memory, waiverModeOf(ctx));
     case "draft_grades":
       return planDraftGrades(facts, memory);
@@ -202,9 +242,9 @@ export async function roastIssue(kind: IssueKind, facts: IssueFacts, ctx?: Leagu
     kind: plan.kind,
     leagueId: c.leagueId,
     season: c.season,
-    week: plan.week ?? (plan.kind === "daily_roast" && c.phase === "in_season" && c.week > 0 ? c.week : null),
+    week: plan.week ?? (plan.kind === "daily" && c.phase === "in_season" && c.week > 0 ? c.week : null),
     date,
-    title: ISSUE_TITLES[plan.kind],
+    title: plan.title,
     dek: plan.fallbackDek,
     dekSource: "code",
     sections: renderSections(plan, null),
@@ -302,8 +342,8 @@ async function writeItem(plan: ItemPlan, lore: Record<string, string>, recent: s
     usage = addUsage(usage, res.usage);
     model = res.model ?? model;
     if (!res.ok) return { text: null, model, usage };
-    const slots = parseSlots(res.text, "roast");
-    const raw = slots.get("roast") ?? [...slots.values()][0] ?? "";
+    const slots = parseSlots(res.text, ITEM_SLOT_ID);
+    const raw = slots.get(ITEM_SLOT_ID) ?? [...slots.values()][0] ?? "";
     const checked = checkText(raw, allowed, exempt);
     logDrops(plan.id, checked.dropped);
     // Only a clean roast is published: no failed sentence, and no more sentences than asked for.

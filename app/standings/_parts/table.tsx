@@ -1,8 +1,9 @@
 /** The standings table with the playoff line drawn across it. */
 import { cx } from "@/components/cx";
 import { Numeral } from "@/components/Numeral";
+import { lineOf, RowLine } from "@/components/RowLine";
 import { LiveSquare, Tag } from "@/components/Tag";
-import type { PowerRow, RosterId, StandingRow } from "@/lib/types";
+import type { PowerRow, RosterId, StandingRow, SurfaceLineMap } from "@/lib/types";
 import { fmtPts, record } from "../../_lib/format";
 
 export interface StandingsTableProps {
@@ -14,6 +15,8 @@ export interface StandingsTableProps {
   playoffTeams: number;
   byes: number;
   championId: RosterId | null;
+  /** One-liners by roster id (the standings surface). */
+  lines?: SurfaceLineMap;
 }
 
 /** "52-28", or "52.5-27.5" when ties split a win. */
@@ -30,7 +33,7 @@ function signed(n: number, decimals = 1): string {
 
 const HEAD = "type-label whitespace-nowrap px-3 py-2.5 font-normal";
 
-export function StandingsTable({ rows, power, played, playoffTeams, byes, championId }: StandingsTableProps) {
+export function StandingsTable({ rows, power, played, playoffTeams, byes, championId, lines }: StandingsTableProps) {
   const lastId = played && rows.length ? rows[rows.length - 1].team.rosterId : null;
   const lineAfter = played && playoffTeams > 0 && playoffTeams < rows.length ? playoffTeams : -1;
   const luckValues = played ? rows.map((r) => power.get(r.team.rosterId)?.luck).filter((x): x is number => typeof x === "number") : [];
@@ -76,6 +79,9 @@ export function StandingsTable({ rows, power, played, playoffTeams, byes, champi
             const last = r.team.rosterId === lastId;
             const champ = r.team.rosterId === championId;
             const inBye = played && byes > 0 && i < byes && lineAfter > 0;
+            const quip = lineOf(lines, r.team.rosterId);
+            const band = i % 2 ? "bg-paper-shade" : "bg-paper";
+            const cellY = quip ? "pt-3 pb-1.5" : "py-3";
             return [
               i === lineAfter ? (
                 <tr key={`line-${i}`} aria-hidden className="bg-paper">
@@ -87,10 +93,10 @@ export function StandingsTable({ rows, power, played, playoffTeams, byes, champi
                   </td>
                 </tr>
               ) : null,
-              <tr key={r.team.rosterId} className={cx(i % 2 ? "bg-paper-shade" : "bg-paper", leader && "font-bold")}>
+              <tr key={r.team.rosterId} className={cx(band, leader && "font-bold")}>
                 <th
                   scope="row"
-                  className="sticky left-0 z-[1] whitespace-nowrap bg-inherit px-3 py-3 text-left font-[inherit] shadow-[inset_-1px_0_0_var(--color-ink)]"
+                  className={cx("sticky left-0 z-[1] whitespace-nowrap bg-inherit px-3 text-left font-[inherit] shadow-[inset_-1px_0_0_var(--color-ink)]", cellY)}
                 >
                   <span className="flex items-center gap-3">
                     <span className="w-8 shrink-0">
@@ -112,20 +118,30 @@ export function StandingsTable({ rows, power, played, playoffTeams, byes, champi
                     </span>
                   </span>
                 </th>
-                <td className="whitespace-nowrap px-3 py-3 text-right font-bold">{record(r.wins, r.losses, r.ties)}</td>
-                <td className="whitespace-nowrap px-3 py-3 text-right">{played ? fmtPts(r.pointsFor) : "--"}</td>
-                <td className="whitespace-nowrap px-3 py-3 text-right text-ink-muted">{played ? fmtPts(r.pointsAgainst) : "--"}</td>
-                <td className="whitespace-nowrap px-3 py-3 text-right">{played && p ? allPlay(p.allPlayWins, p.allPlayLosses) : "--"}</td>
+                <td className={cx("whitespace-nowrap px-3 text-right font-bold", cellY)}>{record(r.wins, r.losses, r.ties)}</td>
+                <td className={cx("whitespace-nowrap px-3 text-right", cellY)}>{played ? fmtPts(r.pointsFor) : "--"}</td>
+                <td className={cx("whitespace-nowrap px-3 text-right text-ink-muted", cellY)}>{played ? fmtPts(r.pointsAgainst) : "--"}</td>
+                <td className={cx("whitespace-nowrap px-3 text-right", cellY)}>{played && p ? allPlay(p.allPlayWins, p.allPlayLosses) : "--"}</td>
                 <td
                   className={cx(
-                    "whitespace-nowrap px-3 py-3 text-right",
+                    "whitespace-nowrap px-3 text-right",
+                    cellY,
                     played && p && (p.luck === maxLuck || p.luck === minLuck) && p.luck !== 0 && "font-extrabold",
                   )}
                 >
                   {played && p ? signed(p.luck) : "--"}
                 </td>
-                <td className="whitespace-nowrap px-3 py-3 text-right">{played && r.streak ? r.streak : "--"}</td>
+                <td className={cx("whitespace-nowrap px-3 text-right", cellY)}>{played && r.streak ? r.streak : "--"}</td>
               </tr>,
+              quip ? (
+                <tr key={`${r.team.rosterId}-line`} className={band}>
+                  <td colSpan={COLS} className="p-0">
+                    <div className="sticky left-0 box-border w-full max-w-[min(100vw,72ch)] px-3 pb-3 font-normal">
+                      <RowLine text={quip} />
+                    </div>
+                  </td>
+                </tr>
+              ) : null,
             ];
           })}
         </tbody>

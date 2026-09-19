@@ -1,7 +1,20 @@
 /** HMAC link tokens and request auth: tamper, expiry, purpose, secrets, redirects, cron. */
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { checkCronAuth, checkPassword, checkTickAuth, clientIp, gateToken, isGateCookieValid, isUngatedPath, safeNextPath } from "@/lib/email/gate";
-import { safeEqual, signToken, subscriberRef, verifyToken, type TokenPayload } from "@/lib/email/sign";
+import {
+  adminSecretProblem,
+  checkAdminAuth,
+  checkCronAuth,
+  checkPassword,
+  checkTickAuth,
+  clientIp,
+  gateToken,
+  isGateCookieValid,
+  isUngatedPath,
+  MIN_ADMIN_SECRET_LENGTH,
+  safeNextPath,
+} from "@/lib/email/gate";
+import { optOutSecret, safeEqual, signToken, subscriberRef, verifyToken, verifyUnsubToken, type TokenPayload } from "@/lib/email/sign";
+import { addr } from "./ops-helpers";
 
 const SECRET = "test-admin-secret";
 const NOW = Date.UTC(2026, 8, 29, 12, 0, 0);
@@ -15,7 +28,7 @@ function reencode(token: string, mutate: (p: TokenPayload) => TokenPayload): str
 }
 
 describe("signed tokens", () => {
-  const approve: TokenPayload = { p: "approve", l: "league-1", s: "2026-09-29-weekly-roast", n: "nonce-1", exp: NOW / 1000 + 3600 };
+  const approve: TokenPayload = { p: "approve", l: "league-1", s: "2026-09-29-weekly-recap", n: "nonce-1", exp: NOW / 1000 + 3600 };
 
   it("round-trips a valid token", () => {
     const t = signToken(approve, SECRET)!;
@@ -53,9 +66,13 @@ describe("signed tokens", () => {
   });
 
   it("will not accept a token minted for another purpose", () => {
-    const t = signToken({ p: "confirm", l: "league-1", r: "ref", exp: NOW / 1000 + 60 }, SECRET)!;
+    const t = signToken({ p: "approve", l: "league-1", s: "slug", n: "nonce", exp: NOW / 1000 + 60 }, SECRET)!;
     expect(verifyToken(t, "unsub", { now: NOW, secret: SECRET })).toEqual({ ok: false, reason: "wrong_purpose" });
-    expect(verifyToken(t, "approve", { now: NOW, secret: SECRET })).toEqual({ ok: false, reason: "wrong_purpose" });
+    const u = signToken({ p: "unsub", l: "league-1", r: "ref" }, SECRET)!;
+    expect(verifyToken(u, "approve", { now: NOW, secret: SECRET })).toEqual({ ok: false, reason: "wrong_purpose" });
+    // The old sign-up "confirm" purpose is gone: even a correctly signed one is refused.
+    const old = signToken({ p: "confirm", l: "league-1", r: "ref" } as unknown as TokenPayload, SECRET)!;
+    expect(verifyToken(old, "unsub", { now: NOW, secret: SECRET })).toEqual({ ok: false, reason: "malformed" });
   });
 
   it("rejects malformed input without throwing", () => {
@@ -71,13 +88,31 @@ describe("signed tokens", () => {
     vi.stubEnv("ADMIN_SECRET", "");
     expect(signToken(approve)).toBeNull();
     expect(verifyToken("v1.a.b", "approve")).toEqual({ ok: false, reason: "not_configured" });
-    expect(subscriberRef("a@b.co")).toBeNull();
+    expect(subscriberRef(addr("a"))).toBeNull();
+  });
+
+  it("with OPTOUT_SECRET set, opt-out refs and unsubscribe links survive an ADMIN_SECRET rotation", () => {
+    vi.stubEnv("OPTOUT_SECRET", "optout-secret-set-once-never-rotated");
+    vi.stubEnv("ADMIN_SECRET", SECRET);
+    const ref = subscriberRef(addr("ann"));
+    const token = signToken({ p: "unsub", l: "league-1", r: ref! }, optOutSecret())!;
+    vi.stubEnv("ADMIN_SECRET", "a-rotated-admin-secret");
+    expect(subscriberRef(addr("ann"))).toBe(ref);
+    expect(verifyUnsubToken(token)).toMatchObject({ ok: true, payload: { r: ref } });
+  });
+
+  it("an unsubscribe link signed with ADMIN_SECRET keeps working once OPTOUT_SECRET is set", () => {
+    vi.stubEnv("ADMIN_SECRET", SECRET);
+    const token = signToken({ p: "unsub", l: "league-1", r: "ref" }, SECRET)!;
+    vi.stubEnv("OPTOUT_SECRET", "optout-secret-set-once-never-rotated");
+    expect(verifyUnsubToken(token).ok).toBe(true);
+    expect(verifyUnsubToken(signToken({ p: "unsub", l: "league-1", r: "ref" }, "somebody-else")!)).toEqual({ ok: false, reason: "bad_signature" });
   });
 
   it("subscriber refs are stable, case-insensitive and secret-dependent", () => {
-    expect(subscriberRef("Ann@Example.com", SECRET)).toBe(subscriberRef("ann@example.com", SECRET));
-    expect(subscriberRef("ann@example.com", SECRET)).not.toBe(subscriberRef("ann@example.com", "other"));
-    expect(subscriberRef("ann@example.com", SECRET)).not.toContain("ann");
+    expect(subscriberRef(addr("Ann").replace("example", "Example"), SECRET)).toBe(subscriberRef(addr("ann"), SECRET));
+    expect(subscriberRef(addr("ann"), SECRET)).not.toBe(subscriberRef(addr("ann"), "other"));
+    expect(subscriberRef(addr("ann"), SECRET)).not.toContain("ann");
   });
 
   it("safeEqual compares in constant time, any lengths", () => {
@@ -163,11 +198,42 @@ describe("request auth", () => {
   });
 
   it("signed-link routes, cron and assets bypass the gate; pages and other APIs do not", () => {
-    for (const p of ["/enter", "/api/enter", "/api/unsubscribe", "/api/admin/approve", "/api/subscribe/confirm", "/api/cron/daily", "/api/tick", "/_next/static/x.js"]) {
+    for (const p of ["/enter", "/api/enter", "/api/unsubscribe", "/api/admin/approve", "/api/admin/test-email", "/api/cron/daily", "/api/tick", "/_next/static/x.js"]) {
       expect(isUngatedPath(p)).toBe(true);
     }
-    for (const p of ["/", "/draft", "/api/subscribe", "/newsletter/2026-09-29-weekly-roast", "/enterprise", "/api/admin"]) {
+    for (const p of ["/", "/draft", "/api/subscribe", "/api/subscribe/confirm", "/subscribe", "/newsletter/2026-09-29-weekly-recap", "/enterprise", "/api/admin", "/api/health"]) {
       expect(isUngatedPath(p)).toBe(false);
+    }
+  });
+});
+
+describe("admin bearer (POST /api/admin/test-email)", () => {
+  const req = (auth?: string) => new Request("https://x.test/api/admin/test-email", { method: "POST", headers: auth ? { authorization: auth } : {} });
+  // At least MIN_ADMIN_SECRET_LENGTH (32) characters.
+  const ADMIN = "test-admin-secret-long-enough-for-the-bearer";
+
+  it("is closed without ADMIN_SECRET, even in dev, and the answer never says why", () => {
+    vi.stubEnv("ADMIN_SECRET", "");
+    vi.stubEnv("NODE_ENV", "development");
+    // A bearer while the secret is unset gets the same 401 as a wrong one: nothing about the config leaks.
+    expect(checkAdminAuth(req("Bearer anything"))).toEqual({ ok: false, status: 401, error: "Unauthorized." });
+    expect(checkAdminAuth(req())).toEqual({ ok: false, status: 401, error: "Unauthorized." });
+  });
+
+  it("refuses a short ADMIN_SECRET even when the bearer matches it", () => {
+    vi.stubEnv("ADMIN_SECRET", SECRET);
+    expect(SECRET.length).toBeLessThan(MIN_ADMIN_SECRET_LENGTH);
+    expect(checkAdminAuth(req(`Bearer ${SECRET}`))).toEqual({ ok: false, status: 401, error: "Unauthorized." });
+    expect(adminSecretProblem()).toMatch(/shorter than 32/);
+  });
+
+  it("needs exactly Bearer ADMIN_SECRET", () => {
+    vi.stubEnv("ADMIN_SECRET", ADMIN);
+    expect(adminSecretProblem()).toBeNull();
+    expect(checkAdminAuth(req(`Bearer ${ADMIN}`))).toEqual({ ok: true });
+    expect(checkAdminAuth(req(`bearer ${ADMIN}`))).toEqual({ ok: true });
+    for (const bad of [undefined, ADMIN, `Bearer ${ADMIN}x`, `Bearer ${ADMIN.slice(0, -1)}`, "Bearer ", `Basic ${ADMIN}`, `Bearer ${ADMIN} extra`]) {
+      expect(checkAdminAuth(req(bad))).toMatchObject({ ok: false, status: 401 });
     }
   });
 });

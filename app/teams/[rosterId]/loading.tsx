@@ -7,7 +7,7 @@ export default function Loading() {
       <Panel label="The team" span={8}>
         <MatrixLoading label="Pulling the roster from Sleeper." rows={10} />
       </Panel>
-      <Panel label="Latest roast" span={4}>
+      <Panel label="Latest" span={4}>
         <MatrixLoading label="Checking the rap sheet." rows={10} />
       </Panel>
       <Panel label="Starting lineup">

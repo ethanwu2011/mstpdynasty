@@ -1,7 +1,7 @@
 /**
- * Assembles DailyRoastFacts for The Daily Roast.
+ * Assembles DailyFacts for The Daily.
  *
- *   trades, waivers   lib/facts transactionFacts(since last Daily Roast), minus plain cuts
+ *   trades, waivers   lib/facts transactionFacts(since the last Daily), minus plain cuts
  *                     (a drop with no add, of a player who is not a notable drop)
  *   draft picks       lib/facts draftFacts, picks after the last reported pick number
  *   injuries          rostered players whose status turned serious since yesterday's snapshot
@@ -21,7 +21,7 @@ import { byeTeams, getPlayers, playerInfo } from "@/lib/sleeper";
 import * as store from "@/lib/store";
 import { etDate } from "@/lib/time";
 import type {
-  DailyRoastFacts,
+  DailyFacts,
   DraftPickFact,
   FantasyCalcSnapshot,
   InjuryFact,
@@ -34,7 +34,7 @@ import type {
 } from "@/lib/types";
 import { addDays, DAY_MS, mainDateOfWeek, upcomingWeekFor } from "./schedule";
 
-/** Injury statuses worth a line in the Daily Roast. "Questionable" is too noisy. */
+/** Injury statuses worth a line in The Daily. "Questionable" is too noisy. */
 export const SERIOUS_INJURY = new Set(["Doubtful", "Out", "IR", "PUP", "Sus", "COV"]);
 /** Bench players still count as news when FantasyCalc ranks them this high. */
 export const NOTABLE_RANK = 100;
@@ -46,12 +46,13 @@ export interface DailyCursor {
   picks: { draftId: string; lastPickNo: number } | null;
 }
 
+/** Store name kept from before the rename, so the cursor survives it. */
 const CURSOR = "daily-roast-cursor";
 const INJURIES = "injury-status";
 const alertsKey = (season: string, week: number) => `lineup-alerts:${season}:${week}`;
 
 export interface DailyBuild {
-  facts: DailyRoastFacts;
+  facts: DailyFacts;
   /** true when any facts source is still a placeholder stub: never build an issue from it. */
   placeholder: boolean;
   /** Persist cursors and snapshots. Call only after the issue is stored (or the day is quiet). */
@@ -171,7 +172,7 @@ export function lineupAlerts(
   return { alerts, ids };
 }
 
-export async function buildDailyRoastFacts(ctx: LeagueContext, now: number, schedule: NflGame[]): Promise<DailyBuild> {
+export async function buildDailyFacts(ctx: LeagueContext, now: number, schedule: NflGame[]): Promise<DailyBuild> {
   const l = ctx.leagueId;
   const date = etDate(now);
   const cursor = await store.get<DailyCursor>(store.keys.snapshot(l, CURSOR));
@@ -183,7 +184,7 @@ export async function buildDailyRoastFacts(ctx: LeagueContext, now: number, sche
   // A plain cut of a nobody is not news (rookie drafts bring dozens): keep adds and notable drops.
   const waivers = tx.waivers.filter((w) => w.added.length > 0 || w.notableDrop || w.type === "waiver");
 
-  // Draft picks since the last Daily Roast.
+  // Draft picks since the last Daily.
   let draftPicks: DraftPickFact[] = [];
   let nextPicks = cursor?.picks ?? null;
   const draft = ctx.draft;
@@ -238,8 +239,8 @@ export async function buildDailyRoastFacts(ctx: LeagueContext, now: number, sche
     }
   }
 
-  const facts: DailyRoastFacts = {
-    kind: "daily_roast",
+  const facts: DailyFacts = {
+    kind: "daily",
     date,
     sinceMs,
     trades: tx.trades,
@@ -262,3 +263,6 @@ export async function buildDailyRoastFacts(ctx: LeagueContext, now: number, sche
     },
   };
 }
+
+/** @deprecated Renamed to buildDailyFacts. */
+export const buildDailyRoastFacts = buildDailyFacts;

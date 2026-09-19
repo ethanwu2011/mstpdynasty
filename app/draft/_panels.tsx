@@ -9,8 +9,9 @@ import { BarLink } from "@/components/HeaderBar";
 import { Numeral } from "@/components/Numeral";
 import { Panel, type PanelSpan } from "@/components/Panel";
 import { Receipt, RoastBlock, type RoastBlockData } from "@/components/RoastBlock";
-import { LiveSquare, SampleMark, Tag } from "@/components/Tag";
-import type { DraftGrade, DraftPickFact, Issue, LeagueContext, SleeperDraft } from "@/lib/types";
+import { lineOf, RowLine } from "@/components/RowLine";
+import { LiveSquare, SampleMark } from "@/components/Tag";
+import type { DraftGrade, DraftPickFact, Issue, LeagueContext, SleeperDraft, SurfaceLineMap } from "@/lib/types";
 import { clockLength, etStamp, fmtInt, ordinal, pickLabel } from "../_lib/format";
 import { slotPicks } from "../_lib/draft";
 import { issueToBlock, pickFallback, roastToBlock } from "../_lib/roast-view";
@@ -32,20 +33,19 @@ export function PreDraftLead({ ctx, board, draft }: { ctx: LeagueContext; board:
           {orderName(board)} · {board.rounds} rounds{clock ? ` · ${clock} pick clock` : ""}
         </p>
         <h3 className="type-display m-0 text-j3 md:text-j4">
-          <span className="board-wipe block">The board is empty.</span>
-          <span className="board-wipe block">Not for long.</span>
+          <span className="board-wipe block">{fmtInt(board.total)} picks.</span>
+          <span className="board-wipe block">Zero made.</span>
         </h3>
 
         {start ? (
           <Countdown
             target={start}
             serverNow={ctx.loadedAt}
-            ghost
             digitClassName="text-d60 sm:text-d80"
             label={`Draft scheduled for ${etStamp(start)}`}
             expired={
               <div className="flex flex-col gap-3">
-                <Numeral value="00:00:00" ghost label="Zero" className="text-d60 sm:text-d80" />
+                <Numeral value="00:00:00" label="Zero" className="text-d60 sm:text-d80" />
                 <p className="type-label m-0 flex items-center gap-2">
                   <LiveSquare blink size={10} />
                   {autostart ? "Starting any second" : `Past the scheduled start. The draft opens when ${commish} hits start.`}
@@ -58,8 +58,8 @@ export function PreDraftLead({ ctx, board, draft }: { ctx: LeagueContext; board:
         )}
 
         <p className="measure m-0 text-body md:text-lede">
-          All {fmtInt(board.total)} picks land here as they are made, each one checked against FantasyCalc&apos;s dynasty rankings. Take a player
-          too early and his square turns red. Tap any pick for its roast.
+          All {fmtInt(board.total)} picks land here as they are made, with each player&apos;s FantasyCalc rank. Take a player too early and his
+          square turns red. Tap a pick to open it.
         </p>
 
         <Receipt
@@ -112,7 +112,7 @@ export function OrderPanel({ board, draft, span = 4 }: { board: BoardModel; draf
               </div>
             ))}
           </div>
-          <figcaption className="type-label text-ink-muted">Columns are draft slots. Numbers are the pick in each round.</figcaption>
+          <figcaption className="text-data text-ink-muted">Columns are draft slots. Numbers are the pick in each round.</figcaption>
         </figure>
 
         <div className="flex flex-col gap-3 text-body">
@@ -151,7 +151,18 @@ export function OrderPanel({ board, draft, span = 4 }: { board: BoardModel; draf
 
 /* ------------------------------ drafting ------------------------------ */
 
-export function LatestPickPanel({ board, placeholder, span = 8 }: { board: BoardModel; placeholder: boolean; span?: PanelSpan }) {
+export function LatestPickPanel({
+  board,
+  placeholder,
+  lines,
+  span = 8,
+}: {
+  board: BoardModel;
+  placeholder: boolean;
+  /** One-liners by pick number (the draft surface). */
+  lines?: SurfaceLineMap;
+  span?: PanelSpan;
+}) {
   const cell = board.latest;
   const earlier = cell
     ? board.roundRows
@@ -166,10 +177,23 @@ export function LatestPickPanel({ board, placeholder, span = 8 }: { board: Board
       : { ...pickFallback(cell.pick, placeholder), text: pickFacts(cell.pick) }
     : null;
   return (
-    <Panel label="Latest pick" labelRight={cell ? <BarLink href={`#pick-${cell.pickNo}`}>On the board</BarLink> : null} span={span} id="latest-pick">
+    <Panel
+      label={cell ? `Pick ${cell.label}` : "Pick 1.01"}
+      labelRight={cell ? <BarLink href={`#pick-${cell.pickNo}`}>On the board</BarLink> : null}
+      span={span}
+      id="latest-pick"
+    >
       {data ? (
         <div className="flex flex-1 flex-col gap-8">
-          <RoastBlock {...data} href={null} size="compact" animate headingLevel={3} />
+          <RoastBlock
+            {...data}
+            href={null}
+            lede={cell ? lineOf(lines, cell.pickNo) : null}
+            eventInPanel
+            size="hero"
+            animate
+            headingLevel={3}
+          />
           {earlier.length ? (
             <section aria-labelledby="picks-before" className="mt-auto flex flex-col gap-2">
               <h4 id="picks-before" className="type-label m-0 text-ink-muted">
@@ -178,15 +202,16 @@ export function LatestPickPanel({ board, placeholder, span = 8 }: { board: Board
               <ol className="m-0 list-none border-t-2 border-ink p-0">
                 {earlier.map((c) => (
                   <li key={c.pickNo} className="border-b border-ink">
-                    <a href={`#pick-${c.pickNo}`} className="grid grid-cols-[3.25rem_minmax(0,1fr)_auto] items-center gap-x-3 py-2 no-underline hover:bg-paper-shade">
+                    <a href={`#pick-${c.pickNo}`} className="grid grid-cols-[3.25rem_minmax(0,1fr)_auto] items-center gap-x-3 py-2.5 no-underline hover:bg-paper-shade">
                       <span className="type-label">{c.label}</span>
                       <span className="flex min-w-0 flex-col sm:flex-row sm:items-baseline sm:gap-2">
                         <b className="truncate">{c.pick?.player.name}</b>
-                        <span className="truncate text-fine text-ink-muted">
+                        <span className="truncate text-data text-ink-muted">
                           {c.pick?.player.position} · {c.ownerName}
                         </span>
                       </span>
                       {c.pick ? <Verdict pick={c.pick} /> : null}
+                      {lineOf(lines, c.pickNo) ? <RowLine text={lineOf(lines, c.pickNo)} className="col-start-2 col-end-4 pt-1" /> : null}
                     </a>
                   </li>
                 ))}
@@ -197,7 +222,7 @@ export function LatestPickPanel({ board, placeholder, span = 8 }: { board: Board
       ) : (
         <div className="flex flex-1 flex-col justify-center gap-6">
           <p className="type-display m-0 text-j3">No picks yet</p>
-          <DotMatrixFill label="The draft is open and nobody has picked. The first roast lands with pick 1.01." rows={6} />
+          <DotMatrixFill label="The draft is open and nobody has picked." rows={6} />
         </div>
       )}
     </Panel>
@@ -234,7 +259,7 @@ export function ClockPanel({ ctx, board, draft, stage, placeholder, span = 4 }: 
           ) : since ? (
             <div className="flex flex-col gap-2">
               <span className="type-label text-ink-muted">{firstUp ? "Since the scheduled start" : "On the clock for"}</span>
-              <Countdown target={since} serverNow={ctx.loadedAt} mode="up" size="d40" ghost label="Time on the clock" />
+              <Countdown target={since} serverNow={ctx.loadedAt} mode="up" size="d40" label="Time on the clock" />
             </div>
           ) : null}
 
@@ -252,7 +277,7 @@ export function ClockPanel({ ctx, board, draft, stage, placeholder, span = 4 }: 
             </div>
           ) : null}
 
-          <div className="mt-auto flex flex-col gap-2">
+          <div className="flex flex-col gap-2">
             <div className="flex items-baseline justify-between">
               <span className="type-label text-ink-muted">
                 Round {c.round} of {board.rounds}
@@ -282,10 +307,11 @@ export function ClockPanel({ ctx, board, draft, stage, placeholder, span = 4 }: 
 
 function gradeLead(g: DraftGrade, teams: number, picks: number, placeholder: boolean): RoastBlockData {
   const w = g.worstPick;
-  const lines = [`${g.team.managerName} drafted ${fmtInt(g.totalValue)} in FantasyCalc value${picks ? ` across ${picks} picks` : ""}, ${ordinal(g.valueRank)} of ${teams}.`];
+  const lines = [`${g.team.managerName} drafted ${fmtInt(g.totalValue)} in FantasyCalc value${picks ? ` across ${picks} ${picks === 1 ? "pick" : "picks"}` : ""}, ${ordinal(g.valueRank)} of ${teams}.`];
   if (w && w.reach && w.reach > 0) lines.push(`The worst of them: ${w.player.name} at ${pickLabel(w.round, w.pickInRound)}, ${fmtInt(w.reach)} spots ahead of FantasyCalc.`);
   return {
-    kicker: "Draft Grades · the worst draft",
+    event: "Draft grades",
+    kicker: "The worst draft",
     victim: g.team.managerName,
     stat: `Grade ${g.grade}`,
     text: lines.join(" "),
@@ -296,8 +322,7 @@ function gradeLead(g: DraftGrade, teams: number, picks: number, placeholder: boo
       { label: "Worst pick", value: w ? `${pickLabel(w.round, w.pickInRound)} ${w.player.name}` : "--" },
     ],
     href: `/teams/${g.team.rosterId}`,
-    byline: "the numbers",
-    tags: placeholder ? <SampleMark /> : <Tag tone="outline">Facts only</Tag>,
+    tags: placeholder ? <SampleMark /> : null,
   };
 }
 
@@ -306,8 +331,8 @@ export function GradesLead({ grades, issue, board, placeholder }: { grades: Draf
   const picks = worst ? board.roundRows.flatMap((r) => r.cells).filter((c) => c.pick && c.ownerRosterId === worst.team.rosterId).length : 0;
   const data = issue ? issueToBlock(issue) : worst ? gradeLead(worst, grades.length, picks, placeholder) : null;
   return (
-    <Panel label={issue ? "Draft Grades" : "The worst draft"} labelRight={issue ? <BarLink href={`/newsletter/${issue.slug}`}>Full issue</BarLink> : null} span={8} id="draft-grades-lead">
-      {data ? <RoastBlock {...data} size="hero" animate headingLevel={3} /> : null}
+    <Panel label="Draft grades" labelRight={issue ? <BarLink href={`/newsletter/${issue.slug}`}>Full issue</BarLink> : null} span={8} id="draft-grades-lead">
+      {data ? <RoastBlock {...data} eventInPanel size="hero" animate headingLevel={3} /> : null}
     </Panel>
   );
 }
@@ -341,7 +366,7 @@ export function BestDraftPanel({ grades, span = 4 }: { grades: DraftGrade[]; spa
             <Verdict pick={b} className="mt-1" />
           </div>
         ) : null}
-        <Link href={`/teams/${best.team.rosterId}`} className="link-ink type-label mt-auto self-start px-0.5">
+        <Link href={`/teams/${best.team.rosterId}`} className="link-ink type-label hit-area mt-auto self-start px-0.5">
           Team page
         </Link>
       </div>

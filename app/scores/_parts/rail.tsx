@@ -34,7 +34,7 @@ function Cell({ week, selected, current, future, live }: { week: number; selecte
           selected ? "bg-ink text-paper" : future ? "bg-paper text-ink-muted hover:text-ink" : "bg-paper text-ink",
         )}
       >
-        <span aria-hidden className="type-numeral text-d20">
+        <span aria-hidden className="text-[1.0625rem] font-extrabold tnum">
           {week}
         </span>
         {current ? (

@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import { cx } from "./cx";
+import { RowLine } from "./RowLine";
 import { LiveSquare } from "./Tag";
 
 export interface DataColumn<T> {
@@ -35,6 +36,11 @@ export interface DataTableProps<T> {
   dense?: boolean;
   /** Shown instead of the table when rows is empty. */
   empty?: ReactNode;
+  /**
+   * The row's one-liner, set under it across the full row. On a phone it stays pinned to the
+   * visible width while the table scrolls sideways. Nothing is drawn when it returns null.
+   */
+  line?: (row: T, index: number) => string | null | undefined;
   className?: string;
 }
 
@@ -55,6 +61,7 @@ export function DataTable<T>({
   minWidth = 560,
   dense = false,
   empty,
+  line,
   className,
 }: DataTableProps<T>) {
   if (rows.length === 0 && empty) return <>{empty}</>;
@@ -84,8 +91,12 @@ export function DataTable<T>({
         <tbody>
           {rows.map((row, ri) => {
             const m = mark?.(row, ri) ?? null;
-            return (
-              <tr key={rowKey(row, ri)} id={rowId?.(row, ri)} className={cx("even:bg-paper-shade odd:bg-paper", m === "leader" && "font-bold")}>
+            const said = line?.(row, ri);
+            const quip = typeof said === "string" && said.trim() ? said.trim() : null;
+            // Zebra by row index, so a row and its line share one band.
+            const band = ri % 2 ? "bg-paper-shade" : "bg-paper";
+            return [
+              <tr key={rowKey(row, ri)} id={rowId?.(row, ri)} className={cx(band, m === "leader" && "font-bold")}>
                 {columns.map((c, ci) => {
                   const Cell = ci === 0 ? "th" : "td";
                   return (
@@ -94,6 +105,7 @@ export function DataTable<T>({
                       scope={ci === 0 ? "row" : undefined}
                       className={cx(
                         cellPad,
+                        quip && "pb-1.5",
                         "align-middle",
                         ci === 0 ? "sticky left-0 z-[1] whitespace-nowrap bg-inherit text-left font-[inherit] shadow-[inset_-1px_0_0_var(--color-ink)]" : ALIGN[c.align ?? "left"],
                         c.className,
@@ -112,8 +124,17 @@ export function DataTable<T>({
                     </Cell>
                   );
                 })}
-              </tr>
-            );
+              </tr>,
+              quip ? (
+                <tr key={`${rowKey(row, ri)}-line`} className={band}>
+                  <td colSpan={columns.length} className="p-0">
+                    <div className="sticky left-0 box-border w-full max-w-[min(100vw,72ch)] px-3 pb-3 pt-0 font-normal">
+                      <RowLine text={quip} />
+                    </div>
+                  </td>
+                </tr>
+              ) : null,
+            ];
           })}
         </tbody>
       </table>

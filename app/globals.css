@@ -57,7 +57,7 @@
   --text-d100: 6.25rem;
   --text-d100--line-height: 1;
 
-  /* Silkscreen is an 8px grid: 12px is crisp on 2x screens. */
+  /* Silkscreen is an 8px grid: 12px is crisp on 2x screens. Phones get 13px (see below). */
   --text-label: 0.75rem;
   --text-label--line-height: 1.2;
   --text-label--letter-spacing: 0.04em;
@@ -70,8 +70,29 @@
   --text-data--line-height: 1.35;
   --text-fine: 0.8125rem;
   --text-fine--line-height: 1.35;
+  /* A row's one-liner and the names in the board header: 16px at every width. */
+  --text-row: 1rem;
+  --text-row--line-height: 1.375;
+  /* Small numerals set solid (the grotesk, bold): Doto never goes below 32px. */
+  --text-numeral-solid: 1.125rem;
+  --text-numeral-solid--line-height: 1;
 
   --animate-blink: blink 1.6s steps(1, end) infinite;
+}
+
+/*
+ * Phones. Read on a real iPhone in a group chat screenshot, so nothing small is thin or dotted:
+ * Silkscreen labels step up to 13px, table data to 16px, fine print to 14px. Doto is only ever
+ * used at 32px and up (components/Numeral.tsx swaps smaller numerals to Jersey or the grotesk),
+ * and no text sits on a halftone or dot-matrix texture anywhere.
+ */
+@media (max-width: 47.9375rem) {
+  :root {
+    --text-label: 0.8125rem;
+    --text-label--letter-spacing: 0.03em;
+    --text-data: 1rem;
+    --text-fine: 0.875rem;
+  }
 }
 
 @theme inline {
@@ -359,6 +380,23 @@
     background: var(--color-ink);
     color: var(--color-paper);
     text-decoration-color: var(--color-ink);
+  }
+}
+
+/*
+ * A 44px tap target around a small control (a label link, a bar link) without changing its
+ * layout: an invisible box centered on the control, at least 44 by 44, takes the tap.
+ */
+@utility hit-area {
+  position: relative;
+  &::after {
+    content: "";
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: max(100%, 2.75rem);
+    height: max(100%, 2.75rem);
+    transform: translate(-50%, -50%);
   }
 }
 

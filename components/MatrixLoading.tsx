@@ -18,7 +18,7 @@ export function MatrixLoading({ label, rows = 6, className }: MatrixLoadingProps
   return (
     <div role="status" className={cx("flex flex-col gap-3", className)}>
       <div aria-hidden className={s.field} style={{ "--rows": rows } as CSSProperties} />
-      <p className="type-label m-0 text-ink-muted">{label}</p>
+      <p className="m-0 text-body text-ink-muted">{label}</p>
     </div>
   );
 }

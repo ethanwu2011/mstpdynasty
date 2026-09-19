@@ -14,7 +14,7 @@ const schibsted = Schibsted_Grotesk({ subsets: ["latin"], variable: "--font-schi
 
 export const metadata: Metadata = {
   title: { default: "MSTP Dynasty", template: "%s | MSTP Dynasty" },
-  description: "Live scores, win odds and a roast for every bad decision in the MSTP Dynasty fantasy league.",
+  description: "Live scores, playoff and title odds, and the number behind every bad decision in the MSTP Dynasty fantasy league.",
   applicationName: "MSTP Dynasty",
   icons: {
     icon: [
@@ -25,7 +25,7 @@ export const metadata: Metadata = {
   },
   openGraph: {
     title: "MSTP Dynasty",
-    description: "Live scores, win odds and a roast for every bad decision in the league.",
+    description: "Live scores, playoff and title odds, and the number behind every bad decision in the league.",
     siteName: "MSTP Dynasty",
     type: "website",
   },
@@ -68,7 +68,7 @@ export default async function RootLayout({ children }: Readonly<{ children: Reac
       </head>
       <body className="min-h-dvh bg-paper pb-[calc(3.75rem+env(safe-area-inset-bottom))] text-ink md:pb-0">
         <a href="#main" className="skip-link">
-          Skip to the roast
+          Skip to the page
         </a>
         <SiteHeader status={status} isDevLeague={isDevLeague} />
         <main id="main">{children}</main>

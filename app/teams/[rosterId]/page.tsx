@@ -3,7 +3,7 @@
  * THESIS: One team's file on the board: the manager shouted in pixel caps, the record and the
  *   dynasty value under it, then the roster that proves it and the rap sheet that roasts it.
  * FIRST VIEWPORT: The manager and team name, record, rank, points and value (8 columns); the
- *   latest roast about them, or their startup picks before and during the draft (4 columns).
+ *   latest thing written about them, or their startup picks before and during the draft (4 columns).
  * THEN: Starting lineup by slot with FantasyCalc value and age, team value by position, bench,
  *   taxi and IR, the rap sheet, the draft haul, and every other team one tap away.
  */
@@ -15,9 +15,11 @@ import { listRoasts } from "@/lib/archive";
 import { getFantasyCalc } from "@/lib/fantasycalc";
 import { draftFacts, shameEntries } from "@/lib/facts";
 import { getLeagueContext, managerFor, rosterFor, standingsFromRosters } from "@/lib/league";
+import { surfaceKeys } from "@/lib/roast";
 import { getDraftTradedPicks, getPlayers, rosterPointsFor, rosterPotentialPoints } from "@/lib/sleeper";
 import type { LeagueContext, PlayersMap, SeasonPhase } from "@/lib/types";
 import { fmtInt, fmtPts, ordinal, record } from "../../_lib/format";
+import { surfaceLinesFor } from "../../_lib/lines";
 import { pagePhase, safe, type SearchParams } from "../../_lib/phase";
 import { devSample } from "../../draft/_board/dev-sample";
 import { buildBoard, picksFor, type BoardStage } from "../../draft/_board/model";
@@ -72,7 +74,7 @@ export default async function TeamPage({ params, searchParams }: { params: Param
   const draft = ctx.draft;
   const sampleParam = process.env.NODE_ENV === "development" ? (await searchParams).sample : undefined;
 
-  const [players, fc, shame, roasts, realFacts, realTraded, sample] = await Promise.all([
+  const [players, fc, shame, roasts, realFacts, realTraded, sample, teamLines, shameLines, pickLines] = await Promise.all([
     safe(getPlayers(), {} as PlayersMap, "players"),
     safe(getFantasyCalc(), null, "fantasycalc"),
     safe(shameEntries(ctx), null, "shame"),
@@ -80,6 +82,9 @@ export default async function TeamPage({ params, searchParams }: { params: Param
     draft ? safe(draftFacts(ctx), null, "draft facts") : Promise.resolve(null),
     draft ? safe(getDraftTradedPicks(draft.draft_id), [], "traded picks") : Promise.resolve([]),
     draft ? safe(devSample(ctx, draft, Array.isArray(sampleParam) ? sampleParam[0] : sampleParam), null, "dev sample") : Promise.resolve(null),
+    surfaceLinesFor(ctx, "team", surfaceKeys.team(ctx.season)),
+    surfaceLinesFor(ctx, "shame", surfaceKeys.shame(ctx.season)),
+    draft ? surfaceLinesFor(ctx, "draft", surfaceKeys.draft(draft.draft_id)) : Promise.resolve({}),
   ]);
 
   const facts = sample?.facts ?? realFacts;
@@ -165,7 +170,7 @@ export default async function TeamPage({ params, searchParams }: { params: Param
   ) : !hasRoster && phase === "pre_draft" ? (
     <p className="m-0">
       No roster yet. {manager.name} builds one from scratch in the startup draft
-      {myPicks[0] ? `, starting at ${myPicks[0].label}` : ""}, and every pick gets checked against FantasyCalc the moment it lands.
+      {myPicks[0] ? `, starting at ${myPicks[0].label}` : ""}.
     </p>
   ) : null;
 
@@ -177,7 +182,7 @@ export default async function TeamPage({ params, searchParams }: { params: Param
         {manager.name}: {manager.teamName}
       </h1>
 
-      <TeamLead manager={manager} kicker={kicker} stats={stats} note={note} />
+      <TeamLead manager={manager} kicker={kicker} stats={stats} note={note} line={teamLines[String(id)] ?? null} />
       {draftStage && board ? (
         <PicksPanel rosterId={id} cells={myPicks} away={tradedAway} live={stage === "live"} span={4} />
       ) : (
@@ -199,16 +204,23 @@ export default async function TeamPage({ params, searchParams }: { params: Param
         </>
       ) : null}
 
-      {stage === "live" || stage === "paused" ? <DraftHaulPanel cells={myPicks} grade={grade} placeholder={facts?.placeholder ?? false} /> : null}
+      {stage === "live" || stage === "paused" ? <DraftHaulPanel cells={myPicks} grade={grade} placeholder={facts?.placeholder ?? false} lines={pickLines} /> : null}
       {groups ? (
-        <RapSheetPanel manager={manager} shame={myShame} roasts={myRoasts.slice(0, 8)} shamePlaceholder={shameUsable?.placeholder ?? false} />
+        <RapSheetPanel manager={manager} shame={myShame} roasts={myRoasts.slice(0, 8)} shamePlaceholder={shameUsable?.placeholder ?? false} lines={shameLines} />
       ) : (
         <>
           <RosterEmptyPanel manager={manager} drafting={stage === "live" || stage === "paused"} span={8} />
-          <RapSheetPanel manager={manager} shame={myShame} roasts={myRoasts.slice(0, 4)} shamePlaceholder={shameUsable?.placeholder ?? false} span={4} />
+          <RapSheetPanel
+            manager={manager}
+            shame={myShame}
+            roasts={myRoasts.slice(0, 4)}
+            shamePlaceholder={shameUsable?.placeholder ?? false}
+            lines={shameLines}
+            span={4}
+          />
         </>
       )}
-      {stage === "done" ? <DraftHaulPanel cells={myPicks} grade={grade} placeholder={facts?.placeholder ?? false} /> : null}
+      {stage === "done" ? <DraftHaulPanel cells={myPicks} grade={grade} placeholder={facts?.placeholder ?? false} lines={pickLines} /> : null}
 
       <TeamsStrip ctx={ctx} current={id} order={order} standings={standings} />
     </Board>

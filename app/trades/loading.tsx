@@ -12,8 +12,8 @@ export default function Loading() {
           <DotMatrixFill state="loading" label="Pricing every trade on FantasyCalc." rows={10} />
         </div>
       </Panel>
-      <Panel label="Trade balance" span={4}>
-        <DotMatrixFill state="loading" label="Adding up who keeps paying." rows={12} ramp="ttb" />
+      <Panel label="Worst trades ever" span={4}>
+        <DotMatrixFill state="loading" label="Adding up who gave away the most." rows={12} ramp="ttb" />
       </Panel>
     </Board>
   );

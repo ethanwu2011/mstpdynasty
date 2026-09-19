@@ -42,8 +42,6 @@ export interface CountdownProps {
   digitClassName?: string;
   /** Unit captions under each group (default true). */
   units?: boolean;
-  /** Unlit dots behind the digits. */
-  ghost?: boolean;
   /** What to render once a "down" countdown reaches zero. Defaults to zeros. */
   expired?: ReactNode;
   /** Accessible description, e.g. "Draft starts Friday Sep 18 at 9:00 PM ET". */
@@ -69,7 +67,6 @@ export function Countdown({
   size,
   digitClassName,
   units = true,
-  ghost = false,
   expired,
   label,
   className,
@@ -94,7 +91,7 @@ export function Countdown({
             </span>
           ) : null}
           <div className="flex flex-col items-start gap-2">
-            <Numeral value={g.v} pad={2} size={size} ghost={ghost} className={digitClassName} />
+            <Numeral value={g.v} pad={2} size={size} className={digitClassName} />
             {units ? <span className="type-label text-ink-muted">{g.unit}</span> : null}
           </div>
         </div>

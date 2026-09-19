@@ -10,6 +10,7 @@
  *   5. Facts (weekly, transactions, draft, TNF, shame)
  *   6. Roasts and issues (newsletters)
  *   7. Jobs and email
+ *   8. Engine surface, round 3: stat-surface one-liners, trades in hindsight, draft odds, recipients
  *
  * Conventions:
  *   - Timestamps are epoch milliseconds (`number`) unless the name ends in `Iso`.
@@ -353,7 +354,7 @@ export interface FantasyCalcSnapshot {
 export type SeasonPhase = "pre_draft" | "drafting" | "in_season" | "offseason" | "complete";
 
 export interface ManagerConfig {
-  /** Stable key used in URLs and subscriber records, e.g. "ethan". */
+  /** Stable key used in URLs, e.g. "ethan". */
   key: string;
   firstName: string;
   /** Sleeper username / display_name. */
@@ -488,6 +489,12 @@ export interface SimOptions {
   /** Store the result as this week's odds snapshot (default false). */
   persist?: boolean;
   ctx?: LeagueContext;
+  /**
+   * Where projected team strength comes from: "week" (default) = Sleeper's projections for the
+   * next two league weeks; "season" = Sleeper's season projections per projected game, falling
+   * back to the weekly ones for players without a season line (draft odds use this).
+   */
+  strength?: "week" | "season";
 }
 
 export interface SimTeamOdds {
@@ -875,7 +882,18 @@ export interface Roast {
   usage: RoastUsage | null;
 }
 
-export type IssueKind = "daily_roast" | "thursday_fallout" | "weekly_roast" | "draft_grades";
+/**
+ * The four newsletters: "The Daily", "Thursday Night Fallout", "Week N Recap", "Draft Grades"
+ * (titles in `ISSUE_TITLES` / `issueTitle()` from lib/roast). The kind is also the slug suffix
+ * ("2026-09-19-daily", "2026-09-29-weekly-recap").
+ */
+export type IssueKind = "daily" | "thursday_fallout" | "weekly_recap" | "draft_grades";
+
+/**
+ * Kinds stored before the 2026-09-18 rename. `lib/archive` upgrades them on read
+ * ("daily_roast" -> "daily", "weekly_roast" -> "weekly_recap"), so nothing else ever sees one.
+ */
+export type LegacyIssueKind = "daily_roast" | "weekly_roast";
 
 /** Structured body so the web page and the email render the same content. Text is plain (no HTML). */
 export type IssueBlock =
@@ -883,7 +901,7 @@ export type IssueBlock =
   | { type: "paragraph"; text: string }
   | { type: "list"; items: string[] }
   | { type: "table"; caption?: string; columns: string[]; rows: Array<Array<string | number>> }
-  /** Short aside, e.g. "The roast writer called in sick. Facts only today." */
+  /** Short aside, e.g. "The writer called in sick. Facts only today." */
   | { type: "note"; text: string };
 
 export interface IssueSection {
@@ -895,7 +913,7 @@ export type IssueStatus = "draft" | "approved" | "sent" | "skipped";
 
 export interface Issue {
   id: string;
-  /** URL slug, e.g. "2026-09-19-daily-roast". Unique per league. */
+  /** URL slug, e.g. "2026-09-19-daily". Unique per league. */
   slug: string;
   kind: IssueKind;
   leagueId: string;
@@ -911,7 +929,7 @@ export interface Issue {
   sections: IssueSection[];
   /** true when written without the LLM (not configured, refusal or API error). */
   factsOnly: boolean;
-  /** e.g. "The roast writer called in sick. Facts only today." when factsOnly because of a failure. */
+  /** e.g. "The writer called in sick. Facts only today." when factsOnly because of a failure. */
   note: string | null;
   status: IssueStatus;
   createdAt: number;
@@ -924,8 +942,8 @@ export interface Issue {
   placeholder: boolean;
 }
 
-export interface DailyRoastFacts {
-  kind: "daily_roast";
+export interface DailyFacts {
+  kind: "daily";
   date: string;
   sinceMs: number;
   trades: TradeFact[];
@@ -944,8 +962,8 @@ export interface ThursdayFalloutFacts {
   winProbs: WinProbWeek;
 }
 
-export interface WeeklyRoastFacts {
-  kind: "weekly_roast";
+export interface WeeklyRecapFacts {
+  kind: "weekly_recap";
   week: number;
   weekly: WeeklyFacts;
   odds: SimResult;
@@ -958,7 +976,12 @@ export interface DraftGradesFacts {
   odds: SimResult;
 }
 
-export type IssueFacts = DailyRoastFacts | ThursdayFalloutFacts | WeeklyRoastFacts | DraftGradesFacts;
+export type IssueFacts = DailyFacts | ThursdayFalloutFacts | WeeklyRecapFacts | DraftGradesFacts;
+
+/** @deprecated Renamed to DailyFacts (kind "daily"). */
+export type DailyRoastFacts = DailyFacts;
+/** @deprecated Renamed to WeeklyRecapFacts (kind "weekly_recap"). */
+export type WeeklyRoastFacts = WeeklyRecapFacts;
 
 /* ------------------------------------------------------------------ */
 /* 7. Jobs and email                                                   */
@@ -983,36 +1006,211 @@ export interface JobRunReport {
 export type NewsletterMode = "review" | "auto";
 
 export interface SendResult {
-  status: "sent" | "review_sent" | "not_configured" | "skipped" | "error";
+  /** "test_sent": a test copy went to COMMISSIONER_EMAIL only (sendTest). */
+  status: "sent" | "review_sent" | "test_sent" | "not_configured" | "skipped" | "error";
   recipients: number;
   messageIds: string[];
   error?: string;
 }
 
-export interface Subscriber {
-  email: string;
-  managerKey: string;
-  createdAt: number;
-  confirmed: boolean;
-}
-
-export interface SubscribeInput {
-  email: string;
-  managerKey: string;
-}
-
-export interface SubscribeResult {
-  ok: boolean;
-  /**
-   * "already_subscribed" is kept for compatibility but no longer returned: a confirmed address
-   * gets "subscribed" too, so the form never reveals who is on the list. "try_later": a rate
-   * limit or the pending sign-up cap was hit.
-   */
-  status: "subscribed" | "already_subscribed" | "invalid_email" | "unknown_manager" | "full" | "try_later" | "not_configured" | "error";
-  message: string;
-}
-
 export interface UnsubscribeResult {
   ok: boolean;
   status: "unsubscribed" | "not_found" | "bad_signature" | "error";
+}
+
+/* ------------------------------------------------------------------ */
+/* 8. Engine surface (round 3)                                         */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Stat surfaces that carry a one-liner per row. Row ids per surface (always strings):
+ *   standings, odds, power, team   String(rosterId)
+ *   matchups                       String(matchupId)
+ *   trades                         transactionId
+ *   shame                          ShameEntry.id
+ *   draft                          String(pickNo)
+ */
+export type RoastSurface = "standings" | "odds" | "power" | "matchups" | "team" | "trades" | "shame" | "draft";
+
+/** One row handed to the line writer: its id, who it is about, and the only facts the line may use. */
+export interface SurfaceRow {
+  /** Row id, see RoastSurface. */
+  id: string;
+  /** Manager first names the row is about (lore lookup and name checks). */
+  managers: string[];
+  /** Facts for this row. Every number in the line must appear here (or in another row of the same batch, next to its owner). */
+  facts: Record<string, unknown>;
+  /**
+   * Optional: what decides whether the line must be rewritten, instead of the facts. Pick rows
+   * use who took whom, so a pick's line is written once even though its live FantasyCalc rank
+   * moves every day.
+   */
+  hashKey?: string;
+}
+
+/** A row whose line failed the checks: it backs off until `at + ROW_RETRY_AFTER_MS`, and gives up after MAX_ROW_ATTEMPTS (until its facts change). */
+export interface SurfaceRowFailure {
+  /** Row hash the failures are for. */
+  hash: string;
+  at: number;
+  n: number;
+}
+
+/** rowId -> one mean line, or null when there is none (no API key, a failed check, a new row). Never a canned joke. */
+export type SurfaceLineMap = Record<string, string | null>;
+
+/** What the store keeps per surface and key (`keys.surfaceLines`). Pages read it with getSurfaceLines. */
+export interface StoredSurfaceLines {
+  surface: RoastSurface;
+  /** Surface key, see `surfaceKeys` in lib/roast. */
+  key: string;
+  /** Fingerprint of the whole batch the lines were last written from. */
+  factsHash: string;
+  /** rowId -> hash of the facts its line was written from; only rows whose hash changes are rewritten. */
+  rowHashes: Record<string, string>;
+  /** rowId -> when its line was written (a line is rewritten at most once per SURFACE_MAX_AGE_MS). */
+  rowAt?: Record<string, number>;
+  /** Rows whose last attempts failed the checks. */
+  failures?: Record<string, SurfaceRowFailure>;
+  /** Last time any line of this batch was written. */
+  generatedAt: number;
+  model: string | null;
+  usage: RoastUsage | null;
+  lines: SurfaceLineMap;
+}
+
+/** FantasyCalc values of one stored day, compact (about 10 KB): what hindsight and value charts read. */
+export interface FantasyCalcValues {
+  /** ET date "YYYY-MM-DD". */
+  date: string;
+  /** Sleeper id -> dynasty value. */
+  values: Record<string, number>;
+  /** Rookie picks by FantasyCalc name ("2027 1st (Mid)") -> value. */
+  picks: Record<string, number>;
+}
+
+/** One dot on a trade's value-over-time chart. */
+export interface TradeValuePoint {
+  /** ET date of the FantasyCalc snapshot. */
+  date: string;
+  /** FantasyCalc value of everything this side received, on that date. */
+  valueIn: number;
+  /** valueIn minus the value of everything it gave, on that date. */
+  net: number;
+}
+
+export interface TradeHindsightSide {
+  team: TeamRef;
+  /** Assets valued NOW (`value` = today's FantasyCalc value, null = unranked). */
+  playersIn: PlayerAsset[];
+  playersOut: PlayerAsset[];
+  picksIn: PickAsset[];
+  picksOut: PickAsset[];
+  faabIn: number;
+  faabOut: number;
+  /** Values on the snapshot nearest the trade (`thenDate`); null when no stored snapshot is close enough. */
+  valueInThen: number | null;
+  valueOutThen: number | null;
+  netThen: number | null;
+  gradeThen: LetterGrade | null;
+  /** Values today. */
+  valueInNow: number;
+  valueOutNow: number;
+  netNow: number;
+  gradeNow: LetterGrade;
+  /** netNow - netThen: how far the trade moved for this side since it happened (null without a "then"). */
+  delta: number | null;
+  /** One point per sampled stored snapshot from the trade to today, oldest first. */
+  series: TradeValuePoint[];
+}
+
+export interface TradeHindsight {
+  transactionId: string;
+  season: string;
+  week: number;
+  createdAt: number;
+  /** ET date of the trade. */
+  date: string;
+  /** Snapshot date used as "at the time" (null: none within HINDSIGHT_THEN_WINDOW_DAYS of the trade). */
+  thenDate: string | null;
+  /** Snapshot date used as "now" (null: FantasyCalc unavailable). */
+  nowDate: string | null;
+  sides: TradeHindsightSide[];
+  /** Side ahead by today's values, null inside the fair band. */
+  winnerNowRosterId: RosterId | null;
+  /** Side furthest behind by today's values, null when nobody is behind. */
+  loserNowRosterId: RosterId | null;
+  /**
+   * Value the losing side has given away as of today: valueOutNow - valueInNow of the loser
+   * (what it would hold had it said no, minus what it holds). 0 when nobody is behind.
+   * The worst-trade leaderboard sorts by this.
+   */
+  valueLost: number;
+  /** How much of valueLost piled up after the trade: loser's netThen - netNow (null without a "then"). */
+  lostSinceTrade: number | null;
+}
+
+export interface TradeHindsightBoard {
+  /** Newest trade first. */
+  trades: TradeHindsight[];
+  /** Stored daily FantasyCalc snapshots available (history accrues forward from 2026-09-18). */
+  snapshots: { count: number; first: string | null; last: string | null };
+  placeholder: boolean;
+}
+
+/** "If the season started today": season odds from the drafted rosters. */
+export interface DraftOddsTeam {
+  team: TeamRef;
+  /** Players on the roster (drafted so far while the draft is live). */
+  playersDrafted: number;
+  /**
+   * Projected weekly points of the best legal lineup from those players, in league scoring:
+   * each player's Sleeper season projection divided by his projected games (his weekly
+   * projection when Sleeper has no season line for him). An unfilled slot scores 0.
+   */
+  projectedPoints: number;
+  /** Rank of projectedPoints, 1 = best. */
+  projectedRank: number;
+  /** 0..100. The two headline numbers. */
+  playoffPct: number;
+  titlePct: number;
+  byePct: number;
+  lastPlacePct: number;
+  expectedWins: number;
+}
+
+export interface DraftOdds {
+  season: string;
+  /** false outside the draft and preseason, or before anyone has a player: `teams` is then empty. */
+  available: boolean;
+  /** "drafting" while picks come in, "preseason" after the draft until the first league game is final. */
+  basis: "drafting" | "preseason" | null;
+  draftId: string | null;
+  picksMade: number;
+  /** rounds x teams, 0 without a draft. */
+  totalPicks: number;
+  runs: number;
+  seed: number;
+  generatedAt: number;
+  /** Sorted by titlePct, then playoffPct. */
+  teams: DraftOddsTeam[];
+  placeholder: boolean;
+}
+
+/** POST /api/admin/test-email: what went to COMMISSIONER_EMAIL. */
+export interface TestEmailResult extends SendResult {
+  /** Slug of the issue sent (a stored one), null for a sample built on the spot or nothing sent. */
+  issueSlug: string | null;
+  /** true when no issue was stored yet and a sample Daily was built from current facts (not saved). */
+  sample: boolean;
+}
+
+/** Who gets the league email, without exposing any address (safe to render). */
+export interface RecipientSummary {
+  /** LEAGUE_EMAILS is set and has at least one valid address. */
+  configured: boolean;
+  /** Addresses that get the next league send (env list minus opt-outs). */
+  count: number;
+  /** Env addresses that unsubscribed. */
+  optedOut: number;
 }

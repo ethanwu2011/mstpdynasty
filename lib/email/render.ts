@@ -12,8 +12,8 @@
 import { etToMs, formatEt } from "@/lib/time";
 import type { Issue, IssueBlock } from "@/lib/types";
 
+/** Also the sender name: issues come from the league, with no persona byline. */
 export const LEAGUE_NAME = "MSTP Dynasty";
-export const BYLINE = "The Roast";
 
 const INK = "#1a1a1a";
 const MUTED = "#5f5f5f";
@@ -54,22 +54,28 @@ export function issueDateLabel(date: string): string {
   return formatEt(ms, { weekday: "long", month: "long", day: "numeric" });
 }
 
+/** True when the title already names the week ("Week 5 Recap"). */
+const titleHasWeek = (issue: Issue) => Boolean(issue.week) && new RegExp(`\\bweek ${issue.week}\\b`, "i").test(issue.title);
+
 function metaLine(issue: Issue): string {
-  const parts = [`By ${BYLINE}`, issueDateLabel(issue.date)];
-  if (issue.week) parts.push(`Week ${issue.week}`);
+  const parts = [issueDateLabel(issue.date)];
+  if (issue.week && !titleHasWeek(issue)) parts.push(`Week ${issue.week}`);
   return parts.join(" \u00b7 ");
 }
 
 /**
- * The sender is already "The Roast", so a dek the model wrote is the whole subject (it is
- * written to be one). A code-written dek is a plain fact line, so it gets the issue title and
- * week in front: "The Weekly Roast, week 9: <fact>" (one colon), or "Draft Grades. <fact>".
+ * The sender is already "MSTP Dynasty", so a dek the model wrote is the whole subject (it is
+ * written to be one). A code-written dek is a plain fact line, so it gets the issue title (and
+ * the week, when the title does not carry it) in front: "Week 9 Recap: <fact>",
+ * "Thursday Night Fallout, week 9: <fact>" (one colon), or "Draft Grades. <fact>".
  */
-export function issueSubject(issue: Issue, review = false): string {
+export function issueSubject(issue: Issue, review: boolean | "review" | "test" = false): string {
   const title = oneLine(issue.title);
   const dek = oneLine(issue.dek);
-  const lead = issue.week ? `${title}, week ${issue.week}` : title;
-  const base = truncate(dek && issue.dekSource === "model" && !issue.factsOnly ? dek : dek ? `${lead}${issue.week ? ":" : "."} ${dek}` : lead, 140);
+  const withWeek = Boolean(issue.week);
+  const lead = withWeek && !titleHasWeek(issue) ? `${title}, week ${issue.week}` : title;
+  const base = truncate(dek && issue.dekSource === "model" && !issue.factsOnly ? dek : dek ? `${lead}${withWeek ? ":" : "."} ${dek}` : lead, 140);
+  if (review === "test") return `[Test] ${base}`;
   return review ? `[Review] ${base}` : base;
 }
 
@@ -82,6 +88,8 @@ export interface IssueEmailOptions {
   webUrl?: string | null;
   /** How long the approve link lives, for the note next to it. */
   approveValidDays?: number;
+  /** Test copy (sendTest): marked as a test, never an approve link. */
+  test?: boolean;
 }
 
 export interface RenderedEmail {
@@ -159,6 +167,14 @@ export function renderIssueHtml(issue: Issue, opts: IssueEmailOptions): string {
   if (oneLine(issue.dek)) parts.push(`<p style="margin:0 0 10px;font-size:19px;line-height:1.4;font-style:italic;">${escapeHtml(issue.dek)}</p>`);
   parts.push(`<p style="margin:0 0 26px;font-size:13px;color:${MUTED};">${escapeHtml(metaLine(issue))}</p>`);
 
+  if (opts.test) {
+    parts.push(
+      `<div style="border:1px solid ${INK};padding:12px 14px;margin:0 0 26px;">` +
+        `<p style="margin:0;font-weight:bold;">Test copy. It went to the commissioner only.</p>` +
+        `</div>`,
+    );
+  }
+
   if (review && opts.approveUrl) {
     const days = opts.approveValidDays ?? 7;
     parts.push(
@@ -181,7 +197,7 @@ export function renderIssueHtml(issue: Issue, opts: IssueEmailOptions): string {
   parts.push(`<hr style="border:0;border-top:1px solid ${RULE};margin:34px 0 16px;">`);
   if (opts.webUrl) parts.push(`<p style="margin:0 0 8px;font-size:13px;color:${MUTED};">${link(opts.webUrl, "Read it on the site")}</p>`);
   parts.push(
-    `<p style="margin:0;font-size:13px;line-height:1.5;color:${MUTED};">${escapeHtml(`${BYLINE} writes this for ${LEAGUE_NAME}.`)} ${link(opts.unsubscribeUrl, "Unsubscribe")}, in case you can't take it.</p>`,
+    `<p style="margin:0;font-size:13px;line-height:1.5;color:${MUTED};">${escapeHtml(`Sent to the managers of ${LEAGUE_NAME}.`)} ${link(opts.unsubscribeUrl, "Unsubscribe")}, in case you can't take it.</p>`,
   );
 
   return [
@@ -235,6 +251,7 @@ export function renderIssueText(issue: Issue, opts: IssueEmailOptions): string {
   out.push(LEAGUE_NAME.toUpperCase(), "", oneLine(issue.title));
   if (oneLine(issue.dek)) out.push(oneLine(issue.dek));
   out.push(metaLine(issue), "");
+  if (opts.test) out.push("TEST COPY. It went to the commissioner only.", "");
   if (opts.approveUrl) {
     const days = opts.approveValidDays ?? 7;
     out.push("REVIEW COPY. Nothing has gone to the league yet.", `Approve and send to the league (works once, for ${days} days):`, opts.approveUrl, "");
@@ -247,40 +264,14 @@ export function renderIssueText(issue: Issue, opts: IssueEmailOptions): string {
   }
   out.push("--");
   if (opts.webUrl) out.push(`Read it on the site: ${opts.webUrl}`);
-  out.push(`${BYLINE} writes this for ${LEAGUE_NAME}.`, `Unsubscribe (in case you can't take it): ${opts.unsubscribeUrl}`);
+  out.push(`Sent to the managers of ${LEAGUE_NAME}.`, `Unsubscribe (in case you can't take it): ${opts.unsubscribeUrl}`);
   return out.join("\n");
 }
 
 export function renderIssueEmail(issue: Issue, opts: IssueEmailOptions): RenderedEmail {
   return {
-    subject: issueSubject(issue, Boolean(opts.approveUrl)),
+    subject: issueSubject(issue, opts.test ? "test" : Boolean(opts.approveUrl)),
     html: renderIssueHtml(issue, opts),
     text: renderIssueText(issue, opts),
   };
-}
-
-/* ------------------------ confirmation email ------------------------ */
-
-export function renderConfirmEmail(opts: { confirmUrl: string; managerName: string; validDays: number }): RenderedEmail {
-  const name = oneLine(opts.managerName);
-  const subject = `Confirm your subscription to ${BYLINE}`;
-  const lines = [
-    `You asked to get ${BYLINE}, the ${LEAGUE_NAME} newsletter, at this address (signed up as ${name}).`,
-    "Confirm and you're in. If this wasn't you, ignore this email and nothing happens.",
-  ];
-  const html = [
-    "<!doctype html>",
-    '<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">',
-    `<title>${escapeHtml(subject)}</title></head>`,
-    `<body style="margin:0;padding:0;background:#ffffff;color:${INK};">`,
-    '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr><td align="center" style="padding:28px 16px 40px;">',
-    `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:600px;"><tr><td style="font-family:${SERIF};font-size:17px;line-height:1.6;color:${INK};text-align:left;">`,
-    `<p style="margin:0 0 18px;font-size:12px;letter-spacing:0.14em;text-transform:uppercase;color:${MUTED};">${escapeHtml(LEAGUE_NAME)}</p>`,
-    ...lines.map((l) => `<p style="margin:0 0 14px;">${escapeHtml(l)}</p>`),
-    `<p style="margin:0 0 14px;">${link(opts.confirmUrl, "Confirm my subscription")}</p>`,
-    `<p style="margin:0;font-size:13px;color:${MUTED};">${escapeHtml(`The link expires in ${opts.validDays} days.`)}</p>`,
-    "</td></tr></table></td></tr></table></body></html>",
-  ].join("\n");
-  const text = [LEAGUE_NAME.toUpperCase(), "", ...lines, "", `Confirm my subscription: ${opts.confirmUrl}`, "", `The link expires in ${opts.validDays} days.`].join("\n");
-  return { subject, html, text };
 }

@@ -167,6 +167,21 @@ export const THEME_TERMS: BannedTerm[] = [
 ];
 
 /**
+ * Self-reference (docs/SITE_SPEC.md DECISIONS ROUND 2: never announce the roast). The writer
+ * never names the genre of what it writes or says anyone got roasted, burned or cooked: it
+ * states the fact. A sentence using one is dropped unless FACTS or LORE uses the same word
+ * (a team literally named "Burn Notice" can still be named). The prompt lists every label.
+ */
+export const SELF_TERMS: BannedTerm[] = [
+  term("roast", "roast(?:s|ed|ing|er|ers)?"),
+  term("burn", "burn(?:s|ed|t|ing)?"),
+  term("cooked"),
+  term("savage", "savage(?:ly|ry)?"),
+  term("verdict", "verdicts?"),
+  term("column", "columns?"),
+];
+
+/**
  * Box-score words. FACTS carries fantasy points only, never stat lines, so a sentence with one
  * of these is an invented stat unless FACTS or LORE uses the same word.
  */

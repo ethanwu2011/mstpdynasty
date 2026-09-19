@@ -1,18 +1,23 @@
 /**
- * Jobs public API. OWNER: ops agent (lib/jobs/**, lib/email/**, app/api/**, proxy.ts,
- * app/enter/**, app/subscribe/**, tests/ops*).
+ * Jobs public API. OWNER: ENGINE agent (lib/**, app/api/**, proxy.ts, tests/**).
  *
  *   runDaily(now)  /api/cron/daily, once a day (Vercel cron, 12:00 UTC = 8 AM EDT / 7 AM EST).
- *                  Plans by America/New_York date and league phase (lib/jobs/schedule.ts):
- *                  The Daily Roast every day when there is material, Thursday Night Fallout on
- *                  Fridays in season, The Weekly Roast on Tuesdays, Draft Grades once after the
- *                  startup draft. The Weekly Roast and Draft Grades also store an odds
- *                  snapshot. Each issue is built and delivered exactly once (lib/jobs/issues.ts).
+ *                  Stores today's FantasyCalc snapshot first (trades in hindsight read one per
+ *                  day). Then plans by America/New_York date and league phase
+ *                  (lib/jobs/schedule.ts): The Daily every day when there is material, Thursday
+ *                  Night Fallout on Fridays in season, Week N Recap on Tuesdays, Draft Grades
+ *                  once after the startup draft. Week N Recap and Draft Grades also store an
+ *                  odds snapshot. Each issue is built and delivered exactly once
+ *                  (lib/jobs/issues.ts). Last, the one-liners on every stat table
+ *                  (lib/jobs/lines.ts), inside what is left of the run's time.
  *   runTick(now)   /api/tick and page renders via after(). Takes the 2-minute cooldown lock
  *                  FIRST (before loading the league, so a request loop costs one KV command
  *                  each), then an in-flight lock held until the run ends (a slow run can
- *                  outlast the cooldown). Roasts new trades, waiver runs and draft picks and
- *                  stamps draft pick times (lib/jobs/tick.ts). Never emails.
+ *                  outlast the cooldown). Writes up new trades, waiver runs and draft picks and
+ *                  stamps draft pick times (lib/jobs/tick.ts), takes the day's FantasyCalc
+ *                  snapshot if nobody has yet (one fetch a day at most), and refreshes the
+ *                  one-liners for trades, picks and draft odds (plus every table, at most
+ *                  hourly). Never emails.
  *
  * Both return a JobRunReport, never throw, and write a run log (keys.jobRun). Nothing is
  * emailed about a dev league. With no keys, issues are facts-only and email reports
@@ -25,7 +30,10 @@ import { getSchedule } from "@/lib/sleeper";
 import * as store from "@/lib/store";
 import { etDate } from "@/lib/time";
 import type { JobOutcome, JobRunReport, LeagueContext, NflGame } from "@/lib/types";
+import { ensureDailySnapshot, type DailySnapshotResult } from "@/lib/fantasycalc";
+import { purgeLegacySubscribers } from "@/lib/email";
 import { runIssueJob } from "./issues";
+import { refreshLines, tickLines } from "./lines";
 import { logJobRun } from "./log";
 import { JOB_ORDER, planDaily, type PlanDraft } from "./schedule";
 import { TICK_COOLDOWN_SECONDS, TICK_RUN_LOCK_SECONDS, tickOutcomes } from "./tick";
@@ -34,11 +42,29 @@ export { listJobRuns } from "./log";
 export { readDraftPickTimes, DRAFT_PICK_SEEN } from "./draft-seen";
 export { planDaily, recapWeekFor, earlyGamesWeekFor } from "./schedule";
 export { MAX_ROASTS_PER_TICK, TICK_COOLDOWN_SECONDS } from "./tick";
+export { sendTestEmail } from "./test-email";
+export { refreshLines, tickLines, TABLE_SWEEP_SECONDS, DRAFT_ODDS_LINES_MAX_AGE_MS } from "./lines";
 
 /** Longer than the cron function's max duration, so a crashed run cannot block tomorrow's. */
 const DAILY_LOCK_SECONDS = 600;
 /** Rookie drafts are short; the startup draft fills whole rosters. */
 const STARTUP_MIN_ROUNDS = 10;
+/**
+ * The daily run starts no new one-liner call after this much of its 300-second budget (a call
+ * is at most two 70-second tries, LINES_REQUEST). What is left goes out on the tick's sweep.
+ */
+export const DAILY_LINES_DEADLINE_MS = 150_000;
+/** Same for the tick (its item write-ups come first). */
+export const TICK_LINES_DEADLINE_MS = 150_000;
+
+/** The FantasyCalc snapshot as a job outcome (null when there is nothing worth reporting). */
+function snapshotOutcome(r: DailySnapshotResult, always: boolean): JobOutcome | null {
+  if (r.status === "stored") return { job: "fantasycalc_snapshot", status: "ran", detail: `Stored the FantasyCalc values for ${r.date}. ${r.detail ?? ""}`.trim() };
+  if (r.status === "error") return { job: "fantasycalc_snapshot", status: "error", detail: r.detail ?? "FantasyCalc snapshot failed." };
+  if (!always) return null;
+  const why = r.status === "present" ? "already stored" : r.status === "fixture" ? "fixture data, never stored" : "an earlier try failed, retrying later";
+  return { job: "fantasycalc_snapshot", status: "skipped", detail: `FantasyCalc values for ${r.date}: ${why}.` };
+}
 
 export interface JobOptions {
   /** Use this league context instead of loading one (tests, or a caller that already has it). */
@@ -92,6 +118,8 @@ export async function runDaily(now: Date = new Date(), opts: JobOptions & { sche
       schedule,
       draft: planDraft(ctx),
     });
+    // Today's values first: trade grades and hindsight in today's issues read them.
+    const snapshot = snapshotOutcome(await ensureDailySnapshot(t), true);
     const ran = await Promise.all(plan.jobs.map((job) => runIssueJob(job, ctx, t, schedule)));
     const weekday = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][plan.weekday];
     const head: JobOutcome = {
@@ -99,7 +127,12 @@ export async function runDaily(now: Date = new Date(), opts: JobOptions & { sche
       status: "ran",
       detail: `${plan.date} (${weekday} ET), phase ${ctx.phase}, week ${ctx.week}${ctx.isDevLeague ? ", dev league" : ""}.`,
     };
-    const r = report([head, ...[...plan.skipped, ...ran].sort((a, b) => order(a) - order(b))]);
+    const lines = await refreshLines(ctx, { now: t, scope: "all", deadline: startedAt + DAILY_LINES_DEADLINE_MS }).catch(
+      (err): JobOutcome => ({ job: "lines", status: "error", detail: errText(err) }),
+    );
+    const purged = await purgeLegacySubscribers(ctx.leagueId).catch(() => 0);
+    const extra: JobOutcome[] = purged ? [{ job: "legacy_subscribers", status: "ran", detail: `Deleted ${purged} stored sign-up record${purged === 1 ? "" : "s"} from the old public form.` }] : [];
+    const r = report([head, ...(snapshot ? [snapshot] : []), ...[...plan.skipped, ...ran].sort((a, b) => order(a) - order(b)), lines, ...extra]);
     await logJobRun(ctx.leagueId, r);
     return r;
   } catch (err) {
@@ -131,7 +164,13 @@ export async function runTick(now: Date = new Date(), opts: JobOptions & { ignor
       return report([{ job: "league", status: "error", detail: `Could not load the league: ${errText(err)}` }]);
     }
     try {
-      const r = report(await tickOutcomes(ctx, now.getTime()));
+      const t = now.getTime();
+      const items = await tickOutcomes(ctx, t);
+      const snapshot = snapshotOutcome(await ensureDailySnapshot(t), false);
+      const lines = await tickLines(ctx, t, startedAt + TICK_LINES_DEADLINE_MS).catch(
+        (err): JobOutcome => ({ job: "lines", status: "error", detail: errText(err) }),
+      );
+      const r = report([...items, ...(snapshot ? [snapshot] : []), ...(lines.status === "skipped" ? [] : [lines])]);
       if (r.outcomes.some((o) => o.status !== "skipped")) await logJobRun(ctx.leagueId, r);
       return r;
     } catch (err) {

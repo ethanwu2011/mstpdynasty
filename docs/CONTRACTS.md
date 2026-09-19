@@ -1,28 +1,31 @@
 # Contracts for the parallel agents
 
-Read `docs/SITE_SPEC.md` first (the product contract). This file is the code contract: who owns
-which files, the shared modules you consume, and the functions you implement. Types live in
-`lib/types.ts`. Every function listed under "Functions each agent implements" is implemented (integrated
+Read `docs/SITE_SPEC.md` first (the product contract; its DECISIONS blocks win). This file is the code
+contract: who owns which files, the shared modules you consume, and the functions you implement. Types
+live in `lib/types.ts`. The round 3 surface (one-liners, hindsight, draft odds, recipients, test email,
+issue rename) is in "Engine surface, round 3" below; all of it is real (no stubs left). Every function listed under "Functions each agent implements" is implemented (integrated
 2026-09-18) and returns `placeholder: false`. `placeholder: true` only ever marked foundation-stub sample
 data; jobs refuse to build or send anything from it, and the UI shows a "sample data" marker if it ever sees it.
 
-## File ownership
+## File ownership (round 3, two agents in parallel, from 2026-09-18)
 
 | Owner | Files |
 |---|---|
-| models agent | `lib/models/**`, `tests/models*` |
-| roast agent | `lib/facts/**`, `lib/roast/**`, `config/roast-notes.ts`, `tests/facts*`, `tests/roast*` |
-| ops agent | `lib/jobs/**`, `lib/email/**`, `app/api/**`, `proxy.ts` (password gate), `app/enter/**`, `app/subscribe/**`, `tests/ops*` |
-| UI agent | `app/**` except `app/api`, `app/enter`, `app/subscribe`; plus `components/**`, `app/globals.css`, `public/**` |
+| ENGINE agent | `lib/**`, `app/api/**`, `proxy.ts`, `tests/**` |
+| UI agent | `app/**` except `app/api/**`; plus `components/**`, `public/**`, `app/globals.css` |
 
-**Frozen shared files** (the foundation step owns them; do not edit): `lib/types.ts`, `lib/sleeper.ts`,
-`lib/store.ts`, `lib/league.ts`, `lib/scoring.ts`, `lib/fantasycalc.ts`, `lib/espn.ts`, `lib/http.ts`,
-`lib/time.ts`, `lib/env.ts`, `lib/archive.ts`, `config/managers.ts`, `package.json`,
-`vitest.config.mts`, `tsconfig.json`, `next.config.ts`, `eslint.config.mjs`, `tests/helpers/**`,
-`tests/scoring.test.ts`, `tests/foundation.test.ts`, `tests/contracts.test.ts`.
-If you need a change in one of them (a new field, a new endpoint, a new dependency), do not edit it:
-put the exact change in your report. Private helpers go inside your own folder
-(for example `lib/facts/util.ts`, `lib/models/sim.ts`). Your own internal types go in your folder too.
+- Everything else (`config/**`, `docs/**`, `scripts/**`, `package.json`, `next.config.ts`, `vercel.json`,
+  `vitest.config.mts`, `.env.example`, `DESIGN.md`, `PRODUCT.md`): neither agent edits it without saying so
+  in its report. ENGINE updates `docs/CONTRACTS.md`, `docs/DEV.md` and `.env.example` when it changes a
+  signature or an env var.
+- `lib/types.ts` is ENGINE's now. UI never edits it: if a page needs a field, put the exact change in
+  the report. UI imports only the public entry points (`@/lib/models`, `@/lib/facts`, `@/lib/roast`,
+  `@/lib/email`, `@/lib/jobs`, `@/lib/league`, `@/lib/archive`, `@/lib/time`, `@/lib/env`) plus the two
+  documented direct imports (`@/lib/email/require-gate`, `@/lib/jobs/draft-seen`), never another file
+  inside an agent folder.
+- Subscribe removal is split: ENGINE deleted `app/api/subscribe/**` and the sign-up code in
+  `lib/email` (done); UI deletes `app/subscribe/**` and every subscribe link, button and nav item.
+- The round 1 table (models / roast / ops / UI agents) is retired. Signatures below still hold.
 
 Keep the public signatures below exactly. You may add optional trailing parameters.
 
@@ -30,6 +33,13 @@ Keep the public signatures below exactly. You may add optional trailing paramete
 
 - Code computes facts; the LLM only writes jokes about facts it is handed.
 - No em dashes in any user-facing copy (UI text, issue text, emails, prompts that produce copy).
+- Never announce the roast: no "roast", "roasting", "burn", "cooked" (or the like) about the site itself
+  in any UI copy, label, issue name, byline, email or job detail a person can read. Labels name the event
+  ("PICK 3.01", "WEEK 5 FINAL", "TRADE, SEP 21"). Code identifiers (`roastItem`, `lib/roast`) may keep
+  the word; nothing a reader sees does.
+- Email addresses never go in a tracked file, test, fixture, doc or log. Recipients live only in the
+  private env (`LEAGUE_EMAILS`, `COMMISSIONER_EMAIL`); tests build placeholder `example.com` addresses at
+  run time; opt-outs are stored by HMAC ref. Never render, return or log what `recipients()` returns.
 - Time zone for anything user-facing: America/New_York (`lib/time.ts`).
 - Team names, display names and `p_nick_*` nicknames come from Sleeper and are user-controlled:
   React escapes them, but email HTML and anything built with strings must escape them.
@@ -73,6 +83,7 @@ getDrafts(leagueId)  getDraft(draftId)  getDraftPicks(draftId)  getDraftTradedPi
 getNflState()  getUserLeagues(userId, season)
 getWeekStats(season, week): Promise<WeekStats>        // playerId -> { stats, position, team, opponent, gameId, date }
 getWeekProjections(season, week): Promise<WeekStats>  // QB/RB/WR/TE only
+getSeasonProjections(season): Promise<WeekStats>      // season totals with `gp` (draft odds); cached 12 h
 getSchedule(season): Promise<NflGame[]>               // { gameId, week, date "YYYY-MM-DD", home, away, status }
 byeTeams(schedule, week): string[]
 getPlayers(): Promise<PlayersMap>                     // trimmed, fetched at most once a day
@@ -99,7 +110,14 @@ getFantasyCalc(): Promise<FantasyCalcSnapshot>   // today's values; daily snapsh
 getFantasyCalcOn(date): Promise<FantasyCalcSnapshot | null>   // value on a past ET date, if stored
 valueOf(snap, sleeperId): FantasyCalcValue | null
 pickValue(snap, season, round, tier?): FantasyCalcValue | null  // "2027 1st (Early|Mid|Late)" or generic
+listFantasyCalcDates(): Promise<string[]>                   // stored snapshot dates, oldest first ([] in fixture mode)
+getFantasyCalcValuesOn(date): Promise<FantasyCalcValues | null>   // compact day (id -> value, pick name -> value)
+compactValues(snap): FantasyCalcValues
+ensureDailySnapshot(now?): Promise<DailySnapshotResult>      // the cron and the tick: today's snapshot, one fetch a day
 ```
+The day's first `getFantasyCalc()` fetches FantasyCalc fresh and stores the full snapshot (400 days)
+and a compact copy (5 years, `keys.fantasyCalcValues(date)`). The cron and the tick call
+`ensureDailySnapshot()` so no day is skipped. History starts 2026-09-18 and accrues forward.
 Only about 400 players have a value. Everyone else is `null`: treat as "unranked", never as 0 value
 without saying so.
 
@@ -116,6 +134,9 @@ Use ESPN only for status, period, clock and kickoff time.
 get<T>(key)  set(key, value, { ttlSeconds? })  del(key)  list(prefix): string[]  lock(key, ttlSeconds): boolean  unlock(key)
 incr(key, ttlSeconds): number   // atomic counter; the first hit starts the window (rate limits, keys.rate(name))
 keys.*   // the shared key convention; league data is always under `league:<leagueId>:`
+         // round 3: keys.surfaceLines(leagueId, surface, key), keys.surfacePrefix(leagueId, surface?),
+         // keys.optOut(leagueId, ref), keys.optOutPrefix(leagueId), keys.fantasyCalcValues(date), keys.fantasyCalcPrefix(),
+         // keys.fantasyCalcFetchLock(date), keys.seasonProjections(season), keys.legacySubscriberPrefix(leagueId) (purge only)
 ```
 Backends: Upstash when KV env is set, memory under Vitest, else JSON files in `.data/`.
 `lock` is a cooldown: it returns false while held and expires by itself.
@@ -126,12 +147,15 @@ saveIssue(issue)  getIssue(leagueId, slug)  listIssues(leagueId, { limit?, inclu
 saveRoast(roast)  getRoast(leagueId, roastId)  listRoasts(leagueId, kind?, limit?)
 roastIds.trade(txId) | roastIds.waiver(batchId) | roastIds.pick(draftId, pickNo)
 saveOddsSnapshot(leagueId, season, snap)  listOddsSnapshots(leagueId, season)
+upgradeIssue(issue): Issue   // legacy kinds/titles read as current ("daily_roast" -> "daily", "The Weekly Roast" -> "Week 5 Recap")
 ```
-`listIssues` returns only `sent` / `approved` issues unless `includeUnsent`.
+`listIssues` returns only `sent` / `approved` issues unless `includeUnsent`. `getIssue` and `listIssues`
+upgrade legacy issues on read; their old slugs keep working.
 
 ### `lib/env.ts`, `lib/time.ts`
-`leagueId()`, `MSTP_LEAGUE_ID`, `isDevLeague()`, `newsletterMode()`, `siteUrl()`, `emailFrom()`, `roastNotesFromEnv()`,
-`configured.{anthropic, resend, commissionerEmail, kv, password, cron, admin, image}()`.
+`leagueId()`, `MSTP_LEAGUE_ID`, `isDevLeague()`, `newsletterMode()`, `siteUrl()`, `emailFrom()` (default
+`DEFAULT_EMAIL_FROM`, "MSTP Dynasty" at the league's own address), `roastNotesFromEnv()`,
+`configured.{anthropic, resend, commissionerEmail, leagueEmails, kv, password, cron, admin, image}()`.
 `etDate(ms)`, `etParts(ms)`, `formatEt(ms, opts)`, `etToMs(y, m, d, h, min)`, `weekdayOfDate("YYYY-MM-DD")`.
 
 ## Functions each agent implements
@@ -146,7 +170,7 @@ backfillOddsHistory(ctx?, opts?: { runs?, force? }): Promise<OddsSnapshot[]>  //
 ```
 - In `WinProb`, `home` is the lower roster id of the pair (not an NFL-style home team).
 - `runSeasonSim({ fromWeek: w + 1, persist: true })` stores the snapshot for week `w` (`asOfWeek = fromWeek - 1`).
-  Only jobs persist: The Weekly Roast stores its week and backfills gaps, Draft Grades stores the preseason one.
+  Only jobs persist: Week N Recap stores its week and backfills gaps, Draft Grades stores the preseason one.
 - The sim reads `playoff_seed_type` at runtime: MSTP is currently 0 (fixed bracket), so it simulates a fixed
   bracket until the league switches to reseeding. Median games (`league_average_match`) are not modeled.
 - Win prob per spec: starter mean = actual + projection x fraction remaining; variance =
@@ -186,11 +210,12 @@ ISSUE_TITLES, FACTS_ONLY_NOTE, SYSTEM_PROMPT
 - Pass `{ draftPicks }` to `roastItem` for a pick when you already have them (the tick does), to skip a
   `draftFacts()` call per pick.
 - `roastIssue` never throws for LLM reasons: on no key, refusal or API error it returns a facts-only
-  issue (`factsOnly: true`, `note: "The roast writer called in sick. Facts only today."`). Status starts as `"draft"`;
-  ops decides sending. `slug` must be URL-safe and unique per league (`YYYY-MM-DD-kind`, the ET date the issue was written, kind with hyphens).
+  issue (`factsOnly: true`, `note: null`: the facts simply run, no word about the writer). Status starts as `"draft"`;
+  ops decides sending. `slug` must be URL-safe and unique per league (`YYYY-MM-DD-kind`, the ET date the issue was written, kind with hyphens: `2026-09-19-daily`, `2026-09-29-weekly-recap`).
 - `IssueBlock` is plain text (no HTML, no markdown) so web and email render the same content.
-- Issue titles: "The Daily Roast", "Thursday Night Fallout", "The Weekly Roast", "Draft Grades"
-  (`ISSUE_TITLES` in `lib/roast`).
+- Issue titles: "The Daily", "Thursday Night Fallout", "Week N Recap" ("Week 5 Recap"), "Draft Grades"
+  (`ISSUE_TITLES`, `issueTitle(kind, week?)` in `lib/roast`). Kinds: `daily | thursday_fallout |
+  weekly_recap | draft_grades`.
 - `config/roast-notes.ts`: empty defaults only (one empty string per manager) and a comment explaining
   that real lore comes from env `ROAST_NOTES` (JSON, manager first name -> text) and/or the store key
   `roast-notes`, env winning. Lore never goes in the repo.
@@ -200,33 +225,47 @@ ISSUE_TITLES, FACTS_ONLY_NOTE, SYSTEM_PROMPT
 runDaily(now?: Date): Promise<JobRunReport>
 runTick(now?: Date): Promise<JobRunReport>        // `locked: true` when the cooldown or an in-flight run is held
 sendIssue(issue: Issue, mode?: NewsletterMode): Promise<SendResult>
-subscribe(input: SubscribeInput, now?, { ip? }): Promise<SubscribeResult>   // { email, managerKey }; ip for the per-IP limit
-unsubscribe(token: string): Promise<UnsubscribeResult>         // token from the signed link
+unsubscribe(token: string): Promise<UnsubscribeResult>         // token from the signed link; stores an opt-out by ref
 ```
-Routes: `/api/cron/daily`, `/api/tick`, `/api/admin/approve`, `/api/unsubscribe`, `/api/subscribe`,
-`/api/subscribe/confirm`, `/api/enter`, `/enter`, `/subscribe`, `proxy.ts` (Next 16 renamed middleware to
-proxy). Jobs persist issues and roasts through `lib/archive.ts` and write a run log under `keys.jobRun`.
+Routes: `/api/cron/daily`, `/api/tick`, `/api/admin/approve`, `POST /api/admin/test-email`,
+`/api/unsubscribe`, `/api/enter`, `/enter`, `/api/health`, `proxy.ts` (Next 16 renamed middleware to proxy).
+There is no public sign-up: `/api/subscribe`, `/api/subscribe/confirm` and `subscribe()` are gone. Jobs
+persist issues and roasts through `lib/archive.ts` and write a run log under `keys.jobRun`.
 - Draft pick first-seen timestamps: `keys.snapshot(leagueId, "draft-pick-seen")` as
   `{ [draftId]: { [pickNo]: epochMs } }`. When several picks land between ticks only the newest gets a time.
   Read them with `readDraftPickTimes(leagueId, draftId)` from `@/lib/jobs/draft-seen` (import that file
   directly: `lib/jobs` imports `lib/facts`, so the barrel would make a cycle).
-- The Daily Roast's injuries and lineup alerts are built in `lib/jobs/daily-facts.ts` (facts has no public
-  function for them). Its transactions run from the last Daily Roast up to the job's clock, minus plain
+- The Daily's injuries and lineup alerts are built in `lib/jobs/daily-facts.ts` (facts has no public
+  function for them). Its transactions run from the last Daily up to the job's clock, minus plain
   cuts (a drop with no add, of a player who is not a notable drop).
-- The tick roasts transactions from the last 7 days and picks of a draft that is live or ended in the last
-  7 days, at most 6 roasts per tick, so a wiped store cannot trigger hundreds of LLM calls. It takes the
-  cooldown lock before loading the league, holds an in-flight lock until the run ends, claims each item
-  before its model call, and merges the roast index before writing it.
-- Subscriptions: at most 30 confirmed and 10 pending; a pending address gets at most 2 confirmation emails
-  and keeps its first 7-day expiry; 5 sign-ups per IP and 20 confirmation emails per hour site-wide
-  (`lib/email/limits.ts`). A confirmed address gets the same "subscribed" answer as a new one. The password
-  gate allows 10 attempts per IP and 100 overall per 15 minutes. `/api/tick` needs the gate cookie or the
-  cron bearer when the gate is on. Without `CRON_SECRET`, `/api/cron/daily` runs in dev only while no
-  RESEND/ANTHROPIC key is set.
-- The Weekly Roast pins odds and power rankings to the recapped week (`runSeasonSim({ fromWeek: week + 1,
+- The tick writes up transactions from the last 7 days and picks of a draft that is live or ended in the
+  last 7 days, at most 6 write-ups per tick, so a wiped store cannot trigger hundreds of LLM calls. It
+  takes the cooldown lock before loading the league, holds an in-flight lock until the run ends, claims
+  each item before its model call, and merges the index before writing it. Then it takes the day's
+  FantasyCalc snapshot if nobody has (`ensureDailySnapshot`, one fetch a day at most) and refreshes the
+  one-liners (`tickLines`: trades, picks and draft odds every run, every table at most hourly). A tick
+  outcome for the snapshot or the lines appears only when it did something or failed.
+- `runDaily` stores the day's FantasyCalc snapshot first, then the issues, then refreshes every
+  surface's one-liners (`refreshLines(ctx, { scope: "all" })`) until 150 s into the run, and deletes any
+  record the old sign-up form left in the store (`purgeLegacySubscribers`). Outcomes: `fantasycalc_snapshot`,
+  `lines`, `legacy_subscribers` (only when it deleted something).
+- The password gate allows 10 attempts per IP and 100 overall per 15 minutes. `/api/tick` needs the gate
+  cookie or the cron bearer when the gate is on. Without `CRON_SECRET`, `/api/cron/daily` runs in dev only
+  while no RESEND/ANTHROPIC key is set. Admin bearer attempts (right or wrong) are counted before the
+  compare: 10 per IP and 30 overall per 15 minutes.
+- Writer spend guards (`lib/roast/llm.ts`): on Vercel the writer only runs with the shared store
+  (`sharedStoreMissing()`: `VERCEL` set and the backend is not Upstash makes `hasRoastClient()` and
+  `isRoastConfigured()` false, so a tick or the daily job makes no model call), and every call counts
+  against `MAX_WRITER_CALLS_PER_DAY` (400 per Eastern day, store-backed, fails closed). League sends
+  and approve links refuse (`not_configured`) on Vercel while the store is the per-instance file store.
+- Job details a person can read never call anything a roast ("Wrote up 1 trade."). Job ids
+  (`roast_trades`, `roast_picks`...) are code identifiers and keep their names.
+- Week N Recap pins odds and power rankings to the recapped week (`runSeasonSim({ fromWeek: week + 1,
   persist: true })`, `getPowerRankings(ctx, { asOfWeek: week })`), then `backfillOddsHistory(ctx)`.
 - Also exported from `lib/jobs`: `listJobRuns`, `planDaily`, `recapWeekFor`, `earlyGamesWeekFor`,
-  `TICK_COOLDOWN_SECONDS`, `MAX_ROASTS_PER_TICK`. `runDaily`/`runTick` take an optional second argument
+  `TICK_COOLDOWN_SECONDS`, `MAX_ROASTS_PER_TICK`, `sendTestEmail`, `refreshLines`, `tickLines`,
+  `TABLE_SWEEP_SECONDS`, `DRAFT_ODDS_LINES_MAX_AGE_MS`. Job keys: `daily:<date>`,
+  `thursday_fallout:<season>:<week>`, `weekly_recap:<season>:<week>`, `draft_grades:<draftId>`. `runDaily`/`runTick` take an optional second argument
   `{ ctx?, schedule? }` / `{ ctx?, ignoreCooldown? }`.
 - Pages that trigger the tick with `after(() => runTick())` run it inside their own time limit: give them
   a generous `maxDuration`.
@@ -237,12 +276,178 @@ proxy). Jobs persist issues and roasts through `lib/archive.ts` and write a run 
 Consume only the public functions above plus the shared modules. Render all three states
 (pre-draft, drafting, in-season, plus offseason/complete). When a result has `placeholder: true`,
 show a small "sample data" marker. Home page may trigger the tick with `after()` from `next/server`
-by calling `runTick()`; the ops agent owns what it does.
+by calling `runTick()`; ENGINE owns what it does.
 - Password gate, second line: call `await requireGate("/the/path")` from `@/lib/email/require-gate` at the
   top of every page that shows league data (or in a route-group layout that does not wrap `/enter`).
   `proxy.ts` alone is not enough (Next advisories on proxy bypass). It is a no-op without SITE_PASSWORD.
 - `lib/env`, `lib/email`, `lib/roast` and `lib/jobs` import `server-only`: importing them from a
   `"use client"` component fails the build. Pass plain data to client components instead.
+
+## Engine surface, round 3 (2026-09-18)
+
+All real. Types are in `lib/types.ts` section 8.
+
+### One mean line per stat row: `lib/roast` (real)
+```ts
+type RoastSurface = "standings" | "odds" | "power" | "matchups" | "team" | "trades" | "shame" | "draft"
+interface SurfaceRow { id: string; managers: string[]; facts: Record<string, unknown>; hashKey?: string }
+type SurfaceLineMap = Record<string, string | null>          // rowId -> line, null = absent
+
+getSurfaceLines(surface: RoastSurface, key: string, ctx?: LeagueContext): Promise<SurfaceLineMap>   // what pages call
+getStoredSurfaceLines(surface: RoastSurface, key: string, ctx?: LeagueContext): Promise<StoredSurfaceLines | null>
+surfaceLines(surface: RoastSurface, rows: SurfaceRow[], ctx?: LeagueContext, opts?: { context?, deadline? }): Promise<SurfaceLineMap>
+refreshSurfaceLines(surface: RoastSurface, key: string, rows: SurfaceRow[], ctx?: LeagueContext,
+  opts?: { now?; maxAgeMs?; force?; maxRows?; deadline?; context?; claim? }): Promise<RefreshResult>
+  // RefreshResult { status: "fresh" | "throttled" | "written" | "skipped" | "busy"; lines; asked; written?; failed?; pending? }
+surfaceKeys.standings(season, week) | .odds(season, asOfWeek) | .power(season, asOfWeek) | .matchups(season, week)
+  | .team(season) | .trades() | .shame(season) | .draft(draftId)
+SURFACES, SURFACE_MAX_AGE_MS, MAX_ROWS_PER_CALL (25), ROW_RETRY_AFTER_MS, MAX_ROW_ATTEMPTS, rowHash(row), surfaceFactsHash(rows)
+checkLine(raw, row, allowed, exempt), parseLinesReply(reply), linesMessage(surface, rows, lore, opts?)
+// rows from facts (pure, lib/roast/surface-rows.ts):
+standingsRows(rows, lastWeek?)  oddsRows(sim)  draftOddsRows(draftOdds)  powerRows(power)
+finalMatchupRows(weekly, draftSlots?)  pregameMatchupRows(winProbs)  teamRows(TeamPageInput[])
+tradeRows(TradeHindsight[])  shameRows(ShameEntry[])  draftRows(picks, draftContext?)
+```
+| Surface | Key | Row id | Page |
+|---|---|---|---|
+| standings | `surfaceKeys.standings(ctx.season, lastCompletedWeek(ctx))` | `String(rosterId)` | /standings, home |
+| odds | `surfaceKeys.odds(ctx.season, sim.asOfWeek)`; draft odds use asOfWeek `0` | `String(rosterId)` | /odds, home |
+| power | `surfaceKeys.power(ctx.season, power.asOfWeek)` | `String(rosterId)` | /standings |
+| matchups | `surfaceKeys.matchups(ctx.season, week)` | `String(matchupId)` | /scores, home |
+| team | `surfaceKeys.team(ctx.season)` | `String(rosterId)` | /teams/[rosterId] |
+| trades | `surfaceKeys.trades()` | `transactionId` | /trades |
+| shame | `surfaceKeys.shame(ctx.season)` | `ShameEntry.id` | /shame |
+| draft | `surfaceKeys.draft(draftId)` | `String(pickNo)` | /draft, home |
+
+- Pages call only `getSurfaceLines` (a store read; a render never waits on the model). It returns only
+  rows that have a line; render a row's line only when it is there. No placeholder, no "line coming
+  soon", no canned fallback.
+- The writer: rows go out in batches of `MAX_ROWS_PER_CALL` through `callRoastModel` (the frozen system
+  prompt, the spec's exact call shape). The user message is a `LINES:` request with one slot per row
+  (`r1`..`rN`) and FACTS keyed by slot; the reply is one JSON object, slot -> line (`@@slot` sections are
+  accepted too). A line is kept only if it is one sentence, at most about 30 words, names the row's
+  manager, and passes the same post-check as every issue and item (every number in FACTS and next to its
+  owner, no theme words, no self-reference: `roast`, `burn`, `cooked`, `savage` are banned in output
+  unless FACTS uses them). Failed rows get one retry in one call with a note saying what failed. Without
+  `ANTHROPIC_API_KEY`, or on a refusal or API error, the row has no line.
+- The refresh policy: a row with no line (a new trade, a new pick, a new week's table) is written at
+  once. A row that has a line is rewritten when its facts hash changes, at most once per
+  `SURFACE_MAX_AGE_MS` (a day; draft odds every 30 minutes while the draft is live; a final week's
+  matchups at once). Pick rows hash only who took whom (`hashKey`), so a pick's line is written once even
+  though its live FantasyCalc rank moves. A row whose line fails the checks waits `ROW_RETRY_AFTER_MS`
+  (30 min) and is given up on after `MAX_ROW_ATTEMPTS` (3) until its facts change; an API outage backs
+  off the same way but never counts toward giving up. The store record keeps, per row, the hash of the
+  facts its current line was written from (kept until a new line replaces it, so facts that change and
+  change back cost no call), write times and failures. Draft odds rows carry only what their hash covers
+  (rank, playoff, title and last-place odds, projected rank): numbers that move with every pick stay out.
+- The jobs (`lib/jobs/lines.ts`): `refreshLines(ctx, { scope, deadline? })` builds each surface's rows
+  from facts and models and refreshes them, three surfaces at a time, with a per-surface claim (taken only
+  when a row is due, and the stored batch re-read under it) so the tick and the daily job never write
+  the same rows, at most 80 rows per surface per run (the Wall of
+  Shame can hold 100+; the rest go next run). Surfaces with no data are skipped: standings, odds and
+  power only once a week is final; matchups for the last final week (results) and the week being played
+  (pre-kickoff projections); team pages from rosters, or from the draft picks while the startup draft
+  fills empty rosters; draft odds (`odds`, asOfWeek 0) while `draftOddsBasis` is set. `tickLines` runs the
+  instant surfaces (trades, picks, draft odds) every tick and every table at most hourly.
+
+### Trades in hindsight: `lib/facts` (real)
+```ts
+tradeHindsight(ctx?: LeagueContext): Promise<TradeHindsightBoard>     // newest trade first
+worstTrades(limit = 10, ctx?: LeagueContext): Promise<TradeHindsight[]>   // most value lost as of today
+HINDSIGHT_THEN_WINDOW_DAYS = 3, MAX_SERIES_POINTS = 40
+```
+- `TradeHindsight { transactionId, season, week, createdAt, date, thenDate, nowDate, sides, winnerNowRosterId,
+  loserNowRosterId, valueLost, lostSinceTrade }`.
+- `TradeHindsightSide { team, playersIn, playersOut, picksIn, picksOut, faabIn, faabOut, valueInThen,
+  valueOutThen, netThen, gradeThen, valueInNow, valueOutNow, netNow, gradeNow, delta, series }`;
+  `series: TradeValuePoint[] = { date, valueIn, net }[]`, oldest first, for the dot chart.
+- "Then" is the stored FantasyCalc snapshot nearest the trade within 3 days; before snapshots existed it
+  is null (and so are `netThen`, `gradeThen`, `delta`, `lostSinceTrade`). Show "not recorded", never a guess.
+- `valueLost` = the losing side's `valueOutNow - valueInNow` (what it would hold had it said no, minus
+  what it holds). The leaderboard sorts by it and leaves out trades nobody is losing.
+- FantasyCalc only (KeepTradeCut has no public API: never scrape it). Current league only.
+- Snapshots: `ensureDailySnapshot(now?)` in `lib/fantasycalc` stores the day's values (full snapshot for
+  400 days, compact copy for 5 years). The daily cron calls it first thing and the tick calls it every run,
+  so a day is never skipped: at most one FantasyCalc fetch a day (fresh, bypassing the Next data cache),
+  and after a failure at most one try every 30 minutes. `DailySnapshotResult.status`: `stored | present |
+  waiting | fixture | error`. Fixture mode never stores snapshots.
+
+### "If the season started today": `lib/models` (real)
+```ts
+draftOdds(ctx?: LeagueContext, opts?: { runs?: number; seed?: number; fresh?: boolean }): Promise<DraftOdds>
+draftOddsBasis(ctx): Promise<"drafting" | "preseason" | null>
+DRAFT_ODDS_CACHE_SECONDS = 21600
+```
+- `DraftOdds { season, available, basis, draftId, picksMade, totalPicks, runs, seed, generatedAt, teams, placeholder }`,
+  `DraftOddsTeam { team, playersDrafted, projectedPoints, projectedRank, playoffPct, titlePct, byePct,
+  lastPlacePct, expectedWins }`, teams sorted by title % then playoff %.
+- `basis: "drafting"` while the startup draft is live, `"preseason"` after it until the first league week
+  is final, else `available: false` with no teams (then use `runSeasonSim`).
+- The model: the season simulator (10,000 seeded runs by default, record then points for, the league's own
+  bracket rule from `playoff_seed_type`: 1 reseeds every round, anything else is a fixed bracket) with no
+  games played. Each team's weekly mean is the best legal lineup of the players it has so far
+  (`optimalLineup` over the league's starter slots; a starting spot the team has not filled is rated at
+  replacement level, the best player at that position on nobody's roster, so mid-draft odds do not
+  swing with who picked last). Each player is rated by his Sleeper season projection
+  (`/projections/nfl/<season>`, league scoring from `scoring_settings`) divided by his projected games
+  `gp`, at most 17 (Sleeper reports 18, the weeks with the bye); a player with no season line falls back to his weekly projections
+  for the next league weeks. `runSeasonSim({ strength: "season" })` is the same switch. Cached per draft
+  and pick count, so the page recomputes once per new pick. Tests: playoff % sums to 600 and title % to
+  100 at 10,000 runs, same seed same odds, and flipping `playoff_seed_type` changes the title odds.
+- Playoff % and title % are the headline numbers wherever odds appear (in season: `runSeasonSim`'s
+  `playoffPct` and `titlePct`). While `draftOddsBasis(ctx)` returns a basis, /draft, /odds and the home
+  page all show `draftOdds` with the lines at `surfaceKeys.odds(season, 0)`, and the season-odds line job
+  is skipped, so the site never shows two sets of headline odds.
+
+### Recipients and the test email: `lib/email`, `lib/jobs` (real)
+```ts
+recipients(leagueId?: string): Promise<string[]>              // LEAGUE_EMAILS minus opt-outs. Server-only data
+recipientSummary(leagueId?: string): Promise<RecipientSummary> // { configured, count, optedOut }: safe to render
+leagueEmailsFromEnv(): string[]
+sendTest(opts?: { issue?: Issue | null; counted?: boolean }): Promise<SendResult>  // "test_sent": COMMISSIONER_EMAIL only
+testSendPreflight(leagueId?): Promise<SendResult | null>      // every check plus the hourly count, before anything is built
+sendTestEmail(now?: Date, opts?: { ctx? }): Promise<TestEmailResult>   // lib/jobs: newest stored issue, else a sample Daily
+purgeLegacySubscribers(leagueId?): Promise<number>             // deletes records the old sign-up form stored
+scrubAddresses(text): string                                   // blanks any address in error text
+MAX_TEST_SENDS_PER_HOUR = 10, MAX_RECIPIENTS = 30
+```
+- No subscribe button, page or API. League sends go to `recipients()` (capped at `MAX_RECIPIENTS`);
+  review mode sends every issue to `COMMISSIONER_EMAIL` only, with the approve link, and the approve
+  link then sends to `recipients()`. `inspectApproveLink` reports `recipients` as a count.
+- `unsubscribe(token)` stores an opt-out under `keys.optOut(leagueId, subscriberRef(address))`: an HMAC
+  ref, never the address. An address that opted out stays out even if it is added to LEAGUE_EMAILS
+  again. Refs and unsubscribe links are keyed by `OPTOUT_SECRET` (set once, never rotated) or else
+  `ADMIN_SECRET`; links signed with either verify, and `recipients()` checks refs under both. A store
+  error while reading opt-outs is thrown (the send fails and its claim is released), never read as
+  "not opted out". Nothing in the store holds an address; provider errors are scrubbed before they reach a result
+  or the job log.
+- `sendTest` renders the issue as a marked test copy ("[Test]" subject, "Test copy" banner, no approve
+  link), marks nothing sent, skips dev leagues, and allows 10 per hour. `sendTestEmail` runs
+  `testSendPreflight` first, so a refused or capped request never builds a sample (a model call).
+- `POST /api/admin/test-email`: `Authorization: Bearer <ADMIN_SECRET>` (constant-time compare via
+  `checkAdminAuth` in `lib/email/gate`; the same 401 "Unauthorized." when the bearer is missing or wrong
+  and while ADMIN_SECRET is unset or shorter than 32 characters, logged on the server; every bearer
+  attempt is counted first, 429 past 10 per IP or 30 overall in 15 minutes). Body ignored. Calls `sendTestEmail()`, answers
+  `{ status, recipients, issueSlug, sample, error? }` with no address in it (200 on `test_sent`, 409
+  skipped, 503 not configured, 502 error). The proxy lets it through the password gate.
+- `/api/health` adds `commissionerEmailConfigured`, `writerRunning` and `recipients`: publicly only
+  `{ configured }`; with the CRON_SECRET or ADMIN_SECRET bearer the `RecipientSummary` counts and
+  `adminSecret` ("ok" or what is wrong with it). Bearer attempts go through the admin limiter.
+
+### Issue rename, sender, and the writer's voice
+- `IssueKind = "daily" | "thursday_fallout" | "weekly_recap" | "draft_grades"` (was `daily_roast`,
+  `weekly_roast`; `LegacyIssueKind` names the old ones and `lib/archive` upgrades them on read).
+- Titles: "The Daily", "Thursday Night Fallout", "Week N Recap" (`issueTitle("weekly_recap", 5)` =
+  "Week 5 Recap"), "Draft Grades". Slugs: `2026-09-19-daily`, `2026-09-29-weekly-recap`.
+- Email from `MSTP Dynasty` (`DEFAULT_EMAIL_FROM`, override with `EMAIL_FROM`), no byline: the meta line
+  is the date (and the week when the title does not carry it); the footer says who it is sent to.
+- `FACTS_ONLY_NOTE` = `null`: a facts-only issue has no note (older stored issues lose the old one on read).
+- The system prompt (`lib/roast/persona.ts`, SHA-256 pinned in `tests/roast-prompt.test.ts`) is unnamed
+  and unsigned: no "The Roast", no byline, and hard rule 8 forbids announcing anything (no roast, burn,
+  take, joke or column; nobody got roasted, burned or cooked; never a word about itself). Its few-shots
+  use the slot id `item` for item requests and include a LINES example with a JSON reply. Task lines
+  say "Write 1 to 3 sentences on this trade", never "Roast". The post-check drops any sentence with a
+  `SELF_TERMS` word (`lib/roast/banned.ts`) unless FACTS or LORE uses it.
 
 ## Data shapes (see `lib/types.ts` for every field)
 
@@ -262,7 +467,8 @@ by calling `runTick()`; the ops agent owns what it does.
 - `Issue { id, slug, kind, leagueId, season, week, date, title, dek, dekSource?, sections: IssueSection[], factsOnly, note, status, createdAt, sentAt, recipientCount, model, usage, imageUrl, placeholder }`.
   `dekSource: "model"` means the dek is also the email subject; a `"code"` dek gets "Title, week N:" in front.
 - `Roast { id, kind, leagueId, rosterIds, text, facts, source, model, createdAt, usage }`.
-- `IssueFacts = DailyRoastFacts | ThursdayFalloutFacts | WeeklyRoastFacts | DraftGradesFacts`.
+- `IssueFacts = DailyFacts | ThursdayFalloutFacts | WeeklyRecapFacts | DraftGradesFacts`
+  (`DailyRoastFacts` / `WeeklyRoastFacts` remain as deprecated aliases).
 
 ## Fixtures and dev leagues
 

@@ -294,9 +294,17 @@ export const keys = {
   /** Trimmed weekly stats / projections cache (global). */
   stats: (season: string, week: number) => `global:stats:${season}:${week}`,
   projections: (season: string, week: number) => `global:proj:${season}:${week}`,
+  /** Trimmed season-long projections (draft odds). */
+  seasonProjections: (season: string) => `global:proj-season:${season}`,
   /** FantasyCalc snapshot by ET date (kept, so trade grades can use value at the time). */
   fantasyCalc: (date: string) => `global:fantasycalc:${date}`,
   fantasyCalcLatest: () => "global:fantasycalc:latest",
+  /** Prefix of the dated snapshots (list it and keep the YYYY-MM-DD suffixes; "latest" shares it). */
+  fantasyCalcPrefix: () => "global:fantasycalc:",
+  /** Compact values of one day (FantasyCalcValues), derived from the snapshot: hindsight reads these. */
+  fantasyCalcValues: (date: string) => `global:fcv:${date}`,
+  /** Cooldown between attempts at a day's FantasyCalc snapshot (ensureDailySnapshot). */
+  fantasyCalcFetchLock: (date: string) => `global:lock:fantasycalc:${date}`,
   /** Newsletters. */
   issue: (leagueId: string, slug: string) => `league:${leagueId}:issue:${slug}`,
   issuePrefix: (leagueId: string) => `league:${leagueId}:issue:`,
@@ -307,9 +315,17 @@ export const keys = {
   oddsSnapshot: (leagueId: string, season: string, week: number) =>
     `league:${leagueId}:odds:${season}:${String(week).padStart(2, "0")}`,
   oddsPrefix: (leagueId: string, season: string) => `league:${leagueId}:odds:${season}:`,
-  /** Newsletter subscribers, keyed by lowercased email. */
-  subscriber: (leagueId: string, email: string) => `league:${leagueId}:sub:${email.toLowerCase()}`,
-  subscriberPrefix: (leagueId: string) => `league:${leagueId}:sub:`,
+  /** One-liners per stat surface (StoredSurfaceLines), e.g. surfaceLines(id, "standings", "2026:w5"). */
+  surfaceLines: (leagueId: string, surface: string, key: string) => `league:${leagueId}:lines:${surface}:${key}`,
+  surfacePrefix: (leagueId: string, surface?: string) => `league:${leagueId}:lines:${surface ? `${surface}:` : ""}`,
+  /** League-email opt-outs, keyed by the HMAC subscriber ref (lib/email/sign subscriberRef), never the address. */
+  optOut: (leagueId: string, ref: string) => `league:${leagueId}:optout:${ref}`,
+  optOutPrefix: (leagueId: string) => `league:${leagueId}:optout:`,
+  /**
+   * Where the old public sign-up form kept its records (removed; they held addresses). Only the
+   * daily job's purge reads this prefix. Nothing writes under it any more.
+   */
+  legacySubscriberPrefix: (leagueId: string) => `league:${leagueId}:sub:`,
   /** Job run log, one entry per run. */
   jobRun: (leagueId: string, startedAt: number) => `league:${leagueId}:job:${startedAt}`,
   jobRunPrefix: (leagueId: string) => `league:${leagueId}:job:`,

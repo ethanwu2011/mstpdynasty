@@ -1,6 +1,6 @@
 /*
  * DIRECTION CONTRACT (home, from DESIGN.md)
- * THESIS: The stadium message board for ten friends. The roast flashes in giant pixel type
+ * THESIS: The stadium message board for ten friends. The verdict flashes in giant pixel type
  *   and the numbers underneath prove it. Refuses the dark neon fantasy dashboard and the cream
  *   editorial newspaper.
  * OWN-WORLD: Newsprint paper, true black ink, one scoreboard red. Black header bars with
@@ -11,7 +11,7 @@
  * FIRST VIEWPORT: Black top bar (MSTP DYNASTY, week or draft status, texture block). Left 8
  *   columns: the latest roast, victim and stat in Jersey 10, grotesk roast, receipt, red square
  *   and time. Right 4: the scoreboard (pre-draft: draft order; draft: on the clock). Phones stack
- *   roast then scoreboard; the primary action (Subscribe) sits in the nav.
+ *   lead then scoreboard; no subscribe action anywhere (recipients live in the private env).
  * FORM: Emigre bitmap specimen fused with stadium message boards. Roast-first broadside.
  *   Seed fd65bdc4.
  */
@@ -27,7 +27,7 @@ export default async function Home({ searchParams }: { searchParams: SearchParam
 
   return (
     <>
-      <h1 className="sr-only">MSTP Dynasty: the latest roast and the league right now</h1>
+      <h1 className="sr-only">MSTP Dynasty: what just happened and the league right now</h1>
       {phase === "pre_draft" ? (
         <HomePreDraft ctx={ctx} />
       ) : phase === "drafting" ? (

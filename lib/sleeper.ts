@@ -64,6 +64,8 @@ export const TRIMMED_TTL = {
   statsPast: 24 * 3600,
   projectionsLive: 3600,
   projectionsPast: 7 * 24 * 3600,
+  /** Season-long projections (draft odds): Sleeper updates them a few times a day at most. */
+  seasonProjections: 12 * 3600,
   /** /players/nfl is fetched at most once per this window. */
   players: 24 * 3600,
 } as const;
@@ -90,6 +92,9 @@ export const sleeperUrl = {
   projections: (season: string | number, week: number) =>
     `${SLEEPER_API}/projections/nfl/${season}/${week}?season_type=regular&${PROJECTION_POSITIONS.map((p) => `position[]=${p}`).join("&")}`,
   schedule: (season: string | number) => `${SLEEPER_API}/schedule/nfl/regular/${season}`,
+  /** Season-long projected stat lines (totals, with `gp` = projected games). Undocumented. */
+  seasonProjections: (season: string | number) =>
+    `${SLEEPER_API}/projections/nfl/${season}?season_type=regular&${PROJECTION_POSITIONS.map((p) => `position[]=${p}`).join("&")}`,
 };
 
 const tag = (...parts: Array<string | number>) => ["sleeper", ...parts.map(String)];
@@ -502,6 +507,24 @@ export async function getWeekProjections(season: string | number, week: number):
   return cachedTrimmed(store.keys.projections(s, week), ttl, async () =>
     parseWeekStats(await fetchJson(sleeperUrl.projections(s, week), { noStore: true }), s, week),
   );
+}
+
+/** Keys in a season projection line that are rankings or site scoring, not stats: dropped to keep the cache small. */
+const SEASON_NOISE = /^(?:adp_|pts_|pos_adp|rank_)/;
+
+/**
+ * Season-long projected stat lines (QB/RB/WR/TE): totals for the season, with `gp` the games
+ * Sleeper projects. Draft odds divide by `gp` for a per-game rate. Cached 12 hours.
+ */
+export async function getSeasonProjections(season: string | number): Promise<WeekStats> {
+  const s = String(season);
+  return cachedTrimmed(store.keys.seasonProjections(s), TRIMMED_TTL.seasonProjections, async () => {
+    const parsed = parseWeekStats(await fetchJson(sleeperUrl.seasonProjections(s), { noStore: true }), s, 0);
+    for (const row of Object.values(parsed)) {
+      for (const k of Object.keys(row.stats)) if (SEASON_NOISE.test(k)) delete row.stats[k];
+    }
+    return parsed;
+  });
 }
 
 /* ------------------------------------------------------------------ */

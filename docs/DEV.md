@@ -41,9 +41,14 @@ The daily job and the tick are plain routes, so under `next dev` with no `CRON_S
 keys (`RESEND_API_KEY`, `ANTHROPIC_API_KEY`):
 
 ```sh
-curl localhost:3000/api/cron/daily   # plans by today's ET date and league phase; JSON report
-curl localhost:3000/api/tick         # instant roasts, 2-minute cooldown; statuses only
+curl localhost:3000/api/cron/daily   # FantasyCalc snapshot, issues by ET date and phase, one-liners; JSON report
+curl localhost:3000/api/tick         # write-ups, snapshot, one-liners; 2-minute cooldown; statuses only
+# a test email to COMMISSIONER_EMAIL only (needs ADMIN_SECRET, RESEND_API_KEY, COMMISSIONER_EMAIL):
+curl -X POST -H "Authorization: Bearer $ADMIN_SECRET" localhost:3000/api/admin/test-email
 ```
+
+One-liners on the stat tables only exist with `ANTHROPIC_API_KEY`: the tick and the daily job write
+them (never a page render), and pages read them from the store. Without the key they are absent.
 
 `next dev` listens on every network interface, so once a paid key is in `.env.local` the cron route
 needs `CRON_SECRET` in dev too. Under `npm run build && npm start` (NODE_ENV=production) always set
@@ -99,7 +104,10 @@ fixture mode, so `DATA_SOURCE=fixtures` replays the exact API responses. Content
 `lib/store.ts` uses Upstash Redis when `KV_REST_API_URL` + `KV_REST_API_TOKEN` (or the `UPSTASH_*`
 pair) are set; otherwise JSON files in `.data/` (gitignored). Tests use an in-memory store. Delete
 `.data/` to reset local state. On Vercel without KV the file store falls back to `/tmp`, which is
-per-instance and temporary: configure KV before relying on issues, roasts or subscribers there.
+per-instance and temporary: configure KV before relying on issues, write-ups, one-liners, opt-outs
+or FantasyCalc history there. Until it is, the writer stays off on Vercel (no model calls: every
+instance would otherwise start with an empty store and write everything again) and league sends and
+approve links refuse. The writer is also capped at 400 calls per Eastern day across instances.
 
 ## Caching
 
@@ -108,7 +116,10 @@ per-instance and temporary: configure KV before relying on issues, roasts or sub
 - Weekly stats, projections and `/players/nfl` exceed the 2 MB Next cache limit, so they are fetched
   uncached, trimmed, and cached in memory plus the store (`TRIMMED_TTL`). Players refresh at most
   once per 24 h.
-- FantasyCalc is cached per Eastern date, with one snapshot kept per day for historical trade grades.
+- FantasyCalc is cached per Eastern date, with one snapshot kept per day for historical trade grades
+  and trades in hindsight. The daily cron and the tick make sure a day's snapshot is taken (one fetch a
+  day at most). History only accrues forward from 2026-09-18.
+- Sleeper season projections (draft odds) are cached trimmed for 12 hours.
 
 ## Environment variables
 
@@ -120,14 +131,17 @@ models run, and roast/email features report "not configured yet".
 | `LEAGUE_ID` | League override for dev (default MSTP 1406497799725424640) |
 | `LEAGUE_WEEK_OVERRIDE` | Dev: force in-season at week N |
 | `DATA_SOURCE`, `FIXTURES_DIR` | `fixtures` replays `fixtures/` instead of the network |
-| `ANTHROPIC_API_KEY` | The Roast (roasts, newsletters) |
+| `ANTHROPIC_API_KEY` | The writer (newsletter prose, takes on trades and picks, one-liners on stat tables) |
 | `ROAST_NOTES` | Roast lore JSON (manager first name -> text); never commit it |
-| `RESEND_API_KEY`, `EMAIL_FROM`, `COMMISSIONER_EMAIL` | Email |
+| `RESEND_API_KEY`, `EMAIL_FROM` | Email. Sender defaults to "MSTP Dynasty" at the league's own address |
+| `LEAGUE_EMAILS` | Who gets the newsletter, comma-separated. A Vercel Secret or `.env.local` only: never in the repo, a test, a doc or a log. Unsubscribes are kept as opt-outs in the store |
+| `COMMISSIONER_EMAIL` | Gets every issue first in review mode (with the approve link) and every test email. Env only |
 | `NEWSLETTER_MODE` | `review` (default) or `auto` |
 | `SITE_PASSWORD` | Gate the whole site behind `/enter`. Use a long passphrase: guesses are rate limited (10 per IP and 100 overall per 15 minutes), but the password is shared |
 | `GATE_VERSION` | Optional. Change it to sign everyone out of the gate without changing the password |
 | `CRON_SECRET` | Bearer token for `/api/cron/daily` (and `/api/tick` when the gate is on). Unset: the cron route runs under `next dev` only while no paid key is set, and returns 503 under `next start` / Vercel |
-| `ADMIN_SECRET` | HMAC key for approve and unsubscribe links |
+| `ADMIN_SECRET` | HMAC key for approve links (and unsubscribe links without `OPTOUT_SECRET`); bearer for `POST /api/admin/test-email` and the counts on `/api/health`. At least 32 characters (`openssl rand -base64 32`) or the bearer is refused. Rotating it without `OPTOUT_SECRET` set resets every opt-out and breaks every unsubscribe link already sent |
+| `OPTOUT_SECRET` | Optional, set once and never rotated: keys unsubscribe links and stored opt-outs, so `ADMIN_SECRET` can be rotated safely. Links signed with either secret keep working |
 | `SITE_URL` | Public base URL for links in emails. Set it before any email goes out |
 | `KV_REST_API_URL`, `KV_REST_API_TOKEN` or `UPSTASH_REDIS_REST_URL`, `UPSTASH_REDIS_REST_TOKEN` | KV store |
 | `STORE_BACKEND`, `STORE_PREFIX`, `DATA_DIR` | Store overrides (`upstash`, `file`, `memory`; key prefix; file dir) |
@@ -137,10 +151,10 @@ models run, and roast/email features report "not configured yet".
 ## Layout
 
 ```
-app/                 pages (UI agent), app/api (ops agent)
+app/                 pages (UI agent), app/api (ENGINE agent)
 components/          UI components (UI agent)
 config/managers.ts   the ten managers (first name <-> Sleeper username)
-lib/                 shared data layer (frozen) + agent folders: models/, facts/, roast/, jobs/, email/
+lib/                 data layer + models/, facts/, roast/, jobs/, email/ (ENGINE agent)
 scripts/             fetch-fixtures.ts
 tests/               vitest; tests/helpers/fixtures.ts for fixture access
 docs/                SITE_SPEC.md, CONTRACTS.md, DEV.md

@@ -24,6 +24,14 @@ export interface EmailTransport {
 
 const BATCH_LIMIT = 100;
 
+/**
+ * Blank out anything shaped like an email address. Provider errors can quote the recipient,
+ * and error text ends up in job logs and API answers, where addresses must never appear.
+ */
+export function scrubAddresses(text: string): string {
+  return text.replace(/[^\s<>()"',;:@]+@[^\s<>()"',;:@]+\.[A-Za-z0-9-]+/g, "[address]");
+}
+
 function resendTransport(apiKey: string): EmailTransport {
   const client = new Resend(apiKey);
   const from = emailFrom();
@@ -37,7 +45,7 @@ function resendTransport(apiKey: string): EmailTransport {
           { from, to: m.to, subject: m.subject, html: m.html, text: m.text, headers: m.headers },
           opts.idempotencyKey ? { idempotencyKey: opts.idempotencyKey } : undefined,
         );
-        if (error || !data) throw new Error(`Resend: ${error?.message ?? "no response"}`);
+        if (error || !data) throw new Error(`Resend: ${scrubAddresses(error?.message ?? "no response")}`);
         return { ids: [data.id] };
       }
       for (let i = 0; i < messages.length; i += BATCH_LIMIT) {
@@ -47,7 +55,7 @@ function resendTransport(apiKey: string): EmailTransport {
           chunk.map((m) => ({ from, to: m.to, subject: m.subject, html: m.html, text: m.text, headers: m.headers })),
           key ? { idempotencyKey: key } : undefined,
         );
-        if (error || !data) throw new Error(`Resend batch: ${error?.message ?? "no response"}`);
+        if (error || !data) throw new Error(`Resend batch: ${scrubAddresses(error?.message ?? "no response")}`);
         for (const d of data.data) ids.push(d.id);
       }
       return { ids };

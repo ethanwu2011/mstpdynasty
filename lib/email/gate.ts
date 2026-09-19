@@ -1,7 +1,7 @@
 /**
  * Request-level auth helpers shared by proxy.ts and the API routes: the optional site
- * password gate (SITE_PASSWORD), the cron bearer check (CRON_SECRET) and redirect
- * sanitizing. Lives under lib/email because that is the ops agent's folder; it imports
+ * password gate (SITE_PASSWORD), the cron bearer check (CRON_SECRET), the admin bearer check
+ * (ADMIN_SECRET) and redirect sanitizing. Lives under lib/email because that is the ops agent's folder; it imports
  * nothing heavy so the proxy bundle stays small. Server-only.
  */
 import { createHmac } from "node:crypto";
@@ -43,7 +43,8 @@ export function checkPassword(input: unknown): boolean {
  * Paths the proxy lets through without the site password:
  *   /enter and /api/enter            the gate itself (password guesses are rate limited)
  *   /api/cron/*                      has its own bearer secret
- *   /api/unsubscribe, /api/admin/approve, /api/subscribe/confirm
+ *   /api/admin/test-email            has its own bearer secret (ADMIN_SECRET)
+ *   /api/unsubscribe, /api/admin/approve
  *                                    HMAC-signed links clicked from an email client
  *   /api/tick                        checks the gate cookie OR the cron bearer itself when the
  *                                    gate is on (checkTickAuth), so an uptime pinger can use it
@@ -55,7 +56,7 @@ const UNGATED_EXACT = new Set([
   "/api/tick",
   "/api/unsubscribe",
   "/api/admin/approve",
-  "/api/subscribe/confirm",
+  "/api/admin/test-email",
   "/favicon.ico",
   "/robots.txt",
 ]);
@@ -103,6 +104,50 @@ export function checkCronAuth(req: Request): CronAuth {
   const header = req.headers.get("authorization") ?? "";
   const match = /^Bearer\s+(.+)$/i.exec(header.trim());
   if (!match || !safeEqual(match[1], secret)) return { ok: false, status: 401, error: "Unauthorized." };
+  return { ok: true };
+}
+
+/** The bearer token of a request, or null. */
+export function bearerOf(req: Request): string | null {
+  const match = /^Bearer\s+(\S+)\s*$/i.exec((req.headers.get("authorization") ?? "").trim());
+  return match ? match[1] : null;
+}
+
+export type AdminAuth = { ok: true } | { ok: false; status: 401; error: string };
+
+/** The admin bearer is refused unless ADMIN_SECRET is at least this long (`openssl rand -base64 32` gives 44). */
+export const MIN_ADMIN_SECRET_LENGTH = 32;
+
+/** Why the admin bearer cannot work, or null when ADMIN_SECRET is usable (for /api/health behind a bearer and the server log). */
+export function adminSecretProblem(): string | null {
+  const secret = process.env.ADMIN_SECRET;
+  if (!secret) return "ADMIN_SECRET is not set.";
+  if (secret.length < MIN_ADMIN_SECRET_LENGTH) return `ADMIN_SECRET is shorter than ${MIN_ADMIN_SECRET_LENGTH} characters.`;
+  return null;
+}
+
+let warned = false;
+
+/**
+ * `Authorization: Bearer ${ADMIN_SECRET}` for admin routes (POST /api/admin/test-email).
+ * Constant-time compare. Every refusal is the same 401 "Unauthorized.": no bearer, a wrong one,
+ * or an ADMIN_SECRET that is unset or shorter than MIN_ADMIN_SECRET_LENGTH (never open, not even
+ * in dev), so the answer never tells a caller how the secret is configured. A misconfiguration is
+ * logged on the server instead, once per process, and /api/health reports it behind a bearer.
+ */
+export function checkAdminAuth(req: Request): AdminAuth {
+  const secret = process.env.ADMIN_SECRET;
+  const token = bearerOf(req);
+  if (!token) return { ok: false, status: 401, error: "Unauthorized." };
+  const problem = adminSecretProblem();
+  if (problem || !secret) {
+    if (!warned) {
+      warned = true;
+      console.warn(`[admin] ${problem} The admin bearer is refused until it is fixed.`);
+    }
+    return { ok: false, status: 401, error: "Unauthorized." };
+  }
+  if (!safeEqual(token, secret)) return { ok: false, status: 401, error: "Unauthorized." };
   return { ok: true };
 }
 

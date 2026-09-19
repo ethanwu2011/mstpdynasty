@@ -16,7 +16,7 @@ import { saveRoast } from "@/lib/archive";
 import * as store from "@/lib/store";
 import { etDate } from "@/lib/time";
 import type {
-  DailyRoastFacts,
+  DailyFacts,
   DraftPickFact,
   Issue,
   LeagueContext,
@@ -134,7 +134,7 @@ describe.skipIf(!hasFixtures())("roastIssue", () => {
   beforeAll(async () => {
     ctx = await getLeagueContext({ leagueId: rtLeagueId() });
     weekly = await weeklyFacts(7, ctx);
-    facts = { kind: "weekly_roast", week: 7, weekly, odds: oddsFor(ctx), power: POWER };
+    facts = { kind: "weekly_recap", week: 7, weekly, odds: oddsFor(ctx), power: POWER };
   });
 
   /** A reply that uses only real numbers from the plan's FACTS. */
@@ -153,9 +153,9 @@ describe.skipIf(!hasFixtures())("roastIssue", () => {
 
   it("with no key: facts only, the contract note, every table present", async () => {
     expect(isRoastConfigured()).toBe(false);
-    const issue = await roastIssue("weekly_roast", facts, ctx, { now: NOW });
-    expect(issue).toMatchObject({ kind: "weekly_roast", factsOnly: true, note: FACTS_ONLY_NOTE, status: "draft", model: null, usage: null, week: 7, title: "The Weekly Roast" });
-    expect(issue.slug).toBe(`${etDate(NOW)}-weekly-roast`);
+    const issue = await roastIssue("weekly_recap", facts, ctx, { now: NOW });
+    expect(issue).toMatchObject({ kind: "weekly_recap", factsOnly: true, note: FACTS_ONLY_NOTE, status: "draft", model: null, usage: null, week: 7, title: "Week 7 Recap" });
+    expect(issue.slug).toBe(`${etDate(NOW)}-weekly-recap`);
     expect(issue.slug).toMatch(/^[a-z0-9-]+$/);
     const headings = issue.sections.map((s) => s.heading);
     for (const h of ["Week 7", "Loser of the Week", "The matchups", "Points left on the bench", "Standings", "Season odds"]) expect(headings).toContain(h);
@@ -169,7 +169,7 @@ describe.skipIf(!hasFixtures())("roastIssue", () => {
   it("with a good reply: prose in the slots, dek from the model, usage logged, exact request", async () => {
     const { client, calls } = fakeClient([{ text: goodReply() }]);
     setRoastClient(client);
-    const issue = await roastIssue("weekly_roast", facts, ctx, { now: NOW });
+    const issue = await roastIssue("weekly_recap", facts, ctx, { now: NOW });
     expect(calls).toHaveLength(1);
     // The request carries the league memory (rap sheets, crowns, draft slots) in FACTS.
     const plan = planIssue(facts, ctx, await issueMemory(facts, ctx, NOW));
@@ -185,7 +185,7 @@ describe.skipIf(!hasFixtures())("roastIssue", () => {
     const bad = goodReply().replace("Nobody looked good.", "Nobody looked good. A real lineup scores 987.65. This belongs in a hospital.");
     const { client } = fakeClient([{ text: bad }]);
     setRoastClient(client);
-    const issue = await roastIssue("weekly_roast", facts, ctx, { now: NOW });
+    const issue = await roastIssue("weekly_recap", facts, ctx, { now: NOW });
     expect(issue.factsOnly).toBe(false);
     const text = allText(issue);
     expect(text).not.toContain("987.65");
@@ -196,7 +196,7 @@ describe.skipIf(!hasFixtures())("roastIssue", () => {
   it("every number the engine printed from the model is in FACTS", async () => {
     const { client } = fakeClient([{ text: goodReply() }]);
     setRoastClient(client);
-    const issue = await roastIssue("weekly_roast", facts, ctx, { now: NOW });
+    const issue = await roastIssue("weekly_recap", facts, ctx, { now: NOW });
     const allowed = new AllowedNumbers([JSON.stringify(planIssue(facts, ctx).facts)]);
     const paragraphsFromModel = issue.sections.flatMap((s) => s.blocks).filter((b) => b.type === "paragraph" && /Nobody looked good|took notes/.test(b.text));
     expect(paragraphsFromModel.length).toBeGreaterThan(0);
@@ -210,7 +210,7 @@ describe.skipIf(!hasFixtures())("roastIssue", () => {
     const fixed = `@@${id}\n${m.home.team.managerName} and ${m.away.team.managerName} were separated by ${m.margin}. Fixed on the retry.`;
     const { client, calls } = fakeClient([{ text: bad }, { text: fixed }]);
     setRoastClient(client);
-    const issue = await roastIssue("weekly_roast", facts, ctx, { now: NOW });
+    const issue = await roastIssue("weekly_recap", facts, ctx, { now: NOW });
     expect(calls).toHaveLength(2);
     const retry = String(calls[1].messages[0].content);
     expect(retry.split("\n").filter((l) => l.startsWith("@@"))).toEqual([expect.stringMatching(new RegExp(`^@@${id}: `))]);
@@ -221,7 +221,7 @@ describe.skipIf(!hasFixtures())("roastIssue", () => {
     // Still failing after the retry: the slot gets its code-written fallback, not "Nobody looked good." alone.
     const { client: c2 } = fakeClient([{ text: bad }]);
     setRoastClient(c2);
-    const again = await roastIssue("weekly_roast", facts, ctx, { now: NOW });
+    const again = await roastIssue("weekly_recap", facts, ctx, { now: NOW });
     expect(again.factsOnly).toBe(false);
     const blocks = again.sections.find((x) => x.heading === "The matchups")!.blocks;
     const first = blocks[1];
@@ -235,7 +235,7 @@ describe.skipIf(!hasFixtures())("roastIssue", () => {
       .join("\n");
     const { client } = fakeClient([{ text: reply }]);
     setRoastClient(client);
-    const issue = await roastIssue("weekly_roast", facts, ctx, { now: NOW });
+    const issue = await roastIssue("weekly_recap", facts, ctx, { now: NOW });
     expect(issue).toMatchObject({ factsOnly: true, note: FACTS_ONLY_NOTE, model: "claude-opus-5" });
     expect(allText(issue)).not.toContain("999.99");
   });
@@ -243,7 +243,7 @@ describe.skipIf(!hasFixtures())("roastIssue", () => {
   it("refusal: facts only, and content is never read", async () => {
     const { client } = fakeClient([{ stop: "refusal", contentTrap: true }]);
     setRoastClient(client);
-    const issue = await roastIssue("weekly_roast", facts, ctx, { now: NOW });
+    const issue = await roastIssue("weekly_recap", facts, ctx, { now: NOW });
     expect(issue).toMatchObject({ factsOnly: true, note: FACTS_ONLY_NOTE });
   });
 
@@ -256,22 +256,22 @@ describe.skipIf(!hasFixtures())("roastIssue", () => {
     ] satisfies FakeReply[]) {
       const { client } = fakeClient([reply]);
       setRoastClient(client);
-      const issue = await roastIssue("weekly_roast", facts, ctx, { now: NOW });
+      const issue = await roastIssue("weekly_recap", facts, ctx, { now: NOW });
       expect(issue).toMatchObject({ factsOnly: true, note: FACTS_ONLY_NOTE });
       expect(issue.sections.length).toBeGreaterThan(3);
     }
   });
 
-  it("Thursday Night Fallout, The Daily Roast and Draft Grades render facts only", async () => {
+  it("Thursday Night Fallout, The Daily and Draft Grades render facts only", async () => {
     const winProbs: WinProbWeek = { week: 5, season: ctx.season, generatedAt: 0, basis: "projections", matchups: [], placeholder: false };
     const tnf = await roastIssue("thursday_fallout", { kind: "thursday_fallout", week: 5, tnf: await tnfFacts(5, ctx), winProbs }, ctx, { now: NOW });
     expect(tnf.title).toBe("Thursday Night Fallout");
     expect(tnf.sections.map((s) => s.heading)).toContain("Banked");
-    const quiet: DailyRoastFacts = { kind: "daily_roast", date: etDate(NOW), sinceMs: NOW, trades: [], waivers: [], injuries: [], lineupAlerts: [], draftPicks: [], hasMaterial: false };
-    const daily = await roastIssue("daily_roast", quiet, ctx, { now: NOW });
-    expect(daily.title).toBe("The Daily Roast");
+    const quiet: DailyFacts = { kind: "daily", date: etDate(NOW), sinceMs: NOW, trades: [], waivers: [], injuries: [], lineupAlerts: [], draftPicks: [], hasMaterial: false };
+    const daily = await roastIssue("daily", quiet, ctx, { now: NOW });
+    expect(daily.title).toBe("The Daily");
     const tx = await transactionFacts(0, ctx);
-    const busy = await roastIssue("daily_roast", { ...quiet, sinceMs: 0, trades: tx.trades, waivers: tx.waivers.slice(0, 12), hasMaterial: true }, ctx, { now: NOW });
+    const busy = await roastIssue("daily", { ...quiet, sinceMs: 0, trades: tx.trades, waivers: tx.waivers.slice(0, 12), hasMaterial: true }, ctx, { now: NOW });
     expect(busy.sections.map((s) => s.heading)).toEqual(expect.arrayContaining(["Trades", "Waivers"]));
     const draft = await roastIssue("draft_grades", { kind: "draft_grades", draft: await draftFacts(ctx), odds: oddsFor(ctx) }, ctx, { now: NOW });
     expect(draft.title).toBe("Draft Grades");
@@ -371,7 +371,7 @@ describe("roastItem", () => {
   });
 
   it("a clean roast is kept as written", async () => {
-    const { client, calls } = fakeClient([{ text: "@@roast\nRory turned a 24-year-old into a 29-year-old and a coupon. He lost 1830 in value. Kevin says thanks." }]);
+    const { client, calls } = fakeClient([{ text: "@@item\nRory turned a 24-year-old into a 29-year-old and a coupon. He lost 1830 in value. Kevin says thanks." }]);
     setRoastClient(client);
     const r = await roastItem("trade", TRADE, ctx);
     expect(calls).toHaveLength(1);
@@ -380,8 +380,8 @@ describe("roastItem", () => {
   });
 
   it("more than three sentences is retried, never cut off mid-joke", async () => {
-    const long = "@@roast\nRory turned a 24-year-old into a 29-year-old and a coupon. He lost 1830 in value. Kevin says thanks. Kevin says thanks again.";
-    const { client, calls } = fakeClient([{ text: long }, { text: "@@roast\nRory lost 1830 in value. Kevin says thanks." }]);
+    const long = "@@item\nRory turned a 24-year-old into a 29-year-old and a coupon. He lost 1830 in value. Kevin says thanks. Kevin says thanks again.";
+    const { client, calls } = fakeClient([{ text: long }, { text: "@@item\nRory lost 1830 in value. Kevin says thanks." }]);
     setRoastClient(client);
     const r = await roastItem("trade", TRADE, ctx);
     expect(calls).toHaveLength(2);
@@ -394,7 +394,7 @@ describe("roastItem", () => {
   });
 
   it("one failed sentence rejects the whole roast (the punchline never loses its setup)", async () => {
-    const { client, calls } = fakeClient([{ text: "@@roast\nRory lost 1830 in value. Worse, it cost him 4321. So much for analytics." }, { text: "@@roast\nRory lost 1830 in value." }]);
+    const { client, calls } = fakeClient([{ text: "@@item\nRory lost 1830 in value. Worse, it cost him 4321. So much for analytics." }, { text: "@@item\nRory lost 1830 in value." }]);
     setRoastClient(client);
     const r = await roastItem("trade", TRADE, ctx);
     expect(calls).toHaveLength(2);
@@ -404,7 +404,7 @@ describe("roastItem", () => {
   it("sees the roasts already published, after FACTS and LORE", async () => {
     await saveRoast({ id: "trade:old", kind: "trade", leagueId: ctx.leagueId, rosterIds: [1], text: "Kevin robbed a bank with a phone call.", facts: TRADE, source: "llm", model: "m", createdAt: 1, usage: null });
     await saveRoast({ id: "trade:plain", kind: "trade", leagueId: ctx.leagueId, rosterIds: [1], text: "Facts only line.", facts: TRADE, source: "facts_only", model: null, createdAt: 2, usage: null });
-    const { client, calls } = fakeClient([{ text: "@@roast\nRory lost 1830 in value." }]);
+    const { client, calls } = fakeClient([{ text: "@@item\nRory lost 1830 in value." }]);
     setRoastClient(client);
     await roastItem("trade", TRADE, ctx);
     const lines = String(calls[0].messages[0].content).split("\n");
@@ -415,7 +415,7 @@ describe("roastItem", () => {
   });
 
   it("retries once when the numbers fail, then gives up to facts only", async () => {
-    const { client, calls } = fakeClient([{ text: "@@roast\nRory lost 9999 in value." }, { text: "@@roast\nRory lost 8888." }]);
+    const { client, calls } = fakeClient([{ text: "@@item\nRory lost 9999 in value." }, { text: "@@item\nRory lost 8888." }]);
     setRoastClient(client);
     const r = await roastItem("trade", TRADE, ctx);
     expect(calls).toHaveLength(2);
@@ -474,8 +474,8 @@ describe("roastItem", () => {
     expect(planItem("draft_pick", p5, 100, { picks, draft: { fc: [...fc], pickTimerSeconds: 0, rookieOnly: true } }).facts).not.toHaveProperty("passedOn");
   });
 
-  it("The Daily Roast's code dek leads with the worst fact, not the counts in its first paragraph", () => {
-    const daily: DailyRoastFacts = { kind: "daily_roast", date: "2030-10-08", sinceMs: 0, trades: [TRADE], waivers: [WAIVER], injuries: [], lineupAlerts: [], draftPicks: [], hasMaterial: true };
+  it("The Daily's code dek leads with the worst fact, not the counts in its first paragraph", () => {
+    const daily: DailyFacts = { kind: "daily", date: "2030-10-08", sinceMs: 0, trades: [TRADE], waivers: [WAIVER], injuries: [], lineupAlerts: [], draftPicks: [], hasMaterial: true };
     const plan = planIssue(daily, ctx);
     expect(plan.fallbackDek).toBe("Rory gave Kevin 1,830 in FantasyCalc value in one trade.");
     const first = plan.sections[0].blocks[0];
@@ -494,7 +494,7 @@ describe("roastItem", () => {
 
   it("draft picks carry their earlier picks and time on the clock into FACTS", async () => {
     const picks = [pick(1, 1, "Case Whitfield", "QB", 3), pick(2, 2, "Tre Holloway", "WR", 1), pick(5, 1, "Colt Easley", "TE", 20)];
-    const { client, calls } = fakeClient([{ text: "@@roast\nKevin took Colt Easley at 2.01 with a fcRank of 20. Two hours on the clock for that." }]);
+    const { client, calls } = fakeClient([{ text: "@@item\nKevin took Colt Easley at 2.01 with a fcRank of 20. Two hours on the clock for that." }]);
     setRoastClient(client);
     const r = await roastItem("draft_pick", picks[2], ctx, { draftPicks: picks });
     expect(r.id).toBe("pick:d1:005");
@@ -507,7 +507,7 @@ describe("roastItem", () => {
   it("lore comes from the store and env (env wins), only for managers in the item", async () => {
     await store.set(store.keys.roastNotes(), { Kevin: "Store note for Kevin.", Rory: "Store note for Rory.", Wes: "Wes is not in this trade." });
     process.env.ROAST_NOTES = JSON.stringify({ Rory: "Env note for Rory." });
-    const { client, calls } = fakeClient([{ text: "@@roast\nRory lost 1830." }]);
+    const { client, calls } = fakeClient([{ text: "@@item\nRory lost 1830." }]);
     setRoastClient(client);
     await roastItem("trade", TRADE, ctx);
     const lore = JSON.parse(String(calls[0].messages[0].content).split("\n").at(-1)!);

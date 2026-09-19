@@ -16,8 +16,8 @@ export async function GET(req: Request): Promise<Response> {
   return htmlPage(
     "Unsubscribe",
     [
-      "<h1>Unsubscribe from The Roast?</h1>",
-      "<p>You will stop getting the newsletter. The site stays up, and so do the roasts.</p>",
+      "<h1>Unsubscribe from the MSTP Dynasty newsletter?</h1>",
+      "<p>You will stop getting the emails. The site stays up, and nothing on it gets any nicer.</p>",
       postButton(`/api/unsubscribe?token=${encodeURIComponent(token)}`, "Unsubscribe"),
     ].join("\n"),
   );
@@ -33,9 +33,9 @@ export async function POST(req: Request): Promise<Response> {
   const res = await unsubscribe(token);
   switch (res.status) {
     case "unsubscribed":
-      return htmlPage("Unsubscribed", "<h1>You're off the list</h1><p>No more emails from The Roast.</p>");
+      return htmlPage("Unsubscribed", "<h1>You're off the list</h1><p>No more emails from MSTP Dynasty. The league will keep talking about you anyway.</p>");
     case "not_found":
-      return htmlPage("Unsubscribed", "<h1>Already off the list</h1><p>This address is not subscribed.</p>");
+      return htmlPage("Unsubscribed", "<h1>Already off the list</h1><p>This address already unsubscribed.</p>");
     case "bad_signature":
       return htmlPage("Unsubscribe", "<h1>Unsubscribe</h1><p>This unsubscribe link is not valid.</p>", 403);
     default:

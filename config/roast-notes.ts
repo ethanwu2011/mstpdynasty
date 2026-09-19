@@ -8,7 +8,7 @@
  *
  *   ROAST_NOTES='{"Ethan":"drafted a kicker in a league with no kickers","Peter":"..."}'
  *
- * Write each note as plain facts or running jokes, one or two sentences. The Roast only uses
+ * Write each note as plain facts or running jokes, one or two sentences. The writer only uses
  * a note when it fits the week's facts, and the hard limits still apply: anything personal
  * (school, work, health, family, looks) is off limits unless it is written here as the joke.
  * The shipped defaults below are intentionally empty.

@@ -1,38 +1,44 @@
 /** Home panels used in more than one phase. */
 import Link from "next/link";
 import type { ReactNode } from "react";
-import { Button, PixelArrow } from "@/components/Button";
 import { DataTable } from "@/components/DataTable";
 import { DotMatrixFill } from "@/components/DotMatrixFill";
 import { BarLink } from "@/components/HeaderBar";
 import { Panel, type PanelSpan } from "@/components/Panel";
 import { RoastBlock, type RoastBlockData } from "@/components/RoastBlock";
+import { lineOf } from "@/components/RowLine";
 import { SampleMark, Tag } from "@/components/Tag";
-import { ISSUE_TITLES } from "@/lib/roast";
-import type { Issue, IssueKind, ShameBoard, ShameEntry, ShameKind } from "@/lib/types";
+import type { Issue, ShameBoard, ShameEntry, ShameKind, SurfaceLineMap } from "@/lib/types";
 import { etStamp, fmtInt, fmtPts } from "../_lib/format";
+import { CADENCE, issueLabel, ISSUE_ORDER } from "../newsletter/issue-kinds";
 
 /* ------------------------------ lead ------------------------------ */
 
 export function LeadPanel({
   data,
   empty,
+  emptyLabel = "Latest",
   below,
+  line,
   span = 8,
   right,
 }: {
   data: RoastBlockData | null;
   empty?: ReactNode;
-  /** Supporting numbers under the roast (the week in numbers, the last few picks). */
+  /** Panel label when there is nothing to lead with. */
+  emptyLabel?: string;
+  /** Supporting numbers under the lead (the week in numbers, the last few picks). */
   below?: ReactNode;
+  /** The lead item's one-liner, when its surface has one. */
+  line?: string | null;
   span?: PanelSpan;
   right?: ReactNode;
 }) {
-  // The panel label is the h2; the roast headline inside is an h3.
+  // The panel names the event ("Pick 3.07", "Trade, Sep 21"); the headline inside is an h3.
   return (
-    <Panel label="The latest roast" labelRight={right} span={span} id="latest-roast">
+    <Panel label={data?.event ?? data?.kicker ?? emptyLabel} labelRight={right} span={span} id="latest">
       <div className="flex flex-1 flex-col gap-10">
-        {data ? <RoastBlock {...data} size="hero" animate headingLevel={3} /> : empty}
+        {data ? <RoastBlock {...data} kicker={data.event ? data.kicker : undefined} eventInPanel size="hero" animate headingLevel={3} lede={data.lede ?? line} /> : empty}
         {below}
       </div>
     </Panel>
@@ -41,20 +47,22 @@ export function LeadPanel({
 
 /* ------------------------------ issues ------------------------------ */
 
-const CADENCE: Record<IssueKind, string> = {
-  daily_roast: "8 AM ET, only on days something happened",
-  thursday_fallout: "Fridays in season, after the Thursday game",
-  weekly_roast: "Tuesdays in season, the full recap",
-  draft_grades: "Once, when the startup draft ends",
-};
-
-const ORDER: IssueKind[] = ["daily_roast", "thursday_fallout", "weekly_roast", "draft_grades"];
-
-export function IssuesPanel({ issues, span = 4, mdSpan = 12 }: { issues: Issue[]; span?: PanelSpan; mdSpan?: 12 | 6 }) {
+export function IssuesPanel({
+  issues,
+  recapWeek,
+  span = 4,
+  mdSpan = 12,
+}: {
+  issues: Issue[];
+  /** The week the recap is named by ("Week 5 Recap"), from recapWeek() in app/newsletter/issue-kinds. */
+  recapWeek: number;
+  span?: PanelSpan;
+  mdSpan?: 12 | 6;
+}) {
   const latest = issues[0];
   return (
     <Panel label="The issues" labelRight={<BarLink href="/newsletter">Archive</BarLink>} span={span} mdSpan={mdSpan}>
-      <div className="flex flex-1 flex-col gap-6">
+      <div className="flex flex-col gap-6">
         {latest ? (
           <Link href={`/newsletter/${latest.slug}`} className="group flex flex-col gap-3 no-underline">
             <span className="type-label flex items-center gap-2 text-ink-muted">
@@ -65,26 +73,17 @@ export function IssuesPanel({ issues, span = 4, mdSpan = 12 }: { issues: Issue[]
             {latest.dek ? <span className="text-body font-semibold">{latest.dek}</span> : null}
           </Link>
         ) : (
-          <p className="m-0 text-body">
-            Nothing has gone out yet. Every issue is written by The Roast from this league&apos;s numbers and lands in your inbox.
-          </p>
+          <p className="m-0 text-body">Nothing has gone out yet. Every issue goes to the league by email, and a copy stays here.</p>
         )}
 
         <dl className="m-0 border-t-2 border-ink">
-          {ORDER.map((kind) => (
+          {ISSUE_ORDER.map((kind) => (
             <div key={kind} className="flex flex-col gap-0.5 border-b border-ink py-2.5">
-              <dt className="type-label">{ISSUE_TITLES[kind]}</dt>
-              <dd className="m-0 text-fine text-ink-muted">{CADENCE[kind]}</dd>
+              <dt className="type-label">{issueLabel(kind, recapWeek)}</dt>
+              <dd className="m-0 text-data text-ink-muted">{CADENCE[kind]}</dd>
             </div>
           ))}
         </dl>
-
-        <div className="mt-auto">
-          <Button href="/subscribe" variant="primary" className="w-full">
-            Subscribe to the roast
-            <PixelArrow />
-          </Button>
-        </div>
       </div>
     </Panel>
   );
@@ -121,7 +120,7 @@ function damage(e: ShameEntry): string {
     case "value":
       return `${fmtInt(e.amount)} value`;
     case "picks":
-      return `${fmtInt(e.amount)} picks`;
+      return `${fmtInt(e.amount)} ${e.amount === 1 ? "spot" : "spots"}`;
   }
 }
 
@@ -141,12 +140,15 @@ export function topShame(entries: ShameEntry[], limit: number): ShameEntry[] {
 
 export function ShamePanel({
   board,
+  lines,
   limit = 5,
   span = 8,
   mdSpan = 12,
   hideSample = false,
 }: {
   board: ShameBoard | null;
+  /** One-liners by entry id (the shame surface). */
+  lines?: SurfaceLineMap;
   limit?: number;
   span?: PanelSpan;
   mdSpan?: 12 | 6;
@@ -175,7 +177,7 @@ export function ShamePanel({
             <p className="type-label m-0">What gets you on it</p>
             <ul className="m-0 list-none border-t-2 border-ink p-0">
               {(Object.keys(KIND_RULE) as ShameKind[]).map((k) => (
-                <li key={k} className="flex items-center gap-3 border-b border-ink py-2 text-fine">
+                <li key={k} className="flex items-center gap-3 border-b border-ink py-2 text-data">
                   <Tag className="w-[4.75rem] justify-center">{KIND_LABEL[k]}</Tag>
                   {KIND_RULE[k]}
                 </li>
@@ -189,6 +191,7 @@ export function ShamePanel({
           rows={rows}
           rowKey={(e) => e.id}
           mark={(_, i) => (i === 0 ? "alarm" : null)}
+          line={(e) => lineOf(lines, e.id)}
           minWidth={500}
           columns={[
             {

@@ -7,8 +7,9 @@ import { BarLink } from "@/components/HeaderBar";
 import { Numeral } from "@/components/Numeral";
 import { Panel, type PanelSpan } from "@/components/Panel";
 import { RoastBlock } from "@/components/RoastBlock";
+import { lineOf, RowLine } from "@/components/RowLine";
 import { LiveSquare, SampleMark, Tag } from "@/components/Tag";
-import type { DraftGrade, LeagueContext, Manager, Roast, ShameEntry, ShameKind, StandingRow } from "@/lib/types";
+import type { DraftGrade, LeagueContext, Manager, Roast, ShameEntry, ShameKind, StandingRow, SurfaceLineMap } from "@/lib/types";
 import { fmtInt, fmtPts, ordinal, record } from "../../_lib/format";
 import { roastToBlock } from "../../_lib/roast-view";
 import { Verdict } from "../../draft/_board/DraftBoard";
@@ -25,15 +26,29 @@ export interface LeadStat {
   alarm?: boolean;
 }
 
-export function TeamLead({ manager, kicker, stats, note }: { manager: Manager; kicker: React.ReactNode; stats: LeadStat[]; note?: React.ReactNode }) {
+export function TeamLead({
+  manager,
+  kicker,
+  stats,
+  note,
+  line,
+}: {
+  manager: Manager;
+  kicker: React.ReactNode;
+  stats: LeadStat[];
+  note?: React.ReactNode;
+  /** The team's one-liner (the team surface), when there is one. */
+  line?: string | null;
+}) {
   return (
     <Panel label="The team" labelRight={manager.username ? <span className="text-paper-shade">@{manager.username}</span> : null} span={8} id="team">
       <div className="flex flex-1 flex-col gap-6 md:gap-7">
         {kicker ? <div className="flex flex-wrap items-center gap-2">{kicker}</div> : null}
-        <p className="type-display m-0 break-words">
+        <p className="type-display m-0 break-words [text-wrap:balance]">
           <span className="board-wipe block text-j4 xl:text-j5">{manager.name}</span>
-          <span className="board-wipe mt-2 block text-j2 md:text-j3">{manager.teamName}</span>
+          <span className={cx("board-wipe mt-2 block", manager.teamName.length > 18 ? "text-j2" : "text-j2 md:text-j3")}>{manager.teamName}</span>
         </p>
+        <RowLine text={line} size="lede" />
         {note ? <div className="measure text-body md:text-lede">{note}</div> : null}
         <dl className="m-0 mt-auto grid grid-cols-2 border-y-2 border-ink sm:grid-cols-4">
           {stats.map((s, i) => (
@@ -84,7 +99,7 @@ export function PicksPanel({ rosterId, cells, away, live, span = 4 }: { rosterId
                     href={`/draft#pick-${c.pickNo}`}
                     aria-label={`Pick ${c.label}${c.pick ? `, ${c.pick.player.name}` : isNext ? ", next up" : ", still to come"}${c.traded ? `, from ${c.columnName}` : ""}`}
                     className={cx(
-                      "type-label relative flex h-10 w-full items-center justify-center no-underline focus-visible:outline-offset-[-4px]",
+                      "type-label relative flex h-11 w-full items-center justify-center no-underline focus-visible:outline-offset-[-4px]",
                       c.pick ? "on-ink bg-ink text-paper hover:bg-paper hover:text-ink" : "bg-paper text-ink hover:bg-paper-shade",
                     )}
                   >
@@ -148,10 +163,12 @@ export function PicksPanel({ rosterId, cells, away, live, span = 4 }: { rosterId
 /* ------------------------------ latest roast ------------------------------ */
 
 export function LatestRoastPanel({ roast, shame, span = 4 }: { roast: Roast | null; shame: ShameEntry | null; span?: PanelSpan }) {
+  const block = roast ? roastToBlock(roast) : null;
+  const label = block?.event ?? (shame ? (shame.week ? `Week ${shame.week}, ${KIND_LABEL[shame.kind].toLowerCase()}` : KIND_LABEL[shame.kind]) : "Latest");
   return (
-    <Panel label="Latest roast" labelRight={<BarLink href="#rap-sheet">Rap sheet</BarLink>} span={span}>
-      {roast ? (
-        <RoastBlock {...roastToBlock(roast)} size="compact" headingLevel={3} />
+    <Panel label={label} labelRight={<BarLink href="#rap-sheet">Rap sheet</BarLink>} span={span}>
+      {block ? (
+        <RoastBlock {...block} eventInPanel size="compact" headingLevel={3} />
       ) : shame ? (
         <div className="flex flex-1 flex-col gap-4">
           <div className="flex items-center gap-2">
@@ -168,7 +185,7 @@ export function LatestRoastPanel({ roast, shame, span = 4 }: { roast: Roast | nu
       ) : (
         <div className="flex flex-1 flex-col justify-between gap-6">
           <p className="type-display m-0 text-j3">Clean so far</p>
-          <DotMatrixFill label="Nothing roasted yet. Nobody stays clean in this league for long." rows={5} />
+          <DotMatrixFill label="Nothing on the record." rows={5} />
         </div>
       )}
     </Panel>
@@ -368,7 +385,7 @@ export function ValuePanel({ rosterId, values, roster, span = 4 }: { rosterId: n
         <div className="flex items-end justify-between gap-4">
           <div className="flex flex-col gap-2">
             <span className="type-label text-ink-muted">Dynasty value</span>
-            <Numeral value={mine.total} size="d60" ghost label={`${fmtInt(mine.total)} dynasty value`} />
+            <Numeral value={mine.total} size="d60" label={`${fmtInt(mine.total)} dynasty value`} />
           </div>
           <span className={cx("type-display text-j3", rank === n && "text-red")}>{ordinal(rank)}</span>
         </div>
@@ -387,7 +404,7 @@ export function ValuePanel({ rosterId, values, roster, span = 4 }: { rosterId: n
             </div>
           ))}
         </dl>
-        <p className="type-label m-0 text-ink-muted">Bars: share of the best room in the league at that position.</p>
+        <p className="m-0 text-data text-ink-muted">Bars: share of the best room in the league at that position.</p>
         {top.length ? (
           <section aria-labelledby="top-assets" className="mt-auto flex flex-col gap-2">
             <h3 id="top-assets" className="type-label m-0 flex justify-between">
@@ -438,7 +455,7 @@ function damage(e: ShameEntry): string {
     case "value":
       return `${fmtInt(e.amount)} value`;
     case "picks":
-      return `${fmtInt(e.amount)} picks`;
+      return `${fmtInt(e.amount)} ${e.amount === 1 ? "spot" : "spots"}`;
   }
 }
 
@@ -447,12 +464,15 @@ export function RapSheetPanel({
   shame,
   roasts,
   shamePlaceholder,
+  lines,
   span = 12,
 }: {
   manager: Manager;
   shame: ShameEntry[];
   roasts: Roast[];
   shamePlaceholder: boolean;
+  /** One-liners by shame entry id. */
+  lines?: SurfaceLineMap;
   span?: PanelSpan;
 }) {
   const narrow = span < 8;
@@ -472,7 +492,7 @@ export function RapSheetPanel({
     >
       {count === 0 ? (
         <div className="px-4 pb-5 pt-6 md:px-6 md:pb-6 md:pt-8">
-          <DotMatrixFill label={`${manager.name} has a clean sheet. Every bad trade, $0 bid and benched 30-point week lands here.`} rows={narrow ? 4 : 5} />
+          <DotMatrixFill label={`${manager.name} has no entries. Every bad trade, $0 bid and point left on the bench lands here.`} rows={narrow ? 4 : 5} />
         </div>
       ) : (
         <div className="flex flex-col">
@@ -482,6 +502,7 @@ export function RapSheetPanel({
               rows={shame}
               rowKey={(e) => e.id}
               mark={(_, i) => (i === 0 ? "alarm" : null)}
+              line={(e) => lineOf(lines, e.id)}
               minWidth={480}
               columns={[
                 {
@@ -518,7 +539,18 @@ export function RapSheetPanel({
 
 /* ------------------------------ draft haul ------------------------------ */
 
-export function DraftHaulPanel({ cells, grade, placeholder }: { cells: BoardCell[]; grade: DraftGrade | null; placeholder: boolean }) {
+export function DraftHaulPanel({
+  cells,
+  grade,
+  placeholder,
+  lines,
+}: {
+  cells: BoardCell[];
+  grade: DraftGrade | null;
+  placeholder: boolean;
+  /** One-liners by pick number (the draft surface). */
+  lines?: SurfaceLineMap;
+}) {
   const made = cells.filter((c) => c.pick);
   if (!made.length) return null;
   const total = made.reduce((a, c) => a + (c.pick?.player.value ?? 0), 0);
@@ -538,13 +570,14 @@ export function DraftHaulPanel({ cells, grade, placeholder }: { cells: BoardCell
         rows={made}
         rowKey={(c) => String(c.pickNo)}
         rowId={(c) => `haul-${c.pickNo}`}
+        line={(c) => lineOf(lines, c.pickNo)}
         minWidth={520}
         columns={[
           {
             key: "pick",
             header: "Pick",
             cell: (c) => (
-              <Link href={`/draft#pick-${c.pickNo}`} className="type-label link-ink px-0.5">
+              <Link href={`/draft#pick-${c.pickNo}`} className="type-label link-ink hit-area px-0.5">
                 {c.label}
               </Link>
             ),
@@ -561,7 +594,7 @@ export function DraftHaulPanel({ cells, grade, placeholder }: { cells: BoardCell
               </span>
             ),
           },
-          { key: "verdict", header: "Verdict", cell: (c) => (c.pick ? <Verdict pick={c.pick} /> : null) ?? <span className="text-ink-muted">--</span> },
+          { key: "verdict", header: "Vs FantasyCalc", cell: (c) => (c.pick ? <Verdict pick={c.pick} /> : null) ?? <span className="text-ink-muted">--</span> },
           { key: "fc", header: "FC rank", align: "right", hideOnPhone: true, cell: (c) => (c.pick?.fcRank ? ordinal(c.pick.fcRank) : "--") },
           { key: "value", header: "Value", align: "right", cell: (c) => (c.pick?.player.value ? fmtInt(c.pick.player.value) : <span className="text-ink-muted">--</span>) },
         ]}
@@ -613,11 +646,11 @@ export function TeamsStrip({ ctx, current, order, standings }: { ctx: LeagueCont
                   href={`/teams/${id}`}
                   aria-current={here ? "page" : undefined}
                   className={cx(
-                    "flex w-full min-w-0 flex-col gap-1 px-3 py-3 no-underline focus-visible:outline-offset-[-4px]",
+                    "flex min-h-11 w-full min-w-0 flex-col gap-1 px-3 py-3 no-underline focus-visible:outline-offset-[-4px]",
                     here ? "on-ink bg-ink text-paper" : "bg-paper text-ink hover:bg-paper-shade",
                   )}
                 >
-                  <span className="type-label truncate text-[1rem] leading-tight">{m?.name ?? `Roster ${id}`}</span>
+                  <span className="type-label truncate text-row leading-tight">{m?.name ?? `Roster ${id}`}</span>
                   <span className={cx("truncate text-fine", here ? "text-paper-shade" : "text-ink-muted")}>{m?.teamName ?? ""}</span>
                   {played && s ? <span className="type-label mt-1">{record(s.wins, s.losses, s.ties)}</span> : null}
                 </Link>

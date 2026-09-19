@@ -7,36 +7,37 @@ import { FilterLinks } from "@/components/FilterLinks";
 import { Numeral } from "@/components/Numeral";
 import { Board, Panel } from "@/components/Panel";
 import { RoastBlock, type RoastBlockData } from "@/components/RoastBlock";
-import { SampleMark, Tag } from "@/components/Tag";
+import { SampleMark } from "@/components/Tag";
 import { formatEt } from "@/lib/time";
 import type { Issue, IssueKind, SeasonPhase } from "@/lib/types";
-import { issueToBlock } from "../_lib/roast-view";
-import { CADENCE, issueDay, ISSUE_ORDER, issueName, kindSlug, monthLabel } from "./issue-kinds";
+import { issueEvent, issueToBlock } from "../_lib/roast-view";
+import { CADENCE, issueDay, issueLabel, ISSUE_ORDER, KIND_PLURAL, kindSlug, monthLabel } from "./issue-kinds";
 
 export interface NewsletterViewProps {
   /** null when the archive could not be read. */
   issues: Issue[] | null;
   kind: IssueKind | null;
   phase: SeasonPhase;
+  /** The week the recap is named by in lists ("Week 5 Recap"), from recapWeek(). */
+  recapWeek: number;
 }
 
 const archiveHref = (k: IssueKind | null) => `/newsletter${k ? `?kind=${kindSlug(k)}` : ""}#archive`;
 
-function nextIssueLine(phase: SeasonPhase): string {
+function nextIssueLine(phase: SeasonPhase, week: number): string {
   switch (phase) {
     case "pre_draft":
     case "drafting":
-      return "The Daily Roast goes out at 8 AM ET on any morning with something to roast, draft picks included. Draft Grades lands the day the startup draft ends.";
+      return "The Daily goes out at 8 AM ET on any morning after something happened, draft picks included. Draft Grades lands the day the startup draft ends.";
     case "in_season":
-      return "The Weekly Roast goes out Tuesday with the full recap. Thursday Night Fallout goes out Friday. The Daily Roast shows up whenever somebody gives it material.";
+      return `${issueLabel("weekly_recap", week)} goes out Tuesday. Thursday Night Fallout goes out Friday. The Daily shows up whenever somebody gives it material.`;
     default:
-      return "The Daily Roast wakes up the morning after somebody makes a move.";
+      return "The Daily shows up the morning after somebody makes a move.";
   }
 }
 
 function IssueTags({ issue }: { issue: Issue }) {
   if (issue.placeholder) return <SampleMark />;
-  if (issue.factsOnly) return <Tag tone="outline">Facts only</Tag>;
   return null;
 }
 
@@ -50,7 +51,7 @@ function leadBlock(issue: Issue): RoastBlockData {
     .join("\n\n");
   return {
     ...issueToBlock(issue),
-    kicker: issue.week ? `Week ${issue.week} · ${issue.season} season` : `${issue.season} season`,
+    kicker: issue.week && !/week/i.test(issue.title) ? `Week ${issue.week}` : undefined,
     text,
     tags: <IssueTags issue={issue} />,
   };
@@ -58,9 +59,9 @@ function leadBlock(issue: Issue): RoastBlockData {
 
 /* ------------------------------ the four issues ------------------------------ */
 
-function Masthead({ issues, kind }: { issues: Issue[]; kind: IssueKind | null }) {
+function Masthead({ issues, kind, recapWeek }: { issues: Issue[]; kind: IssueKind | null; recapWeek: number }) {
   return (
-    <Panel label="The four issues" labelRight={<span className="text-paper-shade">By The Roast</span>} span={4} pad={false}>
+    <Panel label="The four issues" span={4} pad={false}>
       <ul className="m-0 list-none p-0">
         {ISSUE_ORDER.map((k) => {
           const mine = issues.filter((i) => i.kind === k);
@@ -69,19 +70,13 @@ function Masthead({ issues, kind }: { issues: Issue[]; kind: IssueKind | null })
           const row = (
             <>
               <span className="flex min-w-0 flex-col gap-1">
-                <span className="type-display text-j2">{issueName(k)}</span>
+                <span className="type-display text-j2">{issueLabel(k, recapWeek)}</span>
                 <span className={cx("text-fine", selected ? "text-paper-shade" : "text-ink-muted")}>
                   {CADENCE[k]}
                   {last ? `. Last: ${formatEt(issueDay(last), { month: "short", day: "numeric" })}` : ""}
                 </span>
               </span>
-              <Numeral
-                value={mine.length}
-                pad={2}
-                size="d30"
-                tone={selected ? "paper" : mine.length ? "ink" : "muted"}
-                label={`${mine.length} sent`}
-              />
+              <Numeral value={mine.length} size="d30" tone={selected ? "paper" : mine.length ? "ink" : "muted"} label={`${mine.length} sent`} />
             </>
           );
           const cls = "grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-4 px-4 py-3.5 md:px-6 lg:px-4 xl:px-6";
@@ -107,13 +102,9 @@ function Masthead({ issues, kind }: { issues: Issue[]; kind: IssueKind | null })
         })}
       </ul>
       <div className="flex flex-1 flex-col justify-end gap-4 px-4 pb-5 pt-5 md:px-6 lg:px-4 xl:px-6">
-        <p className="m-0 text-fine text-ink-muted">
-          Every issue is written from this league&apos;s numbers and lands in your inbox. The site keeps a copy of each one here.
+        <p className="m-0 text-data text-ink-muted">
+          Every issue is written from this league&apos;s numbers and goes to the ten managers by email. A copy of each one stays here.
         </p>
-        <Button href="/subscribe" variant="primary" className="w-full">
-          Subscribe to the roast
-          <PixelArrow />
-        </Button>
       </div>
     </Panel>
   );
@@ -169,7 +160,7 @@ function Archive({ issues, kind }: { issues: Issue[]; kind: IssueKind | null }) 
     { href: archiveHref(null), label: "All", count: issues.length, selected: !kind },
     ...ISSUE_ORDER.map((k) => ({
       href: archiveHref(k),
-      label: issueName(k),
+      label: KIND_PLURAL[k],
       count: issues.filter((i) => i.kind === k).length,
       selected: kind === k,
     })),
@@ -201,7 +192,7 @@ function Archive({ issues, kind }: { issues: Issue[]; kind: IssueKind | null }) 
         ))
       ) : (
         <div className="border-t-2 border-ink px-4 pb-6 pt-6 md:px-6">
-          <DotMatrixFill label={kind ? `No ${issueName(kind)} yet. ${CADENCE[kind]}.` : "The archive is empty."} rows={4} />
+          <DotMatrixFill label={kind ? `No ${kind === "weekly_recap" ? "recaps" : KIND_PLURAL[kind]} yet. ${CADENCE[kind]}.` : "The archive is empty."} rows={4} />
         </div>
       )}
     </Panel>
@@ -210,17 +201,17 @@ function Archive({ issues, kind }: { issues: Issue[]; kind: IssueKind | null }) 
 
 /* ------------------------------ page ------------------------------ */
 
-export function NewsletterView({ issues, kind, phase }: NewsletterViewProps) {
+export function NewsletterView({ issues, kind, phase, recapWeek }: NewsletterViewProps) {
   if (issues === null) {
     return (
       <Board>
-        <Panel label="The latest issue" labelRight={<span className="text-paper-shade">Off the air</span>} span={8}>
+        <Panel label="The newsletter" span={8}>
           <div className="flex flex-col gap-6">
             <h2 className="type-display m-0 text-j3 md:text-j4">The archive did not load</h2>
             <p className="measure m-0 text-body md:text-lede">
               The store that keeps every issue did not answer. Nothing was deleted. Try again in a minute.
             </p>
-            <DotMatrixFill label="No signal." rows={5} density={0.3} />
+            <DotMatrixFill label="The archive store did not answer." rows={5} density={0.3} />
             <div>
               <Button href="/newsletter" variant="primary">
                 Try again
@@ -228,7 +219,7 @@ export function NewsletterView({ issues, kind, phase }: NewsletterViewProps) {
             </div>
           </div>
         </Panel>
-        <Masthead issues={[]} kind={null} />
+        <Masthead issues={[]} kind={null} recapWeek={recapWeek} />
       </Board>
     );
   }
@@ -236,14 +227,10 @@ export function NewsletterView({ issues, kind, phase }: NewsletterViewProps) {
   const latest = issues[0];
   return (
     <Board>
-      <Panel
-        label="The latest issue"
-        labelRight={<span className="text-paper-shade">{latest ? issueName(latest.kind) : "None yet"}</span>}
-        span={8}
-      >
+      <Panel label={latest ? issueEvent(latest) : "The newsletter"} labelRight={<span className="text-paper-shade">{latest ? "Latest" : "None yet"}</span>} span={8}>
         {latest ? (
           <div className="flex flex-1 flex-col gap-8">
-            <RoastBlock {...leadBlock(latest)} size="hero" animate headingLevel={3} />
+            <RoastBlock {...leadBlock(latest)} eventInPanel size="hero" animate headingLevel={3} />
             <div>
               <Button href={`/newsletter/${latest.slug}`} variant="secondary">
                 Read the whole issue
@@ -253,17 +240,16 @@ export function NewsletterView({ issues, kind, phase }: NewsletterViewProps) {
           </div>
         ) : (
           <article className="flex flex-1 flex-col gap-6 md:gap-7">
-            <p className="type-label m-0">The newsletter · By The Roast</p>
             <h3 className="type-display m-0 text-j3 md:text-j4 xl:text-j5">
               <span className="board-wipe block">Nothing has</span>
               <span className="board-wipe block">gone out yet</span>
             </h3>
-            <p className="measure m-0 text-body md:text-lede">{nextIssueLine(phase)}</p>
+            <p className="measure m-0 text-body md:text-lede">{nextIssueLine(phase, recapWeek)}</p>
             <DotMatrixFill label="Every issue lands here the moment it is sent." rows={5} />
           </article>
         )}
       </Panel>
-      <Masthead issues={issues} kind={kind} />
+      <Masthead issues={issues} kind={kind} recapWeek={recapWeek} />
       {issues.length ? <Archive issues={issues} kind={kind} /> : null}
     </Board>
   );

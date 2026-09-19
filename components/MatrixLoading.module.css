@@ -2,7 +2,9 @@
  * A loading field in pure CSS: the 9x9 dot matrix with its bulbs off, and the lit dots wiping
  * across it in pixel steps, over and over. Same look as DotMatrixFill's loading state at a
  * fraction of the markup (no per-dot SVG), for fallbacks that ship with every page load.
+ * The field is a textless ornament block (DESIGN.md Shapes): its one line of copy sits below it.
  */
+/* impeccable-disable codex-grid-background -- the 9x9 dot matrix is this board's own texture, never behind text */
 .field {
   position: relative;
   height: calc(var(--rows, 6) * 9px);
@@ -23,7 +25,7 @@
     linear-gradient(to right, var(--color-paper) 3px, transparent 3px),
     linear-gradient(to bottom, var(--color-paper) 3px, transparent 3px);
   background-size: 9px 9px;
-  mask-image: linear-gradient(to right, transparent, #000 70%);
+  mask-image: linear-gradient(to right, transparent, var(--color-ink) 70%);
   clip-path: inset(0 0 0 0);
 }
 

@@ -11,8 +11,7 @@ export default function ErrorPage({ reset }: { error: Error & { digest?: string 
         <div className="flex flex-col gap-6">
           <h2 className="type-display m-0 text-j3 md:text-j4">This page did not load</h2>
           <p className="measure m-0">
-            One of the data sources (Sleeper, ESPN or FantasyCalc) did not answer, or something broke on our side. Try again in a
-            minute. Your league is fine.
+            Sleeper, ESPN or FantasyCalc did not answer, or this site broke. Try again in a minute. Nothing changed on Sleeper.
           </p>
           <DotMatrixFill label="No signal." rows={6} density={0.3} />
           <div>

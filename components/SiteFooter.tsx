@@ -1,4 +1,3 @@
-import Link from "next/link";
 import { BrandMark } from "./BrandMark";
 
 /** One ruled line at the bottom of every page. */
@@ -10,12 +9,8 @@ export function SiteFooter() {
           <BrandMark size={16} />
           MSTP Dynasty
         </span>
-        <span>Written by The Roast</span>
         <span>Data from Sleeper, ESPN and FantasyCalc</span>
         <span>All times Eastern</span>
-        <Link href="/subscribe" className="link-ink px-0.5 text-ink">
-          Get the emails
-        </Link>
       </p>
     </footer>
   );

@@ -14,6 +14,7 @@ vi.mock("@/lib/facts", () => ({
 }));
 vi.mock("@/lib/roast", () => ({
   isRoastConfigured: vi.fn(() => false),
+  hasRoastClient: vi.fn(() => false),
   roastIssue: vi.fn(),
   roastItem: vi.fn(),
 }));
@@ -48,7 +49,7 @@ import { roastIssue, roastItem } from "@/lib/roast";
 import { getDraftPicks, getPlayers } from "@/lib/sleeper";
 import * as store from "@/lib/store";
 import type {
-  DailyRoastFacts,
+  DailyFacts,
   DraftFacts,
   DraftPickFact,
   IssueFacts,
@@ -64,7 +65,7 @@ import type {
   TradeFact,
   WaiverFact,
 } from "@/lib/types";
-import { fakeCtx, fakeDraft, fakeSchedule, fakeTransport, makeIssue, type FakeTransport } from "./ops-helpers";
+import { addr, fakeCtx, fakeDraft, fakeSchedule, fakeTransport, makeIssue, type FakeTransport } from "./ops-helpers";
 
 const schedule = fakeSchedule();
 const TUE = new Date("2026-09-29T12:00:00Z");
@@ -132,7 +133,7 @@ beforeEach(() => {
   store.resetStoreForTests();
   vi.clearAllMocks();
   vi.stubEnv("ADMIN_SECRET", "test-admin-secret");
-  vi.stubEnv("COMMISSIONER_EMAIL", "commish@example.com");
+  vi.stubEnv("COMMISSIONER_EMAIL", addr("commish"));
   vi.stubEnv("SITE_URL", "https://mstpdynasty.test");
   vi.stubEnv("NEWSLETTER_MODE", "");
   vi.stubEnv("LEAGUE_ID", "");
@@ -164,7 +165,7 @@ beforeEach(() => {
   vi.mocked(runSeasonSim).mockResolvedValue({ season: "2026", asOfWeek: 3, runs: 10_000, seed: 1, generatedAt: 0, teams: [], placeholder: false });
   vi.mocked(getPowerRankings).mockResolvedValue({ season: "2026", asOfWeek: 3, formula: "Formula.", rows: [], placeholder: false });
   vi.mocked(roastIssue).mockImplementation(async (kind: IssueKind, facts: IssueFacts, ctx?: LeagueContext) => {
-    const period = facts.kind === "daily_roast" ? facts.date : "week" in facts ? `w${facts.week}` : "draft";
+    const period = facts.kind === "daily" ? facts.date : "week" in facts ? `w${facts.week}` : "draft";
     return makeIssue({ kind, slug: `${period}-${kind.replace(/_/g, "-")}`, leagueId: ctx!.leagueId, title: kind, createdAt: Date.now() });
   });
   vi.mocked(roastItem).mockImplementation(
@@ -196,8 +197,8 @@ describe("runDaily", () => {
   it("builds each issue once per period and never re-roasts on a rerun", async () => {
     const ctx = fakeCtx();
     const r1 = await runDaily(TUE, { ctx, schedule });
-    expect(outcome(r1, "weekly_roast")).toMatchObject({ status: "ran", issueSlug: "w3-weekly-roast" });
-    expect(outcome(r1, "daily_roast")).toMatchObject({ status: "ran", issueSlug: "2026-09-29-daily-roast" });
+    expect(outcome(r1, "weekly_recap")).toMatchObject({ status: "ran", issueSlug: "w3-weekly-recap" });
+    expect(outcome(r1, "daily")).toMatchObject({ status: "ran", issueSlug: "2026-09-29-daily" });
     expect(outcome(r1, "thursday_fallout")?.status).toBe("skipped");
     expect(outcome(r1, "draft_grades")?.status).toBe("skipped");
     expect(roastIssue).toHaveBeenCalledTimes(2);
@@ -211,15 +212,15 @@ describe("runDaily", () => {
     expect(await listIssues(ctx.leagueId)).toHaveLength(0);
 
     const r2 = await runDaily(TUE, { ctx, schedule });
-    expect(outcome(r2, "weekly_roast")).toMatchObject({ status: "skipped", detail: "Already done for this period." });
-    expect(outcome(r2, "daily_roast")).toMatchObject({ status: "skipped", detail: "Already done for this period." });
+    expect(outcome(r2, "weekly_recap")).toMatchObject({ status: "skipped", detail: "Already done for this period." });
+    expect(outcome(r2, "daily")).toMatchObject({ status: "skipped", detail: "Already done for this period." });
     expect(roastIssue).toHaveBeenCalledTimes(2);
 
-    // Wednesday: nothing new, so The Daily Roast stays quiet and sends nothing
+    // Wednesday: nothing new, so The Daily stays quiet and sends nothing
     txNow = { trades: [], waivers: [], placeholder: false };
     const r3 = await runDaily(WED, { ctx, schedule });
-    expect(outcome(r3, "daily_roast")).toMatchObject({ status: "skipped", detail: "Quiet day: nothing to roast, nothing sent." });
-    expect((await runDaily(WED, { ctx, schedule })).outcomes.find((o) => o.job === "daily_roast")?.detail).toBe("Already done for this period.");
+    expect(outcome(r3, "daily")).toMatchObject({ status: "skipped", detail: "Quiet day: nothing happened, nothing sent." });
+    expect((await runDaily(WED, { ctx, schedule })).outcomes.find((o) => o.job === "daily")?.detail).toBe("Already done for this period.");
     expect(roastIssue).toHaveBeenCalledTimes(2);
 
     // Thursday looks back to Wednesday's run, not a fixed 24 hours
@@ -233,31 +234,31 @@ describe("runDaily", () => {
     const ctx = fakeCtx();
     txNow = { ...txNow, placeholder: true };
     const r1 = await runDaily(WED, { ctx, schedule });
-    expect(outcome(r1, "daily_roast")).toMatchObject({ status: "skipped", detail: "Facts are still placeholder data, so nothing was built." });
+    expect(outcome(r1, "daily")).toMatchObject({ status: "skipped", detail: "Facts are still placeholder data, so nothing was built." });
     expect(roastIssue).not.toHaveBeenCalled();
     txNow = { ...txNow, placeholder: false };
-    expect(outcome(await runDaily(WED, { ctx, schedule }), "daily_roast")?.status).toBe("ran");
+    expect(outcome(await runDaily(WED, { ctx, schedule }), "daily")?.status).toBe("ran");
   });
 
   it("emails each issue once: review copies, then nothing on a rerun", async () => {
     setEmailTransportForTests(t);
     const ctx = fakeCtx();
     const r1 = await runDaily(TUE, { ctx, schedule });
-    expect(outcome(r1, "weekly_roast")?.detail).toContain("Review copy sent to the commissioner");
+    expect(outcome(r1, "weekly_recap")?.detail).toContain("Review copy sent to the commissioner");
     expect(t.sent).toHaveLength(2);
-    expect(t.sent.every((s) => s.messages[0].to === "commish@example.com")).toBe(true);
+    expect(t.sent.every((s) => s.messages[0].to === addr("commish"))).toBe(true);
     await runDaily(TUE, { ctx, schedule });
     expect(t.sent).toHaveLength(2);
   });
 
-  it("auto mode: Friday sends Thursday Night Fallout and The Daily Roast to subscribers, once", async () => {
+  it("auto mode: Friday sends Thursday Night Fallout and The Daily to the league list, once", async () => {
     vi.stubEnv("NEWSLETTER_MODE", "auto");
+    vi.stubEnv("LEAGUE_EMAILS", addr("fan"));
     setEmailTransportForTests(t);
-    await store.set(store.keys.subscriber(MSTP_LEAGUE_ID, "fan@example.com"), { email: "fan@example.com", managerKey: "ethan", createdAt: 0, confirmed: true });
     const ctx = fakeCtx();
     const r1 = await runDaily(FRI, { ctx, schedule });
     expect(outcome(r1, "thursday_fallout")).toMatchObject({ status: "ran", issueSlug: "w4-thursday-fallout" });
-    expect(outcome(r1, "daily_roast")?.status).toBe("ran");
+    expect(outcome(r1, "daily")?.status).toBe("ran");
     expect(t.sent).toHaveLength(2);
     expect((await getIssue(ctx.leagueId, "w4-thursday-fallout"))?.status).toBe("sent");
     await runDaily(FRI, { ctx, schedule });
@@ -266,13 +267,13 @@ describe("runDaily", () => {
 
   it("a failed email is retried with the same issue (no second LLM call)", async () => {
     vi.stubEnv("NEWSLETTER_MODE", "auto");
+    vi.stubEnv("LEAGUE_EMAILS", addr("fan"));
     setEmailTransportForTests(t);
-    await store.set(store.keys.subscriber(MSTP_LEAGUE_ID, "fan@example.com"), { email: "fan@example.com", managerKey: "ethan", createdAt: 0, confirmed: true });
     const ctx = fakeCtx();
     t.fail = true;
-    expect(outcome(await runDaily(WED, { ctx, schedule }), "daily_roast")?.status).toBe("error");
+    expect(outcome(await runDaily(WED, { ctx, schedule }), "daily")?.status).toBe("error");
     t.fail = false;
-    expect(outcome(await runDaily(WED, { ctx, schedule }), "daily_roast")?.status).toBe("ran");
+    expect(outcome(await runDaily(WED, { ctx, schedule }), "daily")?.status).toBe("ran");
     expect(roastIssue).toHaveBeenCalledTimes(1);
     expect(t.sent).toHaveLength(1);
   });
@@ -287,7 +288,7 @@ describe("runDaily", () => {
     const dev = fakeCtx({ leagueId: "dev-league-1" });
     expect(dev.isDevLeague).toBe(true);
     const r = await runDaily(WED, { ctx: dev, schedule });
-    expect(outcome(r, "daily_roast")?.detail).toContain("Dev league");
+    expect(outcome(r, "daily")?.detail).toContain("Dev league");
     expect(t.sent).toHaveLength(0);
     expect((await listIssues(dev.leagueId, { includeUnsent: true })).map((i) => i.status)).toEqual(["draft"]);
   });
@@ -310,15 +311,15 @@ describe("runDaily", () => {
     expect(roastIssue).not.toHaveBeenCalled();
   });
 
-  it("reports The Daily Roast material through DailyRoastFacts", async () => {
+  it("reports The Daily material through DailyFacts", async () => {
     const ctx = fakeCtx();
     await runDaily(TUE, { ctx, schedule });
-    const facts = vi.mocked(roastIssue).mock.calls.find((c) => c[0] === "daily_roast")?.[1] as DailyRoastFacts;
-    expect(facts).toMatchObject({ kind: "daily_roast", date: "2026-09-29", hasMaterial: true });
+    const facts = vi.mocked(roastIssue).mock.calls.find((c) => c[0] === "daily")?.[1] as DailyFacts;
+    expect(facts).toMatchObject({ kind: "daily", date: "2026-09-29", hasMaterial: true });
     expect(facts.trades.map((x) => x.transactionId)).toEqual(["t1"]);
   });
 
-  it("leaves plain cuts out of The Daily Roast (a quiet day stays quiet)", async () => {
+  it("leaves plain cuts out of The Daily (a quiet day stays quiet)", async () => {
     const ctx = fakeCtx();
     const at = TUE.getTime() - 3600_000;
     const cut = waiver("cut", "fa-cut", "free_agent", at);
@@ -326,13 +327,13 @@ describe("runDaily", () => {
     const notable = { ...waiver("big", "fa-big", "free_agent", at), notableDrop: true };
     txNow = { trades: [], waivers: [cut, add, notable], placeholder: false };
     await runDaily(TUE, { ctx, schedule });
-    const facts = vi.mocked(roastIssue).mock.calls.find((c) => c[0] === "daily_roast")?.[1] as DailyRoastFacts;
+    const facts = vi.mocked(roastIssue).mock.calls.find((c) => c[0] === "daily")?.[1] as DailyFacts;
     expect(facts.waivers.map((w) => w.transactionId)).toEqual(["add", "big"]);
 
     vi.clearAllMocks();
     txNow = { trades: [], waivers: [cut], placeholder: false };
     const r = await runDaily(new Date(TUE.getTime() + 24 * 3600_000), { ctx, schedule });
-    expect(outcome(r, "daily_roast")).toMatchObject({ status: "skipped", detail: "Quiet day: nothing to roast, nothing sent." });
+    expect(outcome(r, "daily")).toMatchObject({ status: "skipped", detail: "Quiet day: nothing happened, nothing sent." });
   });
 });
 
@@ -354,9 +355,9 @@ describe("runTick", () => {
     expect(r1.locked).toBe(false);
     expect(roastItem).toHaveBeenCalledTimes(6);
     expect(r1.outcomes).toEqual([
-      { job: "roast_trades", status: "ran", detail: "Roasted 1 trade." },
-      { job: "roast_waivers", status: "ran", detail: "Roasted 1 waiver run." },
-      { job: "roast_picks", status: "ran", detail: "Roasted 4 draft picks. 4 more next tick." },
+      { job: "roast_trades", status: "ran", detail: "Wrote up 1 trade." },
+      { job: "roast_waivers", status: "ran", detail: "Wrote up 1 waiver run." },
+      { job: "roast_picks", status: "ran", detail: "Wrote up 4 draft picks. 4 more next tick." },
     ]);
     const waiverCall = vi.mocked(roastItem).mock.calls.find((c) => c[0] === "waiver");
     expect(waiverCall?.[1]).toHaveLength(2); // one batch, the plain free-agent add is left alone
@@ -397,7 +398,7 @@ describe("runTick", () => {
     await store.lock(store.keys.lock(ctx.leagueId, "roast:trade:t1"), 300);
     const r = await runTick(new Date(now), { ctx, ignoreCooldown: true });
     expect(vi.mocked(roastItem).mock.calls.map((c) => (c[1] as TradeFact).transactionId)).toEqual(["t2"]);
-    expect(r.outcomes[0].detail).toBe("Roasted 1 trade. 1 already being written by another run.");
+    expect(r.outcomes[0].detail).toBe("Wrote up 1 trade. 1 already being written by another run.");
   });
 
   it("merges the roast index with entries another run wrote meanwhile", async () => {

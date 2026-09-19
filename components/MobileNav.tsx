@@ -15,10 +15,13 @@ export interface MobileNavProps {
 
 const byHref = (href: string) => NAV.find((n) => n.href === href) as NavItem;
 
-/** Bottom-fixed four-item pixel nav for phones. The fourth item opens every other page. */
+/**
+ * Phones: a bottom-fixed bar of four pixel labels. The fourth opens a plain list of every other
+ * page: one page per row, solid paper, big targets, nothing behind the text.
+ */
 export function MobileNav({ focus }: MobileNavProps) {
   const pathname = usePathname() ?? "/";
-  // The sheet is open only on the path it was opened on, so any navigation closes it.
+  // The list is open only on the path it was opened on, so any navigation closes it.
   const [openOn, setOpenOn] = useState<string | null>(null);
   const open = openOn === pathname;
 
@@ -43,42 +46,34 @@ export function MobileNav({ focus }: MobileNavProps) {
             type="button"
             aria-label="Close the menu"
             onClick={() => setOpenOn(null)}
-            className="tex-halftone fixed inset-0 z-30 block cursor-default [--tex-dot:1.6px] [--tex-pitch:5px]"
+            className="fixed inset-0 z-30 block cursor-default bg-ink/60"
           />
-          <div
+          <nav
             id="more-sheet"
-            className="on-ink fixed inset-x-0 bottom-[calc(3.75rem+env(safe-area-inset-bottom))] z-40 border-t-2 border-paper bg-ink text-paper"
+            aria-label="More pages"
+            className="fixed inset-x-0 bottom-[calc(3.75rem+env(safe-area-inset-bottom))] z-40 border-t-2 border-ink bg-paper text-ink"
           >
-            <ul className="m-0 grid list-none grid-cols-2 gap-[2px] bg-paper p-0 pb-[2px]">
+            <ul className="m-0 list-none p-0">
               {rest.map((item) => {
                 const active = isActive(pathname, item.href);
                 return (
-                  <li key={item.href} className="flex [&:last-child:nth-child(odd)]:col-span-2">
+                  <li key={item.href} className="border-b border-ink last:border-b-0">
                     <Link
                       href={item.href}
                       aria-current={active ? "page" : undefined}
                       className={cx(
-                        "type-label flex min-h-13 w-full items-center gap-3 px-4 no-underline focus-visible:outline-offset-[-4px]",
-                        active ? "bg-paper text-ink focus-visible:outline-ink" : "bg-ink text-paper",
+                        "flex min-h-14 items-center justify-between gap-4 px-4 text-[1.0625rem] font-bold no-underline focus-visible:outline-offset-[-4px]",
+                        active ? "on-ink bg-ink text-paper" : "active:bg-paper-shade",
                       )}
                     >
-                      <PixelIcon glyph={item.glyph} dot={2} />
                       {item.label}
+                      <PixelArrow />
                     </Link>
                   </li>
                 );
               })}
             </ul>
-            <div className="p-4">
-              <Link
-                href="/subscribe"
-                className="type-label flex min-h-12 w-full items-center justify-center gap-2 border-2 border-paper bg-red text-on-red no-underline"
-              >
-                Subscribe to the roast
-                <PixelArrow />
-              </Link>
-            </div>
-          </div>
+          </nav>
         </>
       ) : null}
 

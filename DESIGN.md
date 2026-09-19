@@ -40,6 +40,17 @@ typography:
     fontSize: "0.9375rem"
     fontWeight: 500
     fontFeature: "'tnum' 1"
+  row:
+    fontFamily: "'Schibsted Grotesk', system-ui, sans-serif"
+    fontSize: "1rem"
+    fontWeight: 500
+    lineHeight: 1.375
+  numeral-solid:
+    fontFamily: "'Schibsted Grotesk', system-ui, sans-serif"
+    fontSize: "1.125rem"
+    fontWeight: 800
+    lineHeight: 1
+    fontFeature: "'tnum' 1"
 rounded:
   none: "0px"
 spacing:
@@ -82,7 +93,7 @@ components:
 ## Direction contract
 
 - **THESIS:** The site is the stadium message board for ten friends. The roast flashes in giant pixel type and the numbers underneath prove it. It refuses the category default (dark fantasy dashboard, neon accent, avatar cards) and its predictable opposite (cream editorial newspaper with an italic serif).
-- **OWN-WORLD:** Newsprint paper, true black ink, one scoreboard red. Heavy black bars with reversed pixel caps, ruled panels, square corners, 2px ink borders, hard offset shadows on active controls, halftone and 9x9 dot-matrix textures as data surfaces. Pixel faces scale only in whole steps.
+- **OWN-WORLD:** Newsprint paper, true black ink, one scoreboard red. Heavy black bars with reversed pixel caps, ruled panels, square corners, 2px ink borders, hard offset shadows on active controls, halftone and 9x9 dot-matrix textures as ornament blocks that never carry text. Pixel faces scale only in whole steps.
 - **STORY:** You see who got roasted and the stat that earned it, then the live scores and odds, then you screenshot it into the group chat.
 - **FIRST VIEWPORT:** A black top bar with MSTP DYNASTY in pixel caps and the week or draft status. On the left two thirds, the latest roast: the victim and the stat in huge pixel type, the roast in grotesk under it, and a red square plus timestamp. On the right third, a live scoreboard of five matchups with dot-matrix scores and dot-row win bars. On a phone the roast goes full width with the scoreboard directly below it.
 - **FORM:** Emigre bitmap specimen fused with stadium message boards (the chosen alternate). Staging: a roast-first broadside. Seed fd65bdc4.
@@ -101,7 +112,7 @@ It is not retro-gamer nostalgia (no 8-bit sprites, no CRT glow, no scanline filt
 - Coarse pixel display type at poster scale, fine grotesk for reading.
 - Paper, ink and exactly one red.
 - Black header bars with reversed pixel caps label every panel.
-- Halftone and dot-matrix textures stand in for imagery. They are drawn with CSS or SVG, never raster filler.
+- Halftone and dot-matrix textures stand in for imagery. They are drawn with CSS or SVG, never raster filler, and no text ever sits on them.
 - Square corners, 2px rules, hard offset shadows only on things you can press.
 
 ## Colors
@@ -119,9 +130,10 @@ Light only. The users read it on the couch during games and on laptops during th
 ## Typography
 
 - **Display (Jersey 10):** the roast headline, the victim's name, the big score. Sizes step by whole multiples of the pixel grid (for example 48, 72 and 96px) so the pixels stay crisp. Line height is tight, words are set in caps, and nothing longer than about 12 words goes in it.
-- **Label (Silkscreen):** header bars, nav, table headers, status tags. Caps at 12-14px.
-- **Numeral (Doto, weight 900):** scores, odds, records and win bars. Dot-matrix digits, tabular.
-- **Body and data (Schibsted Grotesk):** roast text, newsletter issues, tables. 17px body, 65-75ch measure, tabular numbers in tables.
+- **Label (Silkscreen):** header bars, nav, table headers, status tags. Solid caps at 12px on desktop and 13px on phones. Small text is always Silkscreen or the grotesk, never a dotted face.
+- **Numeral (Doto, weight 900):** big scores, odds and records only, at 32px and up (the Numeral component switches to Doto at 40px). Dot-matrix digits, tabular. Below that, numbers are solid: Jersey 10 or the grotesk, bold and tabular. Dotted digits turn to grey fuzz on a phone.
+- **Body and data (Schibsted Grotesk):** roast text, newsletter issues, tables. 17px body, 65-75ch measure, tabular numbers in tables. On phones nothing you read is under 16px: body and table data 16px or more, fine print 14px. A row's one-liner (and the names in the draft board's team header) is the 16px `row` step at every width; small numerals that must stay solid are the 18px bold `numeral-solid` step.
+- **Sentences are never pixel caps.** Silkscreen is for labels and tags of four words or fewer. An empty state's line, a legend or an explanation is set in the grotesk.
 - No italics for emphasis. Emphasis comes from weight, size or a switch to the pixel face.
 
 ## Layout
@@ -138,18 +150,19 @@ Flat print. Depth appears only as a hard offset shadow (4px 4px 0 ink, no blur) 
 
 ## Shapes
 
-Square corners everywhere (radius 0). 2px ink borders on panels, inputs and buttons. The one ornament vocabulary is halftone dots and a 9x9 dot-matrix pattern, used as bar fills, loading states, empty-state art and the texture block in the top bar.
+Square corners everywhere (radius 0). 2px ink borders on panels, inputs and buttons. The one ornament vocabulary is halftone dots and a 9x9 dot-matrix pattern, used as bar fills, loading states, empty-state art and the texture block in the top bar. A texture is a block of its own: text goes beside or below it on plain paper, never on top of it.
 
 ## Components
 
-- **Header bar:** a black strip with reversed Silkscreen caps. It labels every panel ("THE LATEST ROAST", "SCOREBOARD", "STANDINGS").
-- **Roast block:** a Jersey 10 headline made of the victim and the stat, a grotesk paragraph, and a footer line with a red square, the time and a permalink.
-- **Matchup row:** two team lines with Doto scores and a 20-dot win-probability row (filled ink dots for one side, hollow for the other). A red square blinks slowly beside games in progress, and the winner's line goes bold when the game is final.
+- **Header bar:** a black strip with reversed solid Silkscreen caps. It labels every panel by the event or the table ("PICK 3.01", "WEEK 5 FINAL", "TRADE, SEP 21", "SCOREBOARD", "STANDINGS"), never by the genre: no label, issue name or byline ever says roast, burn or cooked.
+- **Roast block:** a Jersey 10 headline made of the victim and the stat, a grotesk paragraph, and a footer line with a red square, the time and a permalink. Plain paper behind all of it. No byline and no badge that says what kind of writing it is.
+- **One-liner:** the one mean line under a stat row (standings, odds, power rankings, matchups, team pages, trades, shame entries, draft picks). Grotesk, 16px or more, no label or badge: it reads as the row's caption. When there is no line (no API key yet) nothing renders, never a canned joke.
+- **Matchup row:** two team lines with scores (Doto at 40px and up, solid Jersey 10 below) and a 20-dot win-probability row (filled ink dots for one side, hollow for the other). A red square blinks slowly beside games in progress, and the winner's line goes bold when the game is final.
 - **Tables:** Silkscreen headers on a black bar, grotesk tabular data, zebra rows in Paper Shade, the leader marked in bold, the last place marked with a red square.
 - **Buttons:** red primary and paper secondary, both with 2px ink borders. On hover and focus they shift up-left and show the 4px hard shadow. On press the shadow disappears and they sit flush.
 - **Status tags:** tiny Silkscreen caps in an ink box (LIVE, FINAL, TRADE, WAIVER, $0 BID).
 - **Draft board:** a grid of cells, 10 team columns by 34 round rows. Each pick shows its number and the player in Silkscreen and grotesk. Reaches are marked with a red square and steals with a filled ink square.
-- **Empty and loading states:** dot-matrix fields that fill in as data arrives, plus one plain line of copy that says what is missing.
+- **Empty and loading states:** dot-matrix fields that fill in as data arrives, plus one plain line of copy below the field (never on it) that says what is missing.
 
 ## Do's and Don'ts
 
@@ -157,6 +170,9 @@ Square corners everywhere (radius 0). 2px ink borders on panels, inputs and butt
 - Do keep red for alarms: live games, losers, shame, the primary action.
 - Do scale pixel faces in whole steps and keep them to headlines, labels and numbers.
 - Don't use rounded corners, soft shadows, gradients, glass, emoji, stock icons or avatar circles.
-- Don't use monospace as decoration. Numbers use Doto because they are scores.
+- Don't use monospace as decoration. Big numbers use Doto because they are scores; small numbers stay solid.
+- Don't set text on a halftone or dot texture, and don't use Doto or any dotted rendering below 32px.
+- Don't announce the joke. Nothing a reader sees calls itself a roast, a burn or cooked: state it flat.
+- Don't add a subscribe button. The newsletter goes to the league from a private list.
 - Don't add a second accent color, a dark mode, or a colored left border on cards.
 - Don't use medical or school imagery or wording, ever.

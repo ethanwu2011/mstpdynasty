@@ -13,6 +13,8 @@
 import type { Metadata } from "next";
 import { shameEntries } from "@/lib/facts";
 import { getLeagueContext } from "@/lib/league";
+import { surfaceKeys } from "@/lib/roast";
+import { surfaceLinesFor } from "../_lib/lines";
 import { pagePhase, safe, type SearchParams } from "../_lib/phase";
 import { fireTick } from "../_lib/tick";
 import { kindFromSlug } from "./kinds";
@@ -29,7 +31,11 @@ const one = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v);
 export default async function ShamePage({ searchParams }: { searchParams: SearchParams }) {
   const ctx = await getLeagueContext();
   const [phase, params] = await Promise.all([pagePhase(ctx, searchParams), searchParams]);
-  const [board] = await Promise.all([safe(shameEntries(ctx), null, "shame"), fireTick()]);
+  const [board, lines] = await Promise.all([
+    safe(shameEntries(ctx), null, "shame"),
+    surfaceLinesFor(ctx, "shame", surfaceKeys.shame(ctx.season)),
+    fireTick(),
+  ]);
 
   // Sample entries mean nothing before any games or picks exist: show the empty wall instead.
   const hideSample = phase === "pre_draft" || phase === "drafting";
@@ -46,6 +52,7 @@ export default async function ShamePage({ searchParams }: { searchParams: Search
         phase={phase}
         kind={kindFromSlug(one(params.kind))}
         who={whoKey}
+        lines={lines}
       />
     </>
   );

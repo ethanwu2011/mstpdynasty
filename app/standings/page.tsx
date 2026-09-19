@@ -5,12 +5,15 @@ import { Board, Panel } from "@/components/Panel";
 import { type Shout, ShoutList } from "@/components/ShoutList";
 import { SampleMark } from "@/components/Tag";
 import { getLeagueContext, playoffRounds, standingsFromRosters } from "@/lib/league";
-import { getPowerRankings } from "@/lib/models";
+import { lastCompletedWeek } from "@/lib/facts";
+import { draftOdds, getPowerRankings } from "@/lib/models";
+import { surfaceKeys } from "@/lib/roast";
 import { getWinnersBracket } from "@/lib/sleeper";
-import type { LeagueContext, PowerRow, SleeperBracketMatch, StandingRow } from "@/lib/types";
+import type { LeagueContext, PowerRow, SleeperBracketMatch, StandingRow, SurfaceLineMap } from "@/lib/types";
 import { record } from "../_lib/format";
+import { surfaceLinesFor } from "../_lib/lines";
 import { pagePhase, safe, type SearchParams } from "../_lib/phase";
-import { PowerTable } from "./_parts/power";
+import { DraftPowerTable, PowerTable } from "./_parts/power";
 import { StandingsTable } from "./_parts/table";
 
 export const metadata: Metadata = {
@@ -80,10 +83,19 @@ export default async function StandingsPage({ searchParams }: { searchParams: Se
   const played = !noTeams && standings.some((r) => r.wins + r.losses + r.ties > 0);
   const over = phase === "complete" || phase === "offseason";
 
-  const [power, bracket] = await Promise.all([
+  const [power, bracket, standingLines, drafted] = await Promise.all([
     noTeams ? Promise.resolve(null) : safe(getPowerRankings(ctx), null, "power rankings"),
     over && played ? safe(getWinnersBracket(ctx.leagueId), [] as SleeperBracketMatch[], "winners bracket") : Promise.resolve([] as SleeperBracketMatch[]),
+    played ? surfaceLinesFor(ctx, "standings", surfaceKeys.standings(ctx.season, lastCompletedWeek(ctx))) : Promise.resolve({} as SurfaceLineMap),
+    // While the draft runs, rosters are the players drafted so far: rank them by projected lineup.
+    phase === "drafting" ? safe(draftOdds(ctx), null, "draft odds") : Promise.resolve(null),
   ]);
+  const draftBoard = drafted?.available && drafted.teams.length && !drafted.placeholder ? drafted : null;
+  const powerLines = power
+    ? await surfaceLinesFor(ctx, "power", surfaceKeys.power(ctx.season, power.asOfWeek))
+    : draftBoard
+      ? await surfaceLinesFor(ctx, "odds", surfaceKeys.odds(ctx.season, 0))
+      : {};
 
   // Before the first game there is no order: list the teams by name, with no ranks.
   const rows: StandingRow[] = played ? standings : [...standings].sort((a, b) => a.team.managerName.localeCompare(b.team.managerName));
@@ -114,37 +126,67 @@ export default async function StandingsPage({ searchParams }: { searchParams: Se
           <ShoutList items={standingShouts(rows, power?.placeholder ? [] : (power?.rows ?? []))} />
         ) : (
           <p className="measure m-0 text-body md:text-lede">
-            {teamWord} teams, no games, no losses. Enjoy it while it lasts: the table starts moving the first week after the draft.
+            {teamWord} teams, no games, no losses. The table starts moving the first week after the draft.
           </p>
         )}
       </PageHead>
       <Rules ctx={ctx} byes={byes} />
 
-      <Panel
-        label="Standings"
-        labelRight={
-          power?.placeholder && played ? (
-            <>
-              <span className="hidden text-paper-shade sm:inline">All-play and luck</span>
-              <SampleMark onInk />
-            </>
-          ) : null
-        }
-        pad={false}
-      >
-        <StandingsTable rows={rows} power={powerById} played={played} playoffTeams={playoffTeams} byes={byes} championId={championId} />
-      </Panel>
+      {/* Before the first game every row would be dashes in alphabetical order: the hero above says it. */}
+      {played ? (
+        <Panel
+          label="Standings"
+          labelRight={
+            power?.placeholder ? (
+              <>
+                <span className="hidden text-paper-shade sm:inline">All-play and luck</span>
+                <SampleMark onInk />
+              </>
+            ) : null
+          }
+          pad={false}
+        >
+          <StandingsTable
+            rows={rows}
+            power={powerById}
+            played={played}
+            playoffTeams={playoffTeams}
+            byes={byes}
+            championId={championId}
+            lines={standingLines}
+          />
+        </Panel>
+      ) : null}
 
       <Panel
         label="Power rankings"
-        labelRight={power?.placeholder ? <SampleMark onInk /> : power?.asOfWeek ? <span className="text-paper-shade">Through Week {power.asOfWeek}</span> : null}
-        pad={Boolean(noTeams || !power)}
+        labelRight={
+          power?.placeholder ? (
+            <SampleMark onInk />
+          ) : power?.asOfWeek ? (
+            <span className="text-paper-shade">Through Week {power.asOfWeek}</span>
+          ) : draftBoard ? (
+            <span className="text-paper-shade">Drafted so far</span>
+          ) : null
+        }
+        pad={Boolean((noTeams && !draftBoard) || (!noTeams && !power))}
       >
-        {noTeams ? (
+        {noTeams && draftBoard ? (
+          <div className="flex flex-col">
+            <div className="flex flex-col gap-2 px-4 pb-5 pt-6 md:px-6">
+              <span className="type-label text-ink-muted">The formula</span>
+              <p className="measure m-0 text-body">
+                Ranked by projected points a week: the best legal lineup from the players each team has drafted so far, with a starting spot
+                it has not filled counted as the best player nobody has drafted. Games replace it once they are played.
+              </p>
+            </div>
+            <DraftPowerTable odds={draftBoard} lines={powerLines} />
+          </div>
+        ) : noTeams ? (
           <div className="flex flex-col gap-6">
             <p className="measure m-0 text-body">
-              Power rankings need rosters to rank. They post when the draft ends, ranked by projected starting lineup until there are real
-              scores to judge.
+              Power rankings start with the first pick of the startup draft, ranked by projected starting lineup until there are real scores to
+              judge.
             </p>
             <DotMatrixFill label="No rosters, no rankings." rows={6} />
           </div>
@@ -156,7 +198,7 @@ export default async function StandingsPage({ searchParams }: { searchParams: Se
               <span className="type-label text-ink-muted">The formula</span>
               <p className="measure m-0 text-body">{power.formula}</p>
             </div>
-            <PowerTable power={power} games={powerGames} />
+            <PowerTable power={power} games={powerGames} lines={powerLines} />
           </div>
         )}
       </Panel>

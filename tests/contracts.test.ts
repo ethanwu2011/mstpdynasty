@@ -5,10 +5,11 @@
  */
 import { beforeAll, describe, expect, it } from "vitest";
 import { getLeagueContext } from "@/lib/league";
-import { getOddsHistory, getPowerRankings, getWinProbabilities, runSeasonSim } from "@/lib/models";
-import { draftFacts, shameEntries, tnfFacts, transactionFacts, weeklyFacts } from "@/lib/facts";
-import { isRoastConfigured, roastIssue, roastItem } from "@/lib/roast";
-import { sendIssue, subscribe } from "@/lib/email";
+import { draftOdds, getOddsHistory, getPowerRankings, getWinProbabilities, runSeasonSim } from "@/lib/models";
+import { draftFacts, shameEntries, tnfFacts, tradeHindsight, transactionFacts, weeklyFacts, worstTrades } from "@/lib/facts";
+import { getSurfaceLines, isRoastConfigured, roastIssue, roastItem, surfaceKeys, surfaceLines } from "@/lib/roast";
+import { recipientSummary, sendIssue, sendTest } from "@/lib/email";
+import { refreshLines, sendTestEmail } from "@/lib/jobs";
 import type { LeagueContext } from "@/lib/types";
 import { hasFixtures, rtLeagueId } from "./helpers/fixtures";
 
@@ -57,22 +58,44 @@ describe.skipIf(!hasFixtures())("public contracts on the RT fixture league", () 
     expect(roast.id.startsWith("pick:")).toBe(true);
     expect(roast.text.length).toBeGreaterThan(0);
     const weekly = await weeklyFacts(5, ctx);
-    const issue = await roastIssue("weekly_roast", {
-      kind: "weekly_roast",
+    const issue = await roastIssue("weekly_recap", {
+      kind: "weekly_recap",
       week: 5,
       weekly,
       odds: await runSeasonSim({ ctx, runs: 200, seed: 1 }),
       power: await getPowerRankings(ctx),
     }, ctx);
-    expect(issue.kind).toBe("weekly_roast");
+    expect(issue.kind).toBe("weekly_recap");
     expect(issue.factsOnly).toBe(true);
     expect(issue.slug).toMatch(/^[a-z0-9-]+$/);
   });
 
+  it("round 3 engine surface", async () => {
+    const board = await tradeHindsight(ctx);
+    expect(Array.isArray(board.trades)).toBe(true);
+    expect(board.placeholder).toBe(false);
+    for (const t of board.trades) {
+      expect(t.sides.length).toBeGreaterThanOrEqual(2);
+      for (const s of t.sides) expect(Array.isArray(s.series)).toBe(true);
+    }
+    const worst = await worstTrades(3, ctx);
+    expect(worst.length).toBeLessThanOrEqual(3);
+    for (let i = 1; i < worst.length; i++) expect(worst[i - 1].valueLost).toBeGreaterThanOrEqual(worst[i].valueLost);
+    const odds = await draftOdds(ctx, { runs: 200, seed: 1 });
+    expect(typeof odds.available).toBe("boolean");
+    expect(Array.isArray(odds.teams)).toBe(true);
+    const lines = await surfaceLines("standings", [{ id: "1", managers: [], facts: { wins: 1 } }], ctx);
+    expect(lines).toEqual({ "1": null });
+    expect(await getSurfaceLines("standings", surfaceKeys.standings(ctx.season, 5), ctx)).toEqual({});
+    expect(await recipientSummary(ctx.leagueId)).toMatchObject({ configured: false, count: 0 });
+    // No writer: the jobs build nothing and write nothing.
+    expect(await refreshLines(ctx, { scope: "all" })).toMatchObject({ job: "lines", status: "skipped" });
+  });
+
   it("email reports not configured with no keys", async () => {
     const weekly = await weeklyFacts(5, ctx);
-    const issue = await roastIssue("weekly_roast", {
-      kind: "weekly_roast",
+    const issue = await roastIssue("weekly_recap", {
+      kind: "weekly_recap",
       week: 5,
       weekly,
       odds: await runSeasonSim({ ctx, runs: 200, seed: 1 }),
@@ -80,7 +103,10 @@ describe.skipIf(!hasFixtures())("public contracts on the RT fixture league", () 
     }, ctx);
     const sent = await sendIssue(issue, "review");
     expect(sent.status).toBe("not_configured");
-    const sub = await subscribe({ email: "someone@example.com", managerKey: "ethan" });
-    expect(typeof sub.ok).toBe("boolean");
+    expect((await sendTest({ issue })).status).toBe("not_configured");
+    const test = await sendTestEmail(new Date(), { ctx });
+    // A dev league is never emailed; with no keys it is not even tried.
+    expect(["not_configured", "skipped"]).toContain(test.status);
+    expect(test.recipients).toBe(0);
   });
 });

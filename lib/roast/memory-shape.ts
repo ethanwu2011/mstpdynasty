@@ -1,5 +1,5 @@
 /**
- * The shape of The Roast's league memory (see memory.ts, which loads it). Kept apart from the
+ * The shape of the writer's league memory (see memory.ts, which loads it). Kept apart from the
  * loader so the pure planners (plan.ts, items.ts) do not pull the facts, models and store
  * modules in with it.
  */
@@ -28,7 +28,7 @@ export interface PayloadMemory {
   playoffPctLastWeek: Record<number, number>;
   /** rosterId -> pre-kickoff win probability (percent) for this week's matchup. */
   winPctBefore: Record<number, number>;
-  /** The Daily Roast while the draft is live: who is on the clock and for how long. */
+  /** The Daily while the draft is live: who is on the clock and for how long. */
   onTheClock: { manager: string; team: string; hoursSoFar: number | null } | null;
   draft: DraftContext | null;
 }

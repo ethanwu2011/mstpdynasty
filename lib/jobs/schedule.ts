@@ -2,9 +2,9 @@
  * Which issues the daily cron builds on a given America/New_York date. Pure (no I/O) so
  * every decision is unit tested with hand-built schedules.
  *
- *   The Daily Roast         every day; it only gets built when there is material
+ *   The Daily               every day; it only gets built when there is material
  *   Thursday Night Fallout  Fridays in season, when the week had an early (Wed/Thu) game
- *   The Weekly Roast        Tuesdays, for the league week that ended in the last six days
+ *   Week N Recap            Tuesdays, for the league week that ended in the last six days
  *                           (also the Tuesday right after the championship week)
  *   Draft Grades            once, after the startup draft completes (within 21 days)
  *
@@ -106,9 +106,9 @@ export interface PlanInput {
 
 export type PlannedJob =
   | { job: "draft_grades"; key: string; draftId: string }
-  | { job: "weekly_roast"; key: string; week: number }
+  | { job: "weekly_recap"; key: string; week: number }
   | { job: "thursday_fallout"; key: string; week: number }
-  | { job: "daily_roast"; key: string };
+  | { job: "daily"; key: string };
 
 export interface DailyPlan {
   date: string;
@@ -120,7 +120,7 @@ export interface DailyPlan {
 }
 
 /** Execution and report order. */
-export const JOB_ORDER: IssueKind[] = ["draft_grades", "weekly_roast", "thursday_fallout", "daily_roast"];
+export const JOB_ORDER: IssueKind[] = ["draft_grades", "weekly_recap", "thursday_fallout", "daily"];
 
 const skip = (job: IssueKind, detail: string): JobOutcome => ({ job, status: "skipped", detail });
 
@@ -140,15 +140,15 @@ export function planDaily(input: PlanInput): DailyPlan {
     skipped.push(skip("draft_grades", `Draft finished more than ${DRAFT_GRADES_WINDOW_DAYS} days ago.`));
   } else jobs.push({ job: "draft_grades", key: `draft_grades:${draft.draftId}`, draftId: draft.draftId });
 
-  // The Weekly Roast: Tuesdays, recap of the week that just ended.
-  if (weekday !== TUESDAY) skipped.push(skip("weekly_roast", "Only on Tuesdays."));
-  else if (!hasGames) skipped.push(skip("weekly_roast", "No games before the draft is done."));
+  // Week N Recap: Tuesdays, recap of the week that just ended.
+  if (weekday !== TUESDAY) skipped.push(skip("weekly_recap", "Only on Tuesdays."));
+  else if (!hasGames) skipped.push(skip("weekly_recap", "No games before the draft is done."));
   else {
     const week = schedule.length ? recapWeekFor(schedule, date) : phase === "in_season" ? input.currentWeek : null;
-    if (!week) skipped.push(skip("weekly_roast", "No week ended in the last six days."));
-    else if (!inRange(week)) skipped.push(skip("weekly_roast", `Week ${week} is not a league week.`));
-    else if (phase !== "in_season" && week !== lastWeek) skipped.push(skip("weekly_roast", "Not in season."));
-    else jobs.push({ job: "weekly_roast", key: `weekly_roast:${season}:${week}`, week });
+    if (!week) skipped.push(skip("weekly_recap", "No week ended in the last six days."));
+    else if (!inRange(week)) skipped.push(skip("weekly_recap", `Week ${week} is not a league week.`));
+    else if (phase !== "in_season" && week !== lastWeek) skipped.push(skip("weekly_recap", "Not in season."));
+    else jobs.push({ job: "weekly_recap", key: `weekly_recap:${season}:${week}`, week });
   }
 
   // Thursday Night Fallout: Fridays in season, after an early-week game.
@@ -161,8 +161,8 @@ export function planDaily(input: PlanInput): DailyPlan {
     else jobs.push({ job: "thursday_fallout", key: `thursday_fallout:${season}:${week}`, week });
   }
 
-  // The Daily Roast: every day, built only when there is material.
-  jobs.push({ job: "daily_roast", key: `daily_roast:${date}` });
+  // The Daily: every day, built only when there is material.
+  jobs.push({ job: "daily", key: `daily:${date}` });
 
   const order = (k: string) => JOB_ORDER.indexOf(k as IssueKind);
   jobs.sort((a, b) => order(a.job) - order(b.job));

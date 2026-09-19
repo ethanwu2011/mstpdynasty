@@ -1,6 +1,6 @@
 /**
- * The tick: instant roasts for new trades, waiver runs and draft picks (site only, never
- * emailed). Fired from page renders via after() and from /api/tick; runTick() in index.ts
+ * The tick: instant write-ups of new trades, waiver runs and draft picks (site only, never
+ * emailed; job details never call them roasts). Fired from page renders via after() and from /api/tick; runTick() in index.ts
  * holds the 2-minute cooldown lock around this.
  *
  * Idempotency: a roast index (keys.snapshot(leagueId, "roast-index"), id -> source + time)
@@ -204,7 +204,7 @@ export async function tickOutcomes(ctx: LeagueContext, now: number): Promise<Job
     const busy = mine.filter((x) => x.r === "busy").length;
     const waiting = wanted.filter((c) => c.group === group).length - mine.length;
     const parts: string[] = [];
-    if (roasted) parts.push(`Roasted ${roasted} ${roasted === 1 ? one : many}.`);
+    if (roasted) parts.push(`Wrote up ${roasted} ${roasted === 1 ? one : many}.`);
     if (failed) parts.push(`${failed} failed.`);
     if (placeholders) parts.push(`${placeholders} came back as placeholders (not saved).`);
     if (busy) parts.push(`${busy} already being written by another run.`);

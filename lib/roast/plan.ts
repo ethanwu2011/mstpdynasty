@@ -1,13 +1,13 @@
 /**
  * Plans for issues and item roasts. A plan is fully deterministic:
  *   - `sections`: the issue body with every table and fact line written by code, plus
- *     "slot" blocks where The Roast's prose goes (each slot has a facts-only fallback)
+ *     "slot" blocks where the writer's prose goes (each slot has a facts-only fallback)
  *   - `slots`: what the model is asked to write
  *   - `facts`: the compact FACTS payload the model sees (keys match the glossary in persona.ts)
  * The same plan renders the LLM issue and the facts-only issue, so both look alike.
  */
 import type {
-  DailyRoastFacts,
+  DailyFacts,
   DraftFacts,
   DraftGradesFacts,
   DraftPickFact,
@@ -22,17 +22,27 @@ import type {
   ThursdayFalloutFacts,
   TradeFact,
   WaiverFact,
-  WeeklyRoastFacts,
+  WeeklyRecapFacts,
 } from "@/lib/types";
 import { label, money, num, para, pct, pickLabel, pts, r1, r2, sentences, signed, who } from "./format";
 import { EMPTY_MEMORY, type DraftContext, type PayloadMemory } from "./memory-shape";
 
+/**
+ * Issue names. The recap's name carries its week ("Week 5 Recap"): use issueTitle(kind, week)
+ * for a real issue; "Week N Recap" here is the generic name for lists of the four issues.
+ */
 export const ISSUE_TITLES: Record<IssueKind, string> = {
-  daily_roast: "The Daily Roast",
+  daily: "The Daily",
   thursday_fallout: "Thursday Night Fallout",
-  weekly_roast: "The Weekly Roast",
+  weekly_recap: "Week N Recap",
   draft_grades: "Draft Grades",
 };
+
+/** The title an issue of `kind` gets: "Week 5 Recap" for the recap of week 5, else ISSUE_TITLES. */
+export function issueTitle(kind: IssueKind, week?: number | null): string {
+  if (kind === "weekly_recap" && typeof week === "number" && week > 0) return `Week ${week} Recap`;
+  return ISSUE_TITLES[kind];
+}
 
 export interface SlotSpec {
   id: string;
@@ -49,7 +59,7 @@ export interface PlannedSection {
 export interface IssuePlan {
   kind: IssueKind;
   title: string;
-  /** First line of the user message, e.g. "ISSUE: The Weekly Roast, week 7". */
+  /** First line of the user message, e.g. "ISSUE: Week 7 Recap". */
   header: string;
   task: string;
   slots: SlotSpec[];
@@ -257,7 +267,7 @@ function oddsSection(odds: SimResult, heading: string, withSlot: boolean): Plann
 }
 
 /* ------------------------------------------------------------------ */
-/* The Weekly Roast                                                    */
+/* Week N Recap                                                        */
 /* ------------------------------------------------------------------ */
 
 function teamWeekPayload(t: TeamWeekFact, slots: DraftSlots = {}) {
@@ -292,7 +302,7 @@ function teamWeekPayload(t: TeamWeekFact, slots: DraftSlots = {}) {
   return out;
 }
 
-function matchupPayload(m: MatchupFact, slots: DraftSlots = {}) {
+export function matchupPayload(m: MatchupFact, slots: DraftSlots = {}) {
   const winner = m.winnerRosterId === m.home.team.rosterId ? m.home : m.winnerRosterId === m.away.team.rosterId ? m.away : null;
   const loser = winner === m.home ? m.away : winner === m.away ? m.home : null;
   const base: Record<string, unknown> =
@@ -335,7 +345,7 @@ function matchupFactLines(m: MatchupFact): string[] {
   return lines;
 }
 
-export function planWeekly(f: WeeklyRoastFacts, mem: PayloadMemory = EMPTY_MEMORY): IssuePlan {
+export function planWeekly(f: WeeklyRecapFacts, mem: PayloadMemory = EMPTY_MEMORY): IssuePlan {
   const slotsOf = mem.draftSlots;
   const wk = f.weekly;
   const teams = wk.teams;
@@ -463,18 +473,19 @@ export function planWeekly(f: WeeklyRoastFacts, mem: PayloadMemory = EMPTY_MEMOR
   else slots.splice(slots.findIndex((s) => s.id === "odds"), 1);
 
   return {
-    kind: "weekly_roast",
-    title: ISSUE_TITLES.weekly_roast,
-    header: `ISSUE: ${ISSUE_TITLES.weekly_roast}, week ${f.week}`,
-    task: `Write The Weekly Roast for week ${f.week}, the full recap. Every matchup gets its own slot. Use bench points, the swap that flipped a result, robbed and fraud flags, zero-point starters and streaks where the facts have them. Spread the damage: every manager takes at least one hit somewhere in the issue.`,
+    kind: "weekly_recap",
+    title: issueTitle("weekly_recap", f.week),
+    header: `ISSUE: ${issueTitle("weekly_recap", f.week)}`,
+    task: `Write ${issueTitle("weekly_recap", f.week)}, the full recap of week ${f.week}. Every matchup gets its own slot. Use bench points, the swap that flipped a result, robbed and fraud flags, zero-point starters and streaks where the facts have them. Spread the damage: every manager takes at least one hit somewhere in the issue.`,
     slots,
     facts,
     sections,
-    // The email subject puts "The Weekly Roast, week N:" in front of a code-written dek.
+    // The email subject puts "Week N Recap:" in front of a code-written dek; with no dek it is
+    // the bare title.
     fallbackDek:
       wk.highest && wk.lowest
         ? `${wk.highest.team.teamName} put up ${pts(wk.highest.points)}, ${wk.lowest.team.teamName} managed ${pts(wk.lowest.points)}.`
-        : "The recap.",
+        : "",
     week: f.week,
     managers: teams.map((t) => t.team.managerName),
     placeholder: wk.placeholder || f.odds.placeholder || f.power.placeholder,
@@ -520,7 +531,7 @@ export function planThursday(f: ThursdayFalloutFacts, mem: PayloadMemory = EMPTY
     {
       id: "banked",
       brief:
-        "2 to 4 sentences: who got carried, who got cooked, who benched the guy who went off, and any unrostered player (rostered:false) who went off on the waiver wire.",
+        "2 to 4 sentences: who got carried, who got sunk, who benched the guy who went off, and any unrostered player (rostered:false) who went off on the waiver wire.",
     },
     { id: "odds", brief: "1 to 3 sentences on the matchups already decided in spirit: winPct now against winPctBefore." },
   ];
@@ -579,7 +590,7 @@ export function planThursday(f: ThursdayFalloutFacts, mem: PayloadMemory = EMPTY
     kind: "thursday_fallout",
     title: ISSUE_TITLES.thursday_fallout,
     header: `ISSUE: ${ISSUE_TITLES.thursday_fallout}, week ${f.week}`,
-    task: `Write Thursday Night Fallout for week ${f.week}: who the Thursday game carried, who it cooked, and which matchups are already decided in spirit.`,
+    task: `Write Thursday Night Fallout for week ${f.week}: who the Thursday game carried, who it sank, and which matchups are already decided in spirit.`,
     slots,
     facts,
     sections,
@@ -591,7 +602,7 @@ export function planThursday(f: ThursdayFalloutFacts, mem: PayloadMemory = EMPTY
 }
 
 /* ------------------------------------------------------------------ */
-/* The Daily Roast                                                     */
+/* The Daily                                                           */
 /* ------------------------------------------------------------------ */
 
 function tradeTable(t: TradeFact): IssueBlock {
@@ -635,10 +646,10 @@ export function waiverLine(w: WaiverFact): string {
 }
 
 /**
- * The Daily Roast's code-written dek: the single worst thing since the last issue (a lopsided
+ * The Daily's code-written dek: the single worst thing since the last issue (a lopsided
  * trade, a $0 bid that lost, an overpay, a lineup hole, a reach), not the counts.
  */
-export function dailyWorstFact(f: DailyRoastFacts): string | null {
+export function dailyWorstFact(f: DailyFacts): string | null {
   const trades = f.trades
     .filter((t) => t.winnerRosterId !== null)
     .sort((a, b) => b.valueGap - a.valueGap || a.createdAt - b.createdAt);
@@ -673,12 +684,12 @@ export function dailyWorstFact(f: DailyRoastFacts): string | null {
 function draftPickTable(picks: DraftPickFact[]): IssueBlock {
   return {
     type: "table",
-    columns: ["Pick", "Team", "Player", "Pos", "FC rank", "Verdict"],
+    columns: ["Pick", "Team", "Player", "Pos", "FC rank", "Vs FantasyCalc"],
     rows: picks.map((p) => [pickLabel(p), p.team.teamName, p.player.name, p.player.position, p.fcRank ?? "", p.verdict === "unranked" ? "Unranked" : p.verdict === "fair" ? "Fair" : `${p.verdict === "reach" ? "Reach" : "Steal"} (${Math.abs(p.reach ?? 0)})`]),
   };
 }
 
-export function planDaily(f: DailyRoastFacts, faabBudget: number, mem: PayloadMemory = EMPTY_MEMORY, waiverMode: WaiverMode = "faab"): IssuePlan {
+export function planDaily(f: DailyFacts, faabBudget: number, mem: PayloadMemory = EMPTY_MEMORY, waiverMode: WaiverMode = "faab"): IssuePlan {
   const facts: Record<string, unknown> = { date: f.date };
   const slots: SlotSpec[] = [DEK_SLOT, { id: "cold-open", brief: "1 to 3 sentences on the worst thing that happened since the last issue." }];
   const sections: PlannedSection[] = [];
@@ -770,14 +781,14 @@ export function planDaily(f: DailyRoastFacts, faabBudget: number, mem: PayloadMe
     sections.push({ heading: "The draft", blocks: [slot("draft", []), draftPickTable(f.draftPicks)] });
   }
   return {
-    kind: "daily_roast",
-    title: ISSUE_TITLES.daily_roast,
-    header: `ISSUE: ${ISSUE_TITLES.daily_roast}, ${f.date}`,
-    task: "Write The Daily Roast: everything that happened in the league since the last issue. Only what is in FACTS.",
+    kind: "daily",
+    title: ISSUE_TITLES.daily,
+    header: `ISSUE: ${ISSUE_TITLES.daily}, ${f.date}`,
+    task: "Write The Daily: everything that happened in the league since the last issue. Only what is in FACTS.",
     slots,
     facts,
     sections,
-    fallbackDek: dailyWorstFact(f) ?? (counts || "A quiet day."),
+    fallbackDek: dailyWorstFact(f) ?? counts ?? "",
     week: null,
     managers: [...managers],
     placeholder: false,

@@ -14,11 +14,14 @@ export interface NumeralProps {
   sign?: boolean;
   /** Thousands separators (default true). */
   group?: boolean;
-  /** Doto size step. Multiples of 10px keep the dots crisp. Omit to size with className. */
+  /**
+   * Size step. d40 and up are Doto dot-matrix digits (multiples of 10px keep the dots crisp).
+   * Doto is never used below 32px: it turns to grey fuzz on a phone. d30 is set in Jersey 10
+   * (the solid pixel face, 37px) and d20 in the grotesk, bold and tabular.
+   * Omit to size with className (then keep it at text-d40 or larger at every breakpoint).
+   */
   size?: NumeralSize;
   tone?: NumeralTone;
-  /** Unlit "8" dots behind the digits, like a scoreboard with its bulbs off. Paper grounds only. */
-  ghost?: boolean;
   /** Shown when value is null or not finite (default "--"). */
   empty?: string;
   /** Accessible text when the digits alone are ambiguous ("112.4 points"). */
@@ -26,13 +29,17 @@ export interface NumeralProps {
   className?: string;
 }
 
-const SIZES: Record<NumeralSize, string> = {
-  d20: "text-d20",
-  d30: "text-d30",
+const DOTO: Partial<Record<NumeralSize, string>> = {
   d40: "text-d40",
   d60: "text-d60",
   d80: "text-d80",
   d100: "text-d100",
+};
+
+/* Below 32px the digits are solid: Jersey 10 for d30, the grotesk for d20. */
+const SOLID: Partial<Record<NumeralSize, string>> = {
+  d30: "type-display text-j2 tnum",
+  d20: "font-sans text-numeral-solid font-extrabold leading-none tnum",
 };
 
 const TONES: Record<NumeralTone, string> = {
@@ -73,18 +80,21 @@ function dotted(text: string) {
   );
 }
 
-/** Doto dot-matrix digits: scores, odds, records, clocks. */
-export function Numeral({ value, decimals, pad, sign, group, size, tone = "ink", ghost = false, empty, label, className }: NumeralProps) {
+/** Scores, odds, records, clocks: Doto dot-matrix digits when big, solid digits when small. */
+export function Numeral({ value, decimals, pad, sign, group, size, tone = "ink", empty, label, className }: NumeralProps) {
   const text = formatNumeral(value, { decimals, pad, sign, group, empty });
-  const ghostText = text.replace(/[0-9]/g, "8");
+  const solid = size ? SOLID[size] : undefined;
+  if (solid) {
+    return (
+      <span className={cx("relative inline-block whitespace-nowrap", solid, TONES[tone], className)}>
+        <span className="sr-only">{label ?? text}</span>
+        <span aria-hidden>{text}</span>
+      </span>
+    );
+  }
   return (
-    <span className={cx("type-numeral relative inline-block whitespace-nowrap", size && SIZES[size], TONES[tone], className)}>
+    <span className={cx("type-numeral relative inline-block whitespace-nowrap", size && DOTO[size], TONES[tone], className)}>
       <span className="sr-only">{label ?? text}</span>
-      {ghost ? (
-        <span aria-hidden className="pointer-events-none absolute inset-0 select-none text-paper-shade">
-          {dotted(ghostText)}
-        </span>
-      ) : null}
       <span aria-hidden className="relative">
         {dotted(text)}
       </span>

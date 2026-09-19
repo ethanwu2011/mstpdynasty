@@ -20,6 +20,9 @@ export default defineConfig({
       TZ: "America/New_York",
       ANTHROPIC_API_KEY: "",
       RESEND_API_KEY: "",
+      // Real addresses never reach a test: tests stub placeholder ones where they need them.
+      LEAGUE_EMAILS: "",
+      COMMISSIONER_EMAIL: "",
       OPENAI_API_KEY: "",
       GEMINI_API_KEY: "",
       IMAGE_PROVIDER: "none",

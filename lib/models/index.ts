@@ -5,6 +5,7 @@
  *   runSeasonSim         seeded Monte Carlo of the rest of the season and the playoff bracket
  *   getPowerRankings     all-play, points per game and projected strength, blended
  *   getOddsHistory       one odds snapshot per week (from the store; backfilled on demand)
+ *   draftOdds            "if the season started today" playoff and title odds from drafted rosters
  *
  * Signatures follow docs/CONTRACTS.md; the extra trailing options are optional.
  * Pieces: data.ts (loading), winprob.ts, sim.ts, power.ts (pure math), constants.ts.
@@ -12,6 +13,7 @@
 import { listOddsSnapshots, saveOddsSnapshot } from "@/lib/archive";
 import { getLeagueContext, teamRef } from "@/lib/league";
 import type {
+  DraftOdds,
   LeagueContext,
   OddsHistory,
   OddsSnapshot,
@@ -32,20 +34,24 @@ import {
   knownPlayoffResults,
   lineupStrength,
   loadMatchupsByWeek,
+  mergeRates,
   pairMatchups,
   playerRates,
   projectionWeeks,
   range,
   recordsFromMatchups,
+  replacementRates,
   roundRobinPairs,
   safePlayers,
   safeSchedule,
   seasonFrame,
+  seasonRates,
   strengthRosters,
   teamPoints,
   uncoveredSlotAverages,
   weekHasScores,
 } from "./data";
+import { computeDraftOdds, type DraftOddsOptions } from "./draft-odds";
 import { hash32, mean, round, sampleSd } from "./math";
 import { computePower } from "./power";
 import { type SimInput, simulateSeason } from "./sim";
@@ -53,6 +59,7 @@ import { type WinProbOptions, loadWinProbabilities } from "./winprob";
 
 export { VARIANCE_COEF, PRIOR_SD, MEAN_PRIOR_GAMES, SD_PRIOR_GAMES, DEFAULT_RUNS, POWER_WEIGHTS } from "./constants";
 export type { WinProbOptions } from "./winprob";
+export { DRAFT_ODDS_CACHE_SECONDS, draftOddsBasis, type DraftOddsOptions } from "./draft-odds";
 
 /* ------------------------------------------------------------------ */
 /* win probability                                                     */
@@ -72,19 +79,30 @@ export async function getWinProbabilities(week: number, ctx?: LeagueContext, opt
 /* shared: projected strength and records                              */
 /* ------------------------------------------------------------------ */
 
-/** Projected optimal-lineup points per roster for `week` (rosters as of that week when Sleeper has them). */
+/**
+ * Projected optimal-lineup points per roster for `week` (rosters as of that week when Sleeper
+ * has them). `source` "season" rates players by Sleeper's season projections per game first
+ * (draft odds), "week" by the next two weeks' projections.
+ */
 async function teamStrengths(
   ctx: LeagueContext,
   frame: SeasonFrame,
   week: number,
   byWeek: Map<number, SleeperMatchup[]>,
   playedWeeks: number[],
+  source: "week" | "season" = "week",
 ): Promise<Map<RosterId, number>> {
   const [players, rosters, schedule] = await Promise.all([safePlayers(), strengthRosters(ctx, week, byWeek), safeSchedule(ctx)]);
-  const rates = await playerRates(ctx, projectionWeeks(frame, week), schedule);
+  const weekly = await playerRates(ctx, projectionWeeks(frame, week), schedule);
+  const rates = source === "season" ? mergeRates(await seasonRates(ctx), weekly) : weekly;
   const fallbacks = uncoveredSlotAverages(ctx, byWeek, playedWeeks);
+  // Draft odds rate an open starting spot at replacement level (the best player nobody has yet),
+  // so mid-draft odds measure the players drafted, not who happens to have picked most recently.
+  const taken = new Set([...rosters.values()].flat());
+  for (const r of ctx.rosters) for (const id of [...r.players, ...r.reserve, ...r.taxi]) taken.add(id);
+  const replacement = source === "season" ? replacementRates(rates, players, taken) : undefined;
   const out = new Map<RosterId, number>();
-  for (const r of ctx.rosters) out.set(r.roster_id, lineupStrength(ctx, rosters.get(r.roster_id) ?? [], rates, players, fallbacks));
+  for (const r of ctx.rosters) out.set(r.roster_id, lineupStrength(ctx, rosters.get(r.roster_id) ?? [], rates, players, fallbacks, replacement));
   return out;
 }
 
@@ -163,7 +181,7 @@ export interface PreparedSim {
 }
 
 /** Everything the simulator needs, conditioned on weeks through `fromWeek - 1` (default: last completed week). */
-export async function prepareSeasonSim(ctx: LeagueContext, fromWeek?: number): Promise<PreparedSim> {
+export async function prepareSeasonSim(ctx: LeagueContext, fromWeek?: number, strength: "week" | "season" = "week"): Promise<PreparedSim> {
   const season = await loadSeason(ctx);
   const { frame, byWeek, rosterIds } = season;
   const asOfWeek = fromWeek !== undefined ? Math.max(0, fromWeek - 1) : await completedThrough(ctx);
@@ -179,8 +197,8 @@ export async function prepareSeasonSim(ctx: LeagueContext, fromWeek?: number): P
     weeks.push(pairs.length ? pairs.map((p) => [p.a.roster_id, p.b.roster_id]) : roundRobinPairs(rosterIds, w - frame.startWeek));
   }
 
-  const strength = await teamStrengths(ctx, frame, clampWeek(frame, asOfWeek + 1), byWeek, played);
-  const params = teamParams(rosterIds, records, strength);
+  const strengths = await teamStrengths(ctx, frame, clampWeek(frame, asOfWeek + 1), byWeek, played, strength);
+  const params = teamParams(rosterIds, records, strengths);
   const [known, holders] = await Promise.all([knownPlayoffResults(ctx, frame, asOfWeek), firstRoundHolders(ctx)]);
 
   return {
@@ -209,7 +227,7 @@ export function defaultSeed(ctx: LeagueContext, asOfWeek: number): number {
 /** Monte Carlo season odds (10,000 seeded runs by default). Percentages are 0..100. */
 export async function runSeasonSim(opts: SimOptions = {}): Promise<SimResult> {
   const ctx = opts.ctx ?? (await getLeagueContext());
-  const prep = await prepareSeasonSim(ctx, opts.fromWeek);
+  const prep = await prepareSeasonSim(ctx, opts.fromWeek, opts.strength ?? "week");
   const runs = Math.max(1, Math.floor(opts.runs ?? DEFAULT_RUNS));
   const seed = (opts.seed ?? defaultSeed(ctx, prep.asOfWeek)) >>> 0;
   const counts = simulateSeason({ ...prep.input, runs, seed });
@@ -364,4 +382,22 @@ export async function getOddsHistory(ctx?: LeagueContext, opts: { backfill?: boo
   const stored = await listOddsSnapshots(c.leagueId, c.season).catch(() => [] as OddsSnapshot[]);
   // Dev week overrides can leave snapshots from "later" weeks in the local store: hide them.
   return { season: c.season, snapshots: stored.filter((s) => s.week <= through), placeholder: false };
+}
+
+/* ------------------------------------------------------------------ */
+/* draft odds                                                          */
+/* ------------------------------------------------------------------ */
+
+/**
+ * "If the season started today": playoff and title odds from the drafted rosters, while the
+ * startup draft is live ("drafting") and after it until the first league week is final
+ * ("preseason"). `available: false` (no teams) otherwise or before the first pick. 10,000 seeded
+ * runs by default; each team's weekly mean is the best legal lineup of the players it has,
+ * rated by Sleeper's season projections per projected game (weekly projections for anyone
+ * without a season line); the bracket follows the league's `playoff_seed_type` (reseeded or
+ * fixed). Cached per draft and pick count for DRAFT_ODDS_CACHE_SECONDS (a seed or `fresh` skips
+ * the cache).
+ */
+export async function draftOdds(ctx?: LeagueContext, opts: DraftOddsOptions = {}): Promise<DraftOdds> {
+  return computeDraftOdds(ctx, opts, (o) => runSeasonSim({ ctx: o.ctx, runs: o.runs, seed: o.seed, strength: "season" }));
 }

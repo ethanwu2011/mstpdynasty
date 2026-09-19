@@ -2,8 +2,8 @@
  * DIRECTION (one issue, inside DESIGN.md's Jumbotron Specimen world)
  * THESIS: The email, set as a broadsheet page. The issue name is shouted in pixel caps, every
  *   section sits under its own black header bar, and the reading column stays 65 to 75 characters.
- * FIRST VIEWPORT: The masthead (issue name in Jersey, dek, date, byline), then the first section
- *   beside the table of contents and the subscribe link.
+ * FIRST VIEWPORT: The masthead (issue name in Jersey, dek, date), then the first section
+ *   beside the table of contents.
  */
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
@@ -49,13 +49,13 @@ export default async function IssuePage({ params }: { params: Params }) {
   if (issue === undefined) {
     return (
       <Board>
-        <Panel label="The Roast" labelRight={<span className="text-paper-shade">Off the air</span>}>
+        <Panel label="The newsletter">
           <div className="flex flex-col gap-6">
             <h1 className="type-display m-0 text-j3 md:text-j4">This issue did not load</h1>
             <p className="measure m-0 text-body md:text-lede">
               The store that keeps every issue did not answer. Nothing was deleted. Try again in a minute.
             </p>
-            <DotMatrixFill label="No signal." rows={5} density={0.3} />
+            <DotMatrixFill label="The archive store did not answer." rows={5} density={0.3} />
             <div className="flex flex-wrap gap-3">
               <Button href={`/newsletter/${encodeURIComponent(slug)}`} variant="primary">
                 Try again

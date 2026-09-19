@@ -6,6 +6,12 @@ import { MSTP_LEAGUE_ID } from "@/lib/env";
 import type { EmailMessage, EmailTransport } from "@/lib/email/transport";
 import type { Issue, LeagueContext, Manager, NflGame, SleeperDraft, SleeperLeague, SleeperRoster } from "@/lib/types";
 
+/**
+ * A placeholder address on the reserved example.com domain, built at run time: no email
+ * address is ever written into a tracked file, a test included (docs/CONTRACTS.md).
+ */
+export const addr = (name: string) => [name, "example.com"].join("@");
+
 export function fakeDraft(over: Partial<SleeperDraft> = {}): SleeperDraft {
   return {
     draft_id: "draft-1",
@@ -113,14 +119,14 @@ export function fakeSchedule(): NflGame[] {
 
 export function makeIssue(over: Partial<Issue> = {}): Issue {
   return {
-    id: `${MSTP_LEAGUE_ID}:2026-09-29:weekly_roast`,
-    slug: "2026-09-29-weekly-roast",
-    kind: "weekly_roast",
+    id: `${MSTP_LEAGUE_ID}:2026-09-29:weekly_recap`,
+    slug: "2026-09-29-weekly-recap",
+    kind: "weekly_recap",
     leagueId: MSTP_LEAGUE_ID,
     season: "2026",
     week: 3,
     date: "2026-09-29",
-    title: "The Weekly Roast",
+    title: "Week 3 Recap",
     dek: "Week 3, reviewed.",
     sections: [{ heading: "Scores", blocks: [{ type: "paragraph", text: "Team 1 beat Team 2." }] }],
     factsOnly: true,
@@ -140,6 +146,8 @@ export function makeIssue(over: Partial<Issue> = {}): Issue {
 export interface FakeTransport extends EmailTransport {
   sent: Array<{ messages: EmailMessage[]; idempotencyKey?: string }>;
   fail: boolean;
+  /** The error message a failing send throws. */
+  failWith?: string;
 }
 
 export function fakeTransport(): FakeTransport {
@@ -148,7 +156,7 @@ export function fakeTransport(): FakeTransport {
     sent: [],
     fail: false,
     async send(messages, opts) {
-      if (t.fail) throw new Error("smtp on fire");
+      if (t.fail) throw new Error(t.failWith ?? "smtp on fire");
       t.sent.push({ messages, idempotencyKey: opts?.idempotencyKey });
       return { ids: messages.map((_, i) => `msg-${t.sent.length}-${i}`) };
     },

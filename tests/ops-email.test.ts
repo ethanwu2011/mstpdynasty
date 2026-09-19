@@ -1,26 +1,22 @@
-/** Email: escaping, review and approve (single use), send-once, double opt-in, cap, unsubscribe. */
+/** Email: escaping, review and approve (single use), send-once, league recipients, unsubscribe, no addresses leak. */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { getIssue, saveIssue } from "@/lib/archive";
 import {
   approveIssue,
-  confirmSubscription,
   inspectApproveLink,
-  listSubscribers,
-  MAX_CONFIRM_SENDS,
-  MAX_PENDING,
-  MAX_SUBSCRIBERS,
+  MAX_RECIPIENTS,
+  purgeLegacySubscribers,
+  recipients,
+  scrubAddresses,
   sendIssue,
   setEmailTransportForTests,
-  subscribe,
   unsubscribe,
 } from "@/lib/email";
-import { CONFIRM_EMAILS_PER_HOUR, SUBSCRIBES_PER_IP } from "@/lib/email/limits";
+import * as emailModule from "@/lib/email";
 import { renderIssueEmail } from "@/lib/email/render";
-import { subscriberRef } from "@/lib/email/sign";
 import { MSTP_LEAGUE_ID } from "@/lib/env";
 import * as store from "@/lib/store";
-import type { Subscriber } from "@/lib/types";
-import { fakeTransport, linkIn, makeIssue, type FakeTransport } from "./ops-helpers";
+import { addr, fakeTransport, linkIn, makeIssue, type FakeTransport } from "./ops-helpers";
 
 const RLO = String.fromCharCode(0x202e);
 const EM_DASH = String.fromCharCode(0x2014);
@@ -31,10 +27,11 @@ let t: FakeTransport;
 beforeEach(() => {
   store.resetStoreForTests();
   vi.stubEnv("ADMIN_SECRET", "test-admin-secret");
-  vi.stubEnv("COMMISSIONER_EMAIL", "commish@example.com");
+  vi.stubEnv("COMMISSIONER_EMAIL", addr("commish"));
   vi.stubEnv("SITE_URL", "https://mstpdynasty.test");
   vi.stubEnv("LEAGUE_ID", "");
   vi.stubEnv("NEWSLETTER_MODE", "");
+  vi.stubEnv("LEAGUE_EMAILS", "");
   t = fakeTransport();
   setEmailTransportForTests(t);
 });
@@ -44,16 +41,16 @@ afterEach(() => {
   vi.unstubAllEnvs();
 });
 
-async function addSubscriber(email: string, confirmed = true) {
-  const s: Subscriber = { email, managerKey: "ethan", createdAt: Date.now(), confirmed };
-  await store.set(store.keys.subscriber(MSTP_LEAGUE_ID, email), s);
+/** The league list (LEAGUE_EMAILS), as Ethan sets it in the private env. */
+function leagueList(...names: string[]) {
+  vi.stubEnv("LEAGUE_EMAILS", names.map(addr).join(", "));
 }
 
 describe("rendering", () => {
   const evilIssue = () =>
     makeIssue({
-      title: "The Weekly Roast",
-      dek: `${EVIL} got cooked\r\nBcc: victim@example.com`,
+      title: "Week 3 Recap",
+      dek: `${EVIL} got sunk\r\nBcc: ${addr("victim")}`,
       note: EVIL,
       sections: [
         {
@@ -80,7 +77,7 @@ describe("rendering", () => {
     expect(text).toContain('<script>alert("x")</script>'); // plain text is not HTML
     expect(subject).not.toMatch(/[\r\n]/);
     // A code-written dek: title and week lead the subject, with one colon.
-    expect(subject.startsWith("The Weekly Roast, week 3: ")).toBe(true);
+    expect(subject.startsWith("Week 3 Recap: ")).toBe(true);
   });
 
   it("is text-first: one column, no images, an unsubscribe link, no em dashes", () => {
@@ -111,10 +108,8 @@ describe("sending", () => {
     expect(t.sent).toHaveLength(0);
   });
 
-  it("auto mode sends each issue once, to confirmed subscribers only", async () => {
-    await addSubscriber("a@example.com");
-    await addSubscriber("b@example.com");
-    await addSubscriber("pending@example.com", false);
+  it("auto mode sends each issue once, to the league list", async () => {
+    leagueList("a", "b");
     const issue = makeIssue();
     await saveIssue(issue);
 
@@ -122,10 +117,10 @@ describe("sending", () => {
     expect(first).toMatchObject({ status: "sent", recipients: 2 });
     expect(t.sent).toHaveLength(1);
     const msgs = t.sent[0].messages;
-    expect(msgs.map((m) => m.to).sort()).toEqual(["a@example.com", "b@example.com"]);
+    expect(msgs.map((m) => m.to).sort()).toEqual([addr("a"), addr("b")]);
     expect(msgs[0].headers?.["List-Unsubscribe-Post"]).toBe("List-Unsubscribe=One-Click");
     expect(linkIn(msgs[0].text, "/api/unsubscribe").href).not.toBe(linkIn(msgs[1].text, "/api/unsubscribe").href);
-    expect(msgs[0].text).not.toContain("a@example.com"); // links carry an HMAC ref, not the address
+    expect(msgs[0].text).not.toContain(addr("a")); // links carry an HMAC ref, not the address
     expect(t.sent[0].idempotencyKey).toMatch(/^send\//);
 
     const stored = await getIssue(MSTP_LEAGUE_ID, issue.slug);
@@ -137,7 +132,7 @@ describe("sending", () => {
   });
 
   it("a failed send can be retried and then goes out once", async () => {
-    await addSubscriber("a@example.com");
+    leagueList("a");
     const issue = makeIssue();
     await saveIssue(issue);
     t.fail = true;
@@ -150,10 +145,8 @@ describe("sending", () => {
 });
 
 describe("review and approve", () => {
-  it("review copy goes to the commissioner once; the approve link sends to the league once", async () => {
-    await addSubscriber("a@example.com");
-    await addSubscriber("b@example.com");
-    await addSubscriber("pending@example.com", false);
+  it("review copy goes to the commissioner only, once; the approve link sends to the league once", async () => {
+    leagueList("a", "b");
     const issue = makeIssue();
     await saveIssue(issue);
 
@@ -162,7 +155,7 @@ describe("review and approve", () => {
     expect((await sendIssue(issue, "review")).status).toBe("skipped");
     expect(t.sent).toHaveLength(1);
     const copy = t.sent[0].messages[0];
-    expect(copy.to).toBe("commish@example.com");
+    expect(copy.to).toBe(addr("commish"));
     expect(copy.subject.startsWith("[Review] ")).toBe(true);
     expect(copy.html).toContain("Approve and send to the league");
     expect((await getIssue(MSTP_LEAGUE_ID, issue.slug))?.status).toBe("draft");
@@ -173,11 +166,11 @@ describe("review and approve", () => {
     expect(slug).toBe(issue.slug);
 
     // peeking does not use the link
-    expect(await inspectApproveLink(sig, slug)).toMatchObject({ ok: true, subscribers: 2 });
+    expect(await inspectApproveLink(sig, slug)).toMatchObject({ ok: true, recipients: 2 });
 
     // tampered, wrong issue, expired
     expect((await approveIssue(`${sig.slice(0, -2)}xx`, slug)).status).toBe("bad_signature");
-    expect((await approveIssue(sig, "2026-09-30-daily-roast")).status).toBe("bad_signature");
+    expect((await approveIssue(sig, "2026-09-30-daily")).status).toBe("bad_signature");
     expect((await approveIssue(sig, slug, Date.now() + 8 * 86400_000)).status).toBe("expired");
     expect(t.sent).toHaveLength(1);
 
@@ -189,7 +182,7 @@ describe("review and approve", () => {
     const ok = await approveIssue(sig, slug);
     expect(ok).toMatchObject({ ok: true, status: "sent", recipients: 2 });
     expect(t.sent).toHaveLength(2);
-    expect(t.sent[1].messages.map((m) => m.to).sort()).toEqual(["a@example.com", "b@example.com"]);
+    expect(t.sent[1].messages.map((m) => m.to).sort()).toEqual([addr("a"), addr("b")]);
     expect((await getIssue(MSTP_LEAGUE_ID, slug))?.status).toBe("sent");
 
     expect((await approveIssue(sig, slug)).status).toBe("already_sent");
@@ -205,7 +198,7 @@ describe("subjects", () => {
     const opts = { unsubscribeUrl: "https://x.test/u", webUrl: null };
     const model = makeIssue({ factsOnly: false, dekSource: "model", dek: "Rory benched 24.3 and blamed the wind." });
     expect(renderIssueEmail(model, opts).subject).toBe("Rory benched 24.3 and blamed the wind.");
-    expect(renderIssueEmail(makeIssue({ dek: "Kevin's Kitchen put up 150.20." }), opts).subject).toBe("The Weekly Roast, week 3: Kevin's Kitchen put up 150.20.");
+    expect(renderIssueEmail(makeIssue({ dek: "Kevin's Kitchen put up 150.20." }), opts).subject).toBe("Week 3 Recap: Kevin's Kitchen put up 150.20.");
     const grades = makeIssue({ kind: "draft_grades", title: "Draft Grades", week: null, dek: "Most value drafted: Sam I Am (A+). Least: Dev Null (F)." });
     expect(renderIssueEmail(grades, opts).subject).toBe("Draft Grades. Most value drafted: Sam I Am (A+). Least: Dev Null (F).");
   });
@@ -213,7 +206,7 @@ describe("subjects", () => {
 
 describe("approve links are bound to the reviewed version", () => {
   it("a draft rebuilt under the same slug cannot be sent with the old link", async () => {
-    await addSubscriber("a@example.com");
+    leagueList("a");
     const issue = makeIssue({ createdAt: Date.now() - 60_000 });
     await saveIssue(issue);
     await sendIssue(issue, "review");
@@ -228,115 +221,61 @@ describe("approve links are bound to the reviewed version", () => {
   });
 });
 
-describe("subscriptions", () => {
-  it("is not configured without email", async () => {
-    setEmailTransportForTests(null);
-    expect((await subscribe({ email: "a@example.com", managerKey: "ethan" })).status).toBe("not_configured");
-  });
-
-  it("validates input", async () => {
-    for (const email of ["", "nope", "a@b", "a b@example.com", "a@example.com\r\nBcc: x@y.z", `${"a".repeat(250)}@example.com`]) {
-      expect((await subscribe({ email, managerKey: "ethan" })).status).toBe("invalid_email");
+describe("no public sign-up", () => {
+  it("lib/email has no sign-up or confirm flow left", () => {
+    for (const gone of ["subscribe", "confirmSubscription", "listSubscribers", "SUBSCRIBE_MESSAGES", "MAX_SUBSCRIBERS", "renderConfirmEmail"]) {
+      expect(gone in emailModule).toBe(false);
     }
-    expect((await subscribe({ email: "a@example.com", managerKey: "nobody" })).status).toBe("unknown_manager");
-    expect(t.sent).toHaveLength(0);
   });
 
-  it("double opt-in: pending until the signed link is used", async () => {
-    const res = await subscribe({ email: " Ann@Example.com ", managerKey: "ethan" });
-    expect(res).toMatchObject({ ok: true, status: "subscribed" });
-    expect(t.sent).toHaveLength(1);
-    const mail = t.sent[0].messages[0];
-    expect(mail.to).toBe("ann@example.com");
-    expect(mail.text).toContain("signed up as Ethan");
-    expect((await listSubscribers(MSTP_LEAGUE_ID))[0]).toMatchObject({ email: "ann@example.com", confirmed: false });
+  it("the daily purge deletes records the old form stored, which held addresses", async () => {
+    const prefix = store.keys.legacySubscriberPrefix(MSTP_LEAGUE_ID);
+    await store.set(`${prefix}${addr("old")}`, { email: addr("old"), confirmed: true });
+    await store.set(`${prefix}${addr("older")}`, { email: addr("older"), confirmed: false });
+    expect(await purgeLegacySubscribers(MSTP_LEAGUE_ID)).toBe(2);
+    expect(await store.list(prefix)).toEqual([]);
+    expect(await purgeLegacySubscribers(MSTP_LEAGUE_ID)).toBe(0);
+  });
+});
 
-    // a second sign-up right away does not spam a second email
-    expect((await subscribe({ email: "ann@example.com", managerKey: "ethan" })).status).toBe("subscribed");
-    expect(t.sent).toHaveLength(1);
-
-    const token = linkIn(mail.text, "/api/subscribe/confirm").searchParams.get("token")!;
-    expect((await unsubscribe(token)).status).toBe("bad_signature"); // wrong purpose
-    expect((await confirmSubscription(token, Date.now() + 8 * 86400_000)).status).toBe("expired");
-    expect(await confirmSubscription(token)).toMatchObject({ ok: true, status: "confirmed", managerKey: "ethan" });
-    expect((await confirmSubscription(token)).status).toBe("already_confirmed");
-    expect((await listSubscribers(MSTP_LEAGUE_ID))[0].confirmed).toBe(true);
-    // A confirmed address gets the same answer as a new one (the form reveals nothing), and no email.
-    const again = await subscribe({ email: "ann@example.com", managerKey: "ethan" });
-    expect(again).toEqual(await subscribe({ email: "new@example.com", managerKey: "peter" }));
-    expect(again.status).toBe("subscribed");
-    expect(t.sent.map((x) => x.messages[0].to)).toEqual(["ann@example.com", "new@example.com"]);
+describe("league recipients", () => {
+  it(`a league send is capped at ${MAX_RECIPIENTS} addresses`, async () => {
+    leagueList(...Array.from({ length: MAX_RECIPIENTS + 5 }, (_, i) => `m${i}`));
+    const issue = makeIssue();
+    await saveIssue(issue);
+    expect(await sendIssue(issue, "auto")).toMatchObject({ status: "sent", recipients: MAX_RECIPIENTS });
   });
 
-  it(`caps confirmed subscribers at ${MAX_SUBSCRIBERS} and pending sign-ups at ${MAX_PENDING}`, async () => {
-    for (let i = 0; i < MAX_SUBSCRIBERS; i++) await addSubscriber(`fan${i}@example.com`);
-    expect((await subscribe({ email: "one-too-many@example.com", managerKey: "peter" })).status).toBe("full");
-    expect(t.sent).toHaveLength(0);
-
-    store.resetStoreForTests();
-    for (let i = 0; i < MAX_PENDING; i++) await addSubscriber(`pending${i}@example.com`, false);
-    await addSubscriber("real@example.com");
-    // Pending sign-ups can no longer lock the real managers out: they have their own cap.
-    expect((await subscribe({ email: "throwaway@example.com", managerKey: "peter" })).status).toBe("try_later");
-    // An existing pending sign-up can still get its link again.
-    expect((await subscribe({ email: "pending1@example.com", managerKey: "peter" })).status).toBe("subscribed");
-    expect(t.sent).toHaveLength(1);
-  });
-
-  it(`sends a pending address its link at most ${MAX_CONFIRM_SENDS} times and never refreshes its expiry`, async () => {
-    const t0 = Date.now();
-    expect((await subscribe({ email: "ann@example.com", managerKey: "ethan" }, t0)).status).toBe("subscribed");
-    const first = linkIn(t.sent[0].messages[0].text, "/api/subscribe/confirm").searchParams.get("token")!;
-    for (let i = 0; i < 4; i++) {
-      await store.unlock(store.keys.lock(MSTP_LEAGUE_ID, `confirm-mail:${subscriberRef("ann@example.com")}`));
-      expect((await subscribe({ email: "ann@example.com", managerKey: "ethan" }, t0 + (i + 1) * 3600_000)).status).toBe("subscribed");
-    }
-    expect(t.sent).toHaveLength(MAX_CONFIRM_SENDS);
-    const second = linkIn(t.sent[1].messages[0].text, "/api/subscribe/confirm").searchParams.get("token")!;
-    // Both links expire 7 days after the FIRST sign-up.
-    expect((await confirmSubscription(second, t0 + 7 * 86400_000 + 1000)).status).toBe("expired");
-    expect((await confirmSubscription(first, t0 + 6 * 86400_000)).status).toBe("confirmed");
-  });
-
-  it("rate limits sign-ups per IP and confirmation emails site-wide", async () => {
-    for (let i = 0; i < SUBSCRIBES_PER_IP; i++) {
-      expect((await subscribe({ email: `ip${i}@example.com`, managerKey: "peter" }, Date.now(), { ip: "203.0.113.9" })).status).toBe("subscribed");
-    }
-    expect((await subscribe({ email: "ip-extra@example.com", managerKey: "peter" }, Date.now(), { ip: "203.0.113.9" })).status).toBe("try_later");
-    expect((await subscribe({ email: "other-ip@example.com", managerKey: "peter" }, Date.now(), { ip: "198.51.100.7" })).status).toBe("subscribed");
-
-    // The site-wide hourly budget is spent (a counter at the limit): nothing more goes out.
-    store.resetStoreForTests();
-    await store.set(store.keys.rate("confirm-mail:all"), CONFIRM_EMAILS_PER_HOUR, { ttlSeconds: 3600 });
-    const before = t.sent.length;
-    expect((await subscribe({ email: "over-budget@example.com", managerKey: "peter" })).status).toBe("try_later");
-    expect(t.sent.length).toBe(before);
-    // ...and the address can try again later (its per-address mail lock was released).
-    await store.del(store.keys.rate("confirm-mail:all"));
-    expect((await subscribe({ email: "over-budget@example.com", managerKey: "peter" })).status).toBe("subscribed");
-    expect(t.sent.length).toBe(before + 1);
-  });
-
-  it("never returns internal error details", async () => {
-    t.fail = true;
-    const res = await subscribe({ email: "ann@example.com", managerKey: "ethan" });
-    expect(res).toEqual({ ok: false, status: "error", message: "Something broke. Try again later." });
-    t.fail = false;
-  });
-
-  it("unsubscribe: signed, one address, idempotent", async () => {
-    await addSubscriber("a@example.com");
-    await addSubscriber("b@example.com");
+  it("unsubscribe: signed, one address, idempotent, stored by ref only", async () => {
+    leagueList("a", "b");
     const issue = makeIssue();
     await saveIssue(issue);
     await sendIssue(issue, "auto");
-    const msgA = t.sent[0].messages.find((m) => m.to === "a@example.com")!;
+    const msgA = t.sent[0].messages.find((m) => m.to === addr("a"))!;
     const token = linkIn(msgA.text, "/api/unsubscribe").searchParams.get("token")!;
 
     expect((await unsubscribe(`${token}x`)).status).toBe("bad_signature");
     expect((await unsubscribe("")).status).toBe("bad_signature");
     expect(await unsubscribe(token)).toEqual({ ok: true, status: "unsubscribed" });
     expect((await unsubscribe(token)).status).toBe("not_found");
-    expect((await listSubscribers(MSTP_LEAGUE_ID)).map((s) => s.email)).toEqual(["b@example.com"]);
+    expect(await recipients(MSTP_LEAGUE_ID)).toEqual([addr("b")]);
+
+    // Nothing in the store holds an address: opt-outs are keyed by an HMAC ref.
+    for (const k of await store.list("")) {
+      expect(k).not.toContain("example.com");
+      expect(JSON.stringify(await store.get(k))).not.toContain("example.com");
+    }
+  });
+
+  it("provider errors never carry an address into a result or a log", async () => {
+    expect(scrubAddresses(`Resend: invalid recipient ${addr("x.y+z")} (to: <${addr("q")}>)`)).toBe("Resend: invalid recipient [address] (to: <[address]>)");
+    leagueList("a");
+    const issue = makeIssue();
+    await saveIssue(issue);
+    t.failWith = `Resend: 422 for ${addr("a")}`;
+    t.fail = true;
+    const res = await sendIssue(issue, "auto");
+    expect(res.status).toBe("error");
+    expect(res.error).not.toContain("example.com");
   });
 });

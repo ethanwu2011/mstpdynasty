@@ -11,6 +11,7 @@ export const NAV: readonly NavItem[] = [
   { href: "/", label: "Home", glyph: "home" },
   { href: "/scores", label: "Scores", glyph: "scores" },
   { href: "/standings", label: "Standings", glyph: "standings" },
+  { href: "/teams", label: "Teams", glyph: "teams" },
   { href: "/odds", label: "Odds", glyph: "odds" },
   { href: "/draft", label: "Draft", glyph: "draft" },
   { href: "/trades", label: "Trades", glyph: "trades" },

@@ -1,5 +1,5 @@
 /**
- * League memory for The Roast: facts from outside the issue itself that make a joke specific
+ * League memory for the writer: facts from outside the issue itself that make a joke specific
  * to this league (each manager's rap sheet, Loser of the Week crowns, where a player was
  * drafted, how the odds moved, who is on the clock). Everything is computed by code; the
  * model only sees it inside FACTS. Loaded only when the roast writer is configured (facts-only
@@ -80,19 +80,19 @@ export async function issueMemory(facts: IssueFacts, ctx: LeagueContext, now: nu
   const picks = df?.picks ?? [];
   mem.draftSlots = slotsOf(picks);
 
-  if (facts.kind === "weekly_roast" || facts.kind === "thursday_fallout") {
+  if (facts.kind === "weekly_recap" || facts.kind === "thursday_fallout") {
     const week = facts.week;
     mem.rapSheet = await safe("rap sheets", async () => rapSheets((await shameEntries(ctx)).entries, ctx.season), {});
     // Crowns before this week, plus this week's when the recap has one.
     const crowns = await safe("loser crowns", () => loserOfTheWeekCounts(week - 1, ctx), {} as Record<number, number>);
-    if (facts.kind === "weekly_roast" && facts.weekly.loserOfTheWeek) {
+    if (facts.kind === "weekly_recap" && facts.weekly.loserOfTheWeek) {
       const rid = facts.weekly.loserOfTheWeek.team.rosterId;
       crowns[rid] = (crowns[rid] ?? 0) + 1;
     }
     mem.loserCrowns = crowns;
   }
 
-  if (facts.kind === "weekly_roast" && facts.odds.teams.length) {
+  if (facts.kind === "weekly_recap" && facts.odds.teams.length) {
     const prevWeek = facts.odds.asOfWeek - 1;
     mem.playoffPctLastWeek = await safe(
       "odds history",
@@ -120,12 +120,12 @@ export async function issueMemory(facts: IssueFacts, ctx: LeagueContext, now: nu
     );
   }
 
-  if (facts.kind === "daily_roast" || facts.kind === "draft_grades") {
+  if (facts.kind === "daily" || facts.kind === "draft_grades") {
     mem.draft = await draftContext(ctx, facts.kind === "draft_grades" ? facts.draft.picks : picks);
   }
 
   const d = ctx.draft;
-  if (facts.kind === "daily_roast" && d && (d.status === "drafting" || d.status === "paused")) {
+  if (facts.kind === "daily" && d && (d.status === "drafting" || d.status === "paused")) {
     mem.onTheClock = await safe(
       "on the clock",
       async () => {

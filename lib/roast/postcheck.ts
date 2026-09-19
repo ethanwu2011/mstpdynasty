@@ -9,10 +9,11 @@
  *       claims a streak nobody named there has
  *       writes a score-like pair ("28-6") that FACTS does not contain word for word
  *       uses a box-score word FACTS never carries (touchdowns, yards, "7 catches"...)
- *       uses the medical / school theme, banned filler, a banned joke shape, or shouts in caps
+ *       uses the medical / school theme, calls itself a roast (roast, burn, cooked...), banned
+ *         filler, a banned joke shape, or shouts in caps
  *   Callers decide what a flagged sentence means (issues and items reject the whole slot).
  */
-import { BANNED_FILLER, BANNED_SHAPES, BOX_SCORE_TERMS, CAPS_ALLOWED, COUNTED_STATS, THEME_TERMS, type BannedTerm } from "./banned";
+import { BANNED_FILLER, BANNED_SHAPES, BOX_SCORE_TERMS, CAPS_ALLOWED, COUNTED_STATS, SELF_TERMS, THEME_TERMS, type BannedTerm } from "./banned";
 import { noLongDashes } from "./format";
 
 /* ------------------------------------------------------------------ */
@@ -371,9 +372,9 @@ export function shoutingIn(sentence: string, exempt: string): string[] {
 const hits = (terms: BannedTerm[], text: string, exempt?: string) =>
   terms.filter((t) => t.re.test(text) && (exempt === undefined || !t.re.test(exempt))).map((t) => t.label);
 
-/** Theme words (unless FACTS/LORE uses them) and banned filler. */
+/** Theme words and self-reference (unless FACTS/LORE uses them) and banned filler. */
 export function bannedWordsIn(text: string, exempt = ""): string[] {
-  return [...hits(THEME_TERMS, text, exempt), ...hits(BANNED_FILLER, text)];
+  return [...hits(THEME_TERMS, text, exempt), ...hits(SELF_TERMS, text, exempt), ...hits(BANNED_FILLER, text)];
 }
 
 /** Box-score stat words FACTS/LORE never uses, and "<number> catches"-style counts. */

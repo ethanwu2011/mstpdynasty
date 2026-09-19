@@ -2,6 +2,7 @@ import Link from "next/link";
 import type { WinProb, WinProbWeek } from "@/lib/types";
 import { cx } from "./cx";
 import { Numeral } from "./Numeral";
+import { RowLine } from "./RowLine";
 import { Tag } from "./Tag";
 import { WinDots } from "./WinDots";
 
@@ -30,6 +31,8 @@ export interface MatchupRowProps {
   href?: string;
   /** Light the win dots on first paint. */
   animate?: boolean;
+  /** The matchup's one-liner, when there is one. */
+  line?: string | null;
   className?: string;
 }
 
@@ -58,7 +61,7 @@ function SideLine({ side, status, isWinner, isLoser }: { side: MatchupSide; stat
       </div>
       <div className="flex items-baseline gap-2">
         {status === "live" && side.projected != null ? (
-          <span className="type-label text-ink-muted" title="Expected final score">
+          <span className="text-fine text-ink-muted" title="Expected final score">
             Proj {side.projected.toFixed(1)}
           </span>
         ) : null}
@@ -66,7 +69,7 @@ function SideLine({ side, status, isWinner, isLoser }: { side: MatchupSide; stat
           size="d30"
           decimals={showProjected ? 1 : 2}
           value={showProjected ? (side.projected ?? null) : side.score}
-          tone={showProjected || isLoser ? "muted" : "ink"}
+          tone={showProjected ? "muted" : "ink"}
           label={showProjected ? `projected ${side.projected?.toFixed(1) ?? "unknown"} points` : `${side.score ?? 0} points`}
         />
       </div>
@@ -78,7 +81,7 @@ function SideLine({ side, status, isWinner, isLoser }: { side: MatchupSide; stat
  * Two team lines with Doto scores and a 20-dot win-probability row. LIVE games carry a slow
  * red blink; FINAL games set the winner in bold. Before kickoff the scores are projections.
  */
-export function MatchupRow({ a, b, status, label, href, animate = false, className }: MatchupRowProps) {
+export function MatchupRow({ a, b, status, label, href, animate = false, line, className }: MatchupRowProps) {
   const final = status === "final";
   const aWins = final && (a.score ?? 0) > (b.score ?? 0);
   const bWins = final && (b.score ?? 0) > (a.score ?? 0);
@@ -102,6 +105,7 @@ export function MatchupRow({ a, b, status, label, href, animate = false, classNa
         <WinDots aProb={a.winProb} aName={a.name} bName={b.name} isFinal={final} animate={animate} />
         <Numeral size="d20" value={100 - aPct} className="text-right" label={`${b.name} ${100 - aPct} percent`} />
       </div>
+      <RowLine text={line} className="pt-1" />
     </>
   );
   const cls = cx("grid gap-2 py-3.5", className);

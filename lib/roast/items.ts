@@ -1,7 +1,8 @@
 /**
- * Plans for the instant item roasts (site only): one trade, one waiver batch, one draft pick.
- * Same shape as issue plans: a FACTS payload, one "roast" slot, and a deterministic
- * facts-only line used when the model is unavailable or fails the checks.
+ * Plans for the instant item write-ups (site only): one trade, one waiver batch, one draft pick.
+ * Same shape as issue plans: a FACTS payload, one "item" slot, and a deterministic
+ * facts-only line used when the model is unavailable or fails the checks. Task wording never
+ * names the genre (no "roast"): the writer states the fact.
  */
 import { roastIds } from "@/lib/archive";
 import type { DraftPickFact, RoastItemFact, RoastItemKind, TradeFact, WaiverFact } from "@/lib/types";
@@ -48,10 +49,12 @@ export function pickFactsOnly(p: DraftPickFact): string {
   if (p.fcRank === null) return `${base} FantasyCalc does not rank him.`;
   if (p.verdict === "reach") return `${base} FantasyCalc rank ${p.fcRank}, a reach of ${p.reach} spots.`;
   if (p.verdict === "steal") return `${base} FantasyCalc rank ${p.fcRank}, a steal of ${Math.abs(p.reach ?? 0)} spots.`;
-  return `${base} FantasyCalc rank ${p.fcRank}, about right.`;
+  return `${base} FantasyCalc rank ${p.fcRank}, taken where he was ranked.`;
 }
 
-const ROAST_SLOT = (brief: string): SlotSpec => ({ id: "roast", brief });
+/** The one slot of an item request (the id is only ever seen by the model). */
+export const ITEM_SLOT_ID = "item";
+const ROAST_SLOT = (brief: string): SlotSpec => ({ id: ITEM_SLOT_ID, brief });
 
 /** Plan an item roast. The fact's own shape decides the kind (`kind` is kept for the public signature). */
 export function planItem(kind: RoastItemKind, fact: RoastItemFact, faabBudget: number, extra: PickContext = {}): ItemPlan {
@@ -66,8 +69,8 @@ export function planItem(kind: RoastItemKind, fact: RoastItemFact, faabBudget: n
       header: batch.length === 1 && batch[0].type === "free_agent" ? "ITEM: free agent move" : "ITEM: waiver run",
       task:
         (extra.waiverMode ?? "faab") === "faab"
-          ? "Roast these moves in 1 to 3 sentences. Go after the worst decision: a $0 bid that lost, an overpay, a bid that failed because the roster was full, or a bad drop."
-          : "Roast these moves in 1 to 3 sentences. Go after the worst decision: a claim lost on waiver priority, a claim that failed because the roster was full, or a bad drop. This league has no bids.",
+          ? "Write 1 to 3 sentences on these moves. Go after the worst decision: a $0 bid that lost, an overpay, a bid that failed because the roster was full, or a bad drop."
+          : "Write 1 to 3 sentences on these moves. Go after the worst decision: a claim lost on waiver priority, a claim that failed because the roster was full, or a bad drop. This league has no bids.",
       slots: [ROAST_SLOT("1 to 3 sentences.")],
       facts: waiversPayload(batch, faabBudget, extra.waiverMode ?? "faab", extra.draftSlots),
       factsOnlyText: waiverFactsOnly(batch),
@@ -81,7 +84,7 @@ export function planItem(kind: RoastItemKind, fact: RoastItemFact, faabBudget: n
       id: roastIds.trade(t.transactionId),
       rosterIds: t.sides.map((s) => s.team.rosterId),
       header: "ITEM: trade",
-      task: "Roast this trade in 1 to 3 sentences. Make clear who won it by value.",
+      task: "Write 1 to 3 sentences on this trade. Make clear who won it by value.",
       slots: [ROAST_SLOT("1 to 3 sentences.")],
       facts: tradePayload(t, extra.draftSlots),
       factsOnlyText: tradeFactsOnly(t),
@@ -98,7 +101,7 @@ export function planItem(kind: RoastItemKind, fact: RoastItemFact, faabBudget: n
     id: roastIds.pick(p.draftId, p.pickNo),
     rosterIds: [p.team.rosterId],
     header: "ITEM: draft pick",
-    task: "Roast this draft pick in 1 or 2 sentences. Use the reach or steal, who he passed on, how many at that position he now has, the position run, his earlier picks or the time on the clock if they are in FACTS.",
+    task: "Write 1 or 2 sentences on this draft pick. Use the reach or steal, who he passed on, how many at that position he now has, the position run, his earlier picks or the time on the clock if they are in FACTS.",
     slots: [ROAST_SLOT("1 or 2 sentences.")],
     facts: {
       ...pickPayload(p, draft),

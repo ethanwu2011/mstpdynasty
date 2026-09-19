@@ -26,8 +26,11 @@ export function siteUrl(): string {
   return raw.replace(/\/+$/, "");
 }
 
+/** Sender of every email: the league itself, no persona. */
+export const DEFAULT_EMAIL_FROM = "MSTP Dynasty <league@mstpdynasty.com>";
+
 export function emailFrom(): string {
-  return process.env.EMAIL_FROM || "The Roast <roast@mstpdynasty.com>";
+  return process.env.EMAIL_FROM || DEFAULT_EMAIL_FROM;
 }
 
 /**
@@ -54,6 +57,8 @@ export const configured = {
   anthropic: () => Boolean(process.env.ANTHROPIC_API_KEY),
   resend: () => Boolean(process.env.RESEND_API_KEY),
   commissionerEmail: () => Boolean(process.env.COMMISSIONER_EMAIL),
+  /** LEAGUE_EMAILS (comma-separated, a Vercel secret, never in the repo) is set. */
+  leagueEmails: () => Boolean(process.env.LEAGUE_EMAILS?.trim()),
   kv: () =>
     Boolean(
       (process.env.KV_REST_API_URL && process.env.KV_REST_API_TOKEN) ||

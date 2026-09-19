@@ -3,6 +3,7 @@ import type { ReactNode } from "react";
 import { cx } from "@/components/cx";
 import { Numeral } from "@/components/Numeral";
 import { Panel } from "@/components/Panel";
+import { RowLine } from "@/components/RowLine";
 import { LiveSquare, Tag } from "@/components/Tag";
 import { WinDots } from "@/components/WinDots";
 import type { MatchupFact, StarterLine, TeamWeekFact, TeamWinProb, WinProb, WinProbWeek, ZeroStarterFact } from "@/lib/types";
@@ -81,7 +82,6 @@ function Side({
         <Numeral
           value={shown}
           decimals={2}
-          tone={status === "pre" || isLoser ? "muted" : "ink"}
           className="text-d40 md:text-d80 xl:text-d60 min-[1440px]:text-d80"
           label={`${side.team.managerName} ${status === "pre" ? "projected " : ""}${fmtPts(shown)} points`}
         />
@@ -270,9 +270,11 @@ export interface MatchupPanelProps {
   tag?: string | null;
   /** Two matchups per row from xl (1280) up; full width below that so box scores keep their names. */
   pair: boolean;
+  /** The matchup's one-liner, when there is one. */
+  line?: string | null;
 }
 
-export function MatchupPanel({ wp, basis, facts, matchupFact, tag, pair }: MatchupPanelProps) {
+export function MatchupPanel({ wp, basis, facts, matchupFact, tag, pair, line }: MatchupPanelProps) {
   const status = gameStatus(wp, basis);
   const a = wp.home;
   const b = wp.away;
@@ -294,7 +296,7 @@ export function MatchupPanel({ wp, basis, facts, matchupFact, tag, pair }: Match
   return (
     <Panel
       id={`m${wp.matchupId}`}
-      label={`Matchup ${wp.matchupId}`}
+      label={`${a.team.managerName} v ${b.team.managerName}`}
       labelRight={
         <>
           {tag ? <span className="hidden text-paper-shade sm:inline">{tag} ·</span> : null}
@@ -312,6 +314,8 @@ export function MatchupPanel({ wp, basis, facts, matchupFact, tag, pair }: Match
         </div>
 
         <OddsRow a={a} b={b} status={status} />
+
+        <RowLine text={line} size="body" />
 
         <Proof fact={matchupFact} teams={[aFact, bFact]} />
 

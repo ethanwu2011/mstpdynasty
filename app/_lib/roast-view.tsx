@@ -3,9 +3,13 @@
  * the text and the receipt. Formatting only: every number comes from the facts as given.
  */
 import type { RoastBlockData, RoastReceiptItem } from "@/components/RoastBlock";
-import { SampleMark, Tag } from "@/components/Tag";
+import { SampleMark } from "@/components/Tag";
+import { formatEt } from "@/lib/time";
 import type { DraftPickFact, Issue, Roast, StandingRow, TradeFact, WaiverFact, WeeklyFacts } from "@/lib/types";
 import { fmtInt, fmtPts, fmtSigned, ordinal, pickLabel } from "./format";
+
+/** "Sep 21" in Eastern time. */
+export const shortDay = (ms: number) => formatEt(ms, { month: "short", day: "numeric" });
 
 /* ------------------------------ anchors ------------------------------ */
 
@@ -25,9 +29,9 @@ export function roastHref(roast: Pick<Roast, "kind" | "facts" | "id">): string {
 
 /* ------------------------------ tags ------------------------------ */
 
+/** Only placeholder data is marked. A facts-only item is just the facts: no badge, no apology. */
 function sourceTags(source: Roast["source"] | "facts_only", placeholder = false) {
   if (placeholder || source === "placeholder") return <SampleMark />;
-  if (source === "facts_only") return <Tag tone="outline">Facts only</Tag>;
   return null;
 }
 
@@ -47,12 +51,20 @@ export function pickStat(p: DraftPickFact): string {
   }
 }
 
+/** "Reach, 12", "Steal, 4", "Fair", "Unranked": the pick against its FantasyCalc rank, one way of saying it everywhere. */
+export function pickVerdict(p: DraftPickFact): string {
+  if (p.verdict === "reach") return p.reach ? `Reach, ${fmtInt(p.reach)}` : "Reach";
+  if (p.verdict === "steal") return p.reach ? `Steal, ${fmtInt(-p.reach)}` : "Steal";
+  if (p.verdict === "unranked") return "Unranked";
+  return "Fair";
+}
+
 export function pickReceipt(p: DraftPickFact): RoastReceiptItem[] {
   return [
     { label: "Pick", value: `${pickLabel(p.round, p.pickInRound)} (${ordinal(p.pickNo)})` },
-    { label: "Player", value: [p.player.name, p.player.position].filter(Boolean).join(", ") },
+    { label: "Player", value: [p.player.name, p.player.position].filter(Boolean).join(", "), wide: true },
     { label: "FC rank", value: p.fcRank ? ordinal(p.fcRank) : "Unranked" },
-    { label: "Reach", value: p.reach === null ? "--" : fmtSigned(p.reach) },
+    { label: "Vs FantasyCalc", value: pickVerdict(p) },
   ];
 }
 
@@ -68,14 +80,14 @@ function pickFactsText(p: DraftPickFact): string {
 /** A pick that has not been roasted yet: the facts alone. */
 export function pickFallback(p: DraftPickFact, placeholder = false): RoastBlockData {
   return {
-    kicker: `Pick ${pickLabel(p.round, p.pickInRound)} · Round ${p.round}`,
+    event: `Pick ${pickLabel(p.round, p.pickInRound)}`,
+    kicker: `Round ${p.round}`,
     victim: p.team.managerName,
     stat: pickStat(p),
     text: pickFactsText(p),
     receipt: pickReceipt(p),
     at: p.pickedAt,
     href: `/draft#pick-${p.pickNo}`,
-    byline: "the numbers",
     tags: sourceTags("facts_only", placeholder),
   };
 }
@@ -85,10 +97,12 @@ export function pickFallback(p: DraftPickFact, placeholder = false): RoastBlockD
 function tradeView(f: TradeFact): Omit<RoastBlockData, "text" | "at" | "href" | "tags"> {
   const sides = [...f.sides].sort((a, b) => a.net - b.net);
   const loser = sides[0];
-  const kicker = `Trade · Week ${f.week}`;
-  if (!loser) return { kicker, victim: "Trade", stat: null };
+  const event = `Trade, ${shortDay(f.createdAt)}`;
+  const kicker = `Week ${f.week}`;
+  if (!loser) return { event, kicker, victim: "Trade", stat: null };
   if (f.winnerRosterId === null) {
     return {
+      event,
       kicker,
       victim: sides.map((s) => s.team.managerName).join(" & "),
       stat: `${fmtInt(f.valueGap)} value apart`,
@@ -96,6 +110,7 @@ function tradeView(f: TradeFact): Omit<RoastBlockData, "text" | "at" | "href" | 
     };
   }
   return {
+    event,
     kicker,
     victim: loser.team.managerName,
     stat: `${fmtSigned(loser.net)} value`,
@@ -117,27 +132,31 @@ function worstWaiver(list: WaiverFact[]): WaiverFact | undefined {
 
 function waiverView(list: WaiverFact[]): Omit<RoastBlockData, "text" | "at" | "href" | "tags"> {
   const w = worstWaiver(list);
-  if (!w) return { kicker: "Waivers", victim: "Waivers", stat: null };
+  if (!w) return { event: "Waivers", victim: "Waivers", stat: null };
   const stat = w.isZeroBid ? "$0 bid" : w.overpayBy ? `Overpaid by $${fmtInt(w.overpayBy)}` : w.bid !== null ? `$${fmtInt(w.bid)} bid` : "Free agent add";
   const topLosing = [...w.losingBids].sort((a, b) => b.bid - a.bid)[0];
   return {
-    kicker: `${w.type === "waiver" ? "Waivers" : "Free agent"} · Week ${w.week}`,
+    event: `${w.type === "waiver" ? "Waivers" : "Free agent"}, ${shortDay(w.createdAt)}`,
+    kicker: `Week ${w.week}`,
     victim: w.team.managerName,
     stat,
     receipt: [
-      { label: "Added", value: w.added.map((p) => p.name).join(", ") || "--" },
+      { label: "Added", value: w.added.map((p) => p.name).join(", ") || "--", wide: true },
       { label: "Bid", value: w.bid === null ? "--" : `$${fmtInt(w.bid)}` },
       { label: "Next best", value: topLosing ? `$${fmtInt(topLosing.bid)}` : "None" },
-      { label: "Dropped", value: w.dropped.map((p) => p.name).join(", ") || "--" },
+      { label: "Dropped", value: w.dropped.map((p) => p.name).join(", ") || "--", wide: true },
     ],
   };
 }
 
 /* ------------------------------ roasts and issues ------------------------------ */
 
-/** Any stored roast as a RoastBlock. */
+/**
+ * Any stored roast as a RoastBlock. A pick is stamped with when it was made (null when the tick
+ * never saw it land), never with when it was written up; trades and waivers keep the write-up time.
+ */
 export function roastToBlock(roast: Roast): RoastBlockData {
-  const common = { text: roast.text, at: roast.createdAt, href: roastHref(roast), tags: sourceTags(roast.source) };
+  const common = { text: roast.text, at: roast.createdAt as number | null, href: roastHref(roast), tags: sourceTags(roast.source) };
   const f = roast.facts;
   if (Array.isArray(f)) return { ...waiverView(f), ...common };
   switch (f.kind) {
@@ -147,13 +166,21 @@ export function roastToBlock(roast: Roast): RoastBlockData {
       return { ...waiverView([f]), ...common };
     case "draft_pick":
       return {
-        kicker: `Pick ${pickLabel(f.round, f.pickInRound)} · Round ${f.round}`,
+        event: `Pick ${pickLabel(f.round, f.pickInRound)}`,
+        kicker: `Round ${f.round}`,
         victim: f.team.managerName,
         stat: pickStat(f),
         receipt: pickReceipt(f),
         ...common,
+        at: f.pickedAt,
       };
   }
+}
+
+/** "The Daily, Sep 19", "Week 5 Recap", "Draft Grades": an issue named as the event it is. */
+export function issueEvent(issue: Pick<Issue, "title" | "kind" | "date">): string {
+  if (issue.kind === "weekly_recap" || issue.kind === "draft_grades") return issue.title;
+  return `${issue.title}, ${formatEt(Date.parse(`${issue.date}T12:00:00Z`), { month: "short", day: "numeric" })}`;
 }
 
 /** A newsletter issue as a RoastBlock: title in pixel caps, dek as the lede, the first paragraphs. */
@@ -164,13 +191,14 @@ export function issueToBlock(issue: Issue): RoastBlockData {
     .slice(0, 2)
     .map((b) => b.text);
   return {
-    kicker: issue.week ? `Issue · Week ${issue.week}` : "Issue",
+    event: issueEvent(issue),
+    kicker: issue.week && !/week/i.test(issue.title) ? `Week ${issue.week}` : undefined,
     victim: issue.title,
     lede: issue.dek,
     text: paragraphs.join("\n\n") || issue.note || "",
     at: issue.sentAt ?? issue.createdAt,
     href: `/newsletter/${issue.slug}`,
-    tags: issue.placeholder ? <SampleMark /> : issue.factsOnly ? <Tag tone="outline">Facts only</Tag> : null,
+    tags: issue.placeholder ? <SampleMark /> : null,
   };
 }
 
@@ -191,7 +219,8 @@ export function lastPlaceFallback(rows: StandingRow[], season: string): RoastBlo
   if (!t || t.wins + t.losses + t.ties === 0) return null;
   const rec = t.ties ? `${t.wins}-${t.losses}-${t.ties}` : `${t.wins}-${t.losses}`;
   return {
-    kicker: `Last place · ${season} season`,
+    event: `${season} final`,
+    kicker: "Last place",
     victim: t.team.managerName,
     stat: `${rec} record`,
     text: `${t.team.managerName} finished ${ordinal(t.rank)} of ${rows.length} at ${rec}, with ${fmtPts(t.pointsFor)} points for and ${fmtPts(t.pointsAgainst)} against.`,
@@ -202,7 +231,6 @@ export function lastPlaceFallback(rows: StandingRow[], season: string): RoastBlo
       { label: "Finish", value: `${ordinal(t.rank)} of ${rows.length}` },
     ],
     href: "/standings",
-    byline: "the numbers",
     tags: sourceTags("facts_only"),
   };
 }
@@ -222,7 +250,8 @@ export function weeklyFallback(facts: WeeklyFacts): RoastBlockData | null {
   if (t.benchPointsLeft > 0) lines.push(`Left ${fmtPts(t.benchPointsLeft)} points on the bench.`);
   if (t.zeroStarters.length) lines.push(`Started ${t.zeroStarters.length === 1 ? "a player" : `${t.zeroStarters.length} players`} who scored zero.`);
   return {
-    kicker: `Loser of the week · Week ${facts.week}`,
+    event: `Week ${facts.week} final`,
+    kicker: "Loser of the week",
     victim: t.team.managerName,
     stat: `${fmtPts(t.points)} points`,
     text: lines.join(" "),
@@ -233,7 +262,6 @@ export function weeklyFallback(facts: WeeklyFacts): RoastBlockData | null {
       { label: "All-play", value: `${t.allPlayWins}-${t.allPlayLosses}` },
     ],
     href: `/scores/${facts.week}`,
-    byline: "the numbers",
     tags: sourceTags("facts_only", facts.placeholder),
   };
 }
