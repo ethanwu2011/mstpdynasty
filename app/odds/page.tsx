@@ -6,7 +6,7 @@ import { type Shout, ShoutList } from "@/components/ShoutList";
 import { SampleMark, Tag } from "@/components/Tag";
 import { getLeagueContext, playoffRounds } from "@/lib/league";
 import { draftOdds, draftOddsBasis, getOddsHistory, runSeasonSim } from "@/lib/models";
-import { surfaceKeys } from "@/lib/roast";
+import { surfaceKeys, currentLines, draftOddsRows, oddsRows } from "@/lib/roast";
 import type { DraftOdds, LeagueContext, OddsHistory, OddsSnapshot, SimResult } from "@/lib/types";
 import { etStamp, fmtInt, record } from "../_lib/format";
 import { surfaceLinesFor } from "../_lib/lines";
@@ -234,9 +234,9 @@ export default async function OddsPage({ searchParams }: { searchParams: SearchP
   const drafted = draft?.available && draft.teams.length ? draft : null;
   const rows = drafted ? draftRows(drafted) : sim ? simRows(sim) : [];
   const lines = drafted
-    ? await surfaceLinesFor(ctx, "odds", surfaceKeys.odds(ctx.season, 0))
+    ? currentLines(await surfaceLinesFor(ctx, "odds", surfaceKeys.odds(ctx.season, 0)), draftOddsRows(drafted))
     : sim && sim.asOfWeek >= 1
-      ? await surfaceLinesFor(ctx, "odds", surfaceKeys.odds(ctx.season, sim.asOfWeek))
+      ? currentLines(await surfaceLinesFor(ctx, "odds", surfaceKeys.odds(ctx.season, sim.asOfWeek)), oddsRows(sim))
       : {};
 
   const series = buildSeries(ctx, history, sim, metric, drafted, preWeekOf(ctx));

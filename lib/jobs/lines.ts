@@ -45,9 +45,9 @@ import type { FantasyCalcSnapshot, JobOutcome, LeagueContext, PlayersMap, RoastS
 import { ROAST_VOICE } from "./tick";
 
 /** The tick sweeps the tables at most this often. */
-export const TABLE_SWEEP_SECONDS = 3600;
+export const TABLE_SWEEP_SECONDS = 600;
 /** Draft odds move with every pick: their lines may be rewritten this often while the draft is live. */
-export const DRAFT_ODDS_LINES_MAX_AGE_MS = 30 * 60_000;
+export const DRAFT_ODDS_LINES_MAX_AGE_MS = 5 * 60_000;
 /** Rows asked per surface per run (the rest wait for the next run). */
 export const MAX_LINE_ROWS_PER_RUN = 80;
 /** Claim on one surface while its lines are being written (released when done). */

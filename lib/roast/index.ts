@@ -57,6 +57,7 @@ export { buildRoastRequest, hasRoastClient, MAX_WRITER_CALLS_PER_DAY, ROAST_MODE
 export {
   checkLine,
   CUCK_CHAIR_PER_TABLE,
+  currentLines,
   getStoredSurfaceLines,
   getSurfaceLines,
   linesMessage,

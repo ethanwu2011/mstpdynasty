@@ -9,7 +9,7 @@ import { draftFacts, lastCompletedWeek, shameEntries, weeklyFacts } from "@/lib/
 import { ensurePickRoast } from "@/lib/jobs";
 import { standingsFromRosters } from "@/lib/league";
 import { draftOdds, draftOddsBasis, getWinProbabilities, runSeasonSim } from "@/lib/models";
-import { surfaceKeys } from "@/lib/roast";
+import { currentLines, draftOddsRows, oddsRows, surfaceKeys } from "@/lib/roast";
 import { getWinnersBracket } from "@/lib/sleeper";
 import type { DraftPickFact, LeagueContext, Roast, SurfaceLineMap } from "@/lib/types";
 import { record } from "../_lib/format";
@@ -175,7 +175,7 @@ export async function HomeDrafting({ ctx }: { ctx: LeagueContext }) {
             lastPlacePct: t.lastPlacePct,
             detail: `${t.playersDrafted} ${t.playersDrafted === 1 ? "player" : "players"}, ${t.projectedPoints.toFixed(1)} pts`,
           }))}
-          lines={oddsLines}
+          lines={currentLines(oddsLines, draftOddsRows(odds))}
           more={{ href: "/odds", label: "Full odds" }}
           id="odds"
           span={8}
@@ -214,9 +214,9 @@ export async function HomeInSeason({ ctx }: { ctx: LeagueContext }) {
   const draftBoard = drafted?.available && drafted.teams.length ? drafted : null;
   // Draft odds lines live at asOfWeek 0; a season sim's lines only exist once a week is final.
   const oddsLines = draftBoard
-    ? await surfaceLinesFor(ctx, "odds", surfaceKeys.odds(ctx.season, 0))
+    ? currentLines(await surfaceLinesFor(ctx, "odds", surfaceKeys.odds(ctx.season, 0)), draftOddsRows(draftBoard))
     : sim && sim.asOfWeek >= 1
-      ? await surfaceLinesFor(ctx, "odds", surfaceKeys.odds(ctx.season, sim.asOfWeek))
+      ? currentLines(await surfaceLinesFor(ctx, "odds", surfaceKeys.odds(ctx.season, sim.asOfWeek)), oddsRows(sim))
       : {};
   const leadRoast = roasts[0];
   const lead = latestLead(leadRoast, issues[0]) ?? (weekly ? weeklyFallback(weekly) : null);

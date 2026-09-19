@@ -7,7 +7,7 @@ import { SampleMark } from "@/components/Tag";
 import { getLeagueContext, playoffRounds, standingsFromRosters } from "@/lib/league";
 import { lastCompletedWeek } from "@/lib/facts";
 import { draftOdds, getPowerRankings } from "@/lib/models";
-import { surfaceKeys } from "@/lib/roast";
+import { surfaceKeys, currentLines, draftOddsRows, powerRows } from "@/lib/roast";
 import { getWinnersBracket } from "@/lib/sleeper";
 import type { LeagueContext, PowerRow, SleeperBracketMatch, StandingRow, SurfaceLineMap } from "@/lib/types";
 import { record } from "../_lib/format";
@@ -92,9 +92,9 @@ export default async function StandingsPage({ searchParams }: { searchParams: Se
   ]);
   const draftBoard = drafted?.available && drafted.teams.length && !drafted.placeholder ? drafted : null;
   const powerLines = power
-    ? await surfaceLinesFor(ctx, "power", surfaceKeys.power(ctx.season, power.asOfWeek))
+    ? currentLines(await surfaceLinesFor(ctx, "power", surfaceKeys.power(ctx.season, power.asOfWeek)), powerRows(power))
     : draftBoard
-      ? await surfaceLinesFor(ctx, "odds", surfaceKeys.odds(ctx.season, 0))
+      ? currentLines(await surfaceLinesFor(ctx, "odds", surfaceKeys.odds(ctx.season, 0)), draftOddsRows(draftBoard))
       : {};
 
   // Before the first game there is no order: list the teams by name, with no ranks.

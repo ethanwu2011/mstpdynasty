@@ -67,10 +67,12 @@ const DAY_MS = 24 * 3600_000;
  */
 export const SURFACE_MAX_AGE_MS: Record<RoastSurface, number> = {
   standings: DAY_MS,
-  odds: DAY_MS,
-  power: DAY_MS,
+  // Odds, power and team numbers move with every pick during the draft and every score in
+  // season. A line whose numbers went stale is hidden at render (currentLines), so rewrite fast.
+  odds: 5 * 60_000,
+  power: 10 * 60_000,
   matchups: DAY_MS,
-  team: DAY_MS,
+  team: 10 * 60_000,
   shame: DAY_MS,
   trades: DAY_MS,
   draft: DAY_MS,
@@ -568,4 +570,29 @@ export async function refreshSurfaceLines(
   const pending = due.length - attempted.size;
   if (!fresh.length) return { status: "skipped", lines: kept, asked: attempted.size, written: 0, failed: written.failed.length, pending };
   return { status: "written", lines, asked: attempted.size, written: fresh.length, failed: written.failed.length, pending };
+}
+
+
+const escapeRe = (x: string) => x.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/**
+ * Only the lines that are still true. A line was checked against the numbers of the moment it
+ * was written; odds and projections move with every pick and every score, so at render each
+ * line is checked again, against its own row plus the rows of any manager it names, using the
+ * same number checks as when it was written. A line whose numbers no longer match is left out
+ * (and the next run rewrites it) instead of showing a stale number.
+ */
+export function currentLines(lines: SurfaceLineMap, rows: SurfaceRow[]): SurfaceLineMap {
+  const out: SurfaceLineMap = {};
+  for (const row of rows) {
+    const line = lines[row.id];
+    if (typeof line !== "string" || !line.trim()) continue;
+    const named = rows.filter(
+      (r) => r === row || r.managers.some((m) => m && new RegExp(`\\b${escapeRe(m)}\\b`, "i").test(line)),
+    );
+    const { allowed, exempt } = lineSources(named, {});
+    const checked = checkText(line, allowed, exempt, { cuck: { left: 99 } });
+    if (checked.dropped.length === 0) out[row.id] = line;
+  }
+  return out;
 }

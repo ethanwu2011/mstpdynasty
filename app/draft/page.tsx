@@ -17,7 +17,7 @@ import { listIssues, listRoasts } from "@/lib/archive";
 import { draftFacts } from "@/lib/facts";
 import { getLeagueContext } from "@/lib/league";
 import { draftOdds } from "@/lib/models";
-import { surfaceKeys } from "@/lib/roast";
+import { currentLines, draftOddsRows, surfaceKeys } from "@/lib/roast";
 import { getDraftTradedPicks } from "@/lib/sleeper";
 import type { DraftFacts, SeasonPhase, SleeperDraft, SurfaceLineMap } from "@/lib/types";
 import { fmtInt } from "../_lib/format";
@@ -154,7 +154,7 @@ export default async function DraftPage({ searchParams }: { searchParams: Search
               ? `${t.playersDrafted} ${t.playersDrafted === 1 ? "player" : "players"}, ${t.projectedPoints.toFixed(1)} pts`
               : `${t.projectedPoints.toFixed(1)} projected a week`,
         }))}
-        lines={oddsLines}
+        lines={currentLines(oddsLines, draftOddsRows(odds))}
         more={{ href: "/odds", label: "Full odds" }}
       />
     ) : null;
