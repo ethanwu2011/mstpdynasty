@@ -143,7 +143,13 @@ export async function HomeDrafting({ ctx }: { ctx: LeagueContext }) {
       {latestPick && facts && leadRoast?.source !== "llm" ? (
         <Suspense
           fallback={
-            <LeadPanel data={lead} line={line} emptyLabel="Pick 1.01" empty={<EmptyLead line="The draft is open and nobody has picked." />} />
+            <LeadPanel
+              data={lead}
+              line={line}
+              emptyLabel="Pick 1.01"
+              empty={<EmptyLead line="The draft is open and nobody has picked." />}
+              below={<p className="type-label text-ink-muted">Writing this pick up. It lands in a few seconds.</p>}
+            />
           }
         >
           <LivePickLead ctx={ctx} pick={latestPick} picks={facts.picks} pickLines={pickLines} placeholder={facts.placeholder} />

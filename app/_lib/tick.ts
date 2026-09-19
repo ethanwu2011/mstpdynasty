@@ -1,36 +1,22 @@
-import { headers } from "next/headers";
 import { after } from "next/server";
-import { siteUrl } from "@/lib/env";
-
-// A tick that writes lines takes 15-60 seconds; aborting sooner can cut it off mid-write.
-const TIMEOUT_MS = 55_000;
+import { runTick } from "@/lib/jobs";
 
 /**
- * Fire /api/tick after the response is sent (Next `after()`), so page visits trigger the
- * instant roasts on Vercel Hobby. Tolerates everything: a missing route (404), a method
- * mismatch, the password gate, a timeout. It never throws and never delays the page.
+ * Run the tick in this same server process after the response is sent (Next `after()`), so
+ * every page visit writes whatever is new: picks, trades, waiver results, table lines.
  *
- * The URL comes from SITE_URL / VERCEL_URL when set, else from a localhost Host header in
- * development. A public Host header is never trusted to build a URL.
+ * It used to call /api/tick over HTTP using SITE_URL. That broke silently in production:
+ * the bare domain answers with a redirect to www and the request did not follow it, so page
+ * visits never reached the tick. Calling runTick directly has no URL to get wrong. runTick has
+ * its own cooldown and run lock, so many visitors still cause at most one run at a time.
+ * The page's maxDuration (60 s) bounds how long this may take. It never throws.
  */
 export async function fireTick(): Promise<void> {
-  let base: string | null = null;
-  if (process.env.SITE_URL || process.env.VERCEL_URL) {
-    base = siteUrl();
-  } else {
-    const host = (await headers()).get("host") ?? "";
-    if (/^(localhost|127\.0\.0\.1)(:\d+)?$/.test(host)) base = `http://${host}`;
-  }
-  if (!base) return;
-  const url = `${base}/api/tick`;
-
   after(async () => {
     try {
-      const init = { cache: "no-store", redirect: "manual", signal: AbortSignal.timeout(TIMEOUT_MS) } as const;
-      const res = await fetch(url, { ...init, method: "POST" });
-      if (res.status === 405) await fetch(url, { ...init, method: "GET" });
+      await runTick(new Date());
     } catch {
-      // The tick is best effort. The route may not exist yet.
+      // Best effort: the next visit or the daily cron picks up anything left.
     }
   });
 }
