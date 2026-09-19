@@ -24,6 +24,7 @@ import { fireTick } from "../_lib/tick";
 import { devSample } from "./_board/dev-sample";
 import { BoardLegend, DraftBoard, RoundJump } from "./_board/DraftBoard";
 import { buildBoard, type BoardModel, type BoardStage } from "./_board/model";
+import { EarlierRoastsPanel } from "../_home/draft";
 import { BestDraftPanel, ClockPanel, GradesLead, GradesPending, GradesTable, LatestPickPanel, OrderPanel, PreDraftLead } from "./_panels";
 
 export const metadata: Metadata = {
@@ -104,7 +105,7 @@ export default async function DraftPage({ searchParams }: { searchParams: Search
   const sampleParam = process.env.NODE_ENV === "development" ? (await searchParams).sample : undefined;
   const [realFacts, roasts, realTraded, issues, sample] = await Promise.all([
     safe(draftFacts(ctx), null, "draft facts"),
-    safe(listRoasts(ctx.leagueId, "draft_pick"), [], "pick roasts"),
+    safe(listRoasts(ctx.leagueId, "draft_pick", 400), [], "pick roasts"),
     safe(getDraftTradedPicks(draft.draft_id), [], "traded picks"),
     safe(listIssues(ctx.leagueId, { limit: 20 }), [], "issues"),
     safe(devSample(ctx, draft, Array.isArray(sampleParam) ? sampleParam[0] : sampleParam), null, "dev sample"),
@@ -116,6 +117,9 @@ export default async function DraftPage({ searchParams }: { searchParams: Search
   const factsMissing = !facts && stage !== "pre";
   const gradesIssue = issues.find((i) => i.kind === "draft_grades") ?? null;
   const grades = facts?.grades?.length ? facts.grades : null;
+  // Every written pick, newest pick first (by pick number, not by when it was written).
+  const pickNoOf = (id: string) => Number(id.split(":").pop()) || 0;
+  const written = roasts.filter((r) => r.source === "llm").sort((a, b) => pickNoOf(b.id) - pickNoOf(a.id));
 
   return (
     <Board>
@@ -147,6 +151,7 @@ export default async function DraftPage({ searchParams }: { searchParams: Search
       )}
 
       <BoardPanel board={board} stage={stage} placeholder={placeholder} factsMissing={factsMissing} />
+      {written.length ? <EarlierRoastsPanel roasts={written} span={12} /> : null}
     </Board>
   );
 }
