@@ -25,7 +25,3 @@ npm-debug.log*
 .vercel
 coverage/
 .impeccable/
-
-# symlinks used by local worktrees
-/node_modules
-/fixtures

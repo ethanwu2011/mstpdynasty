@@ -203,6 +203,32 @@ describe.skipIf(!hasFixtures())("roastIssue", () => {
     for (const p of paragraphsFromModel) if (p.type === "paragraph") for (const n of numbersIn(p.text)) expect(allowed.has(n)).toBe(true);
   });
 
+  it("re-asks once for just the failing slots, and never publishes a slot's survivors", async () => {
+    const m = weekly.matchups[0];
+    const id = `m-${m.matchupId}`;
+    const bad = goodReply().replace("Nobody looked good.", "Nobody looked good. It was 123.45 of pain.");
+    const fixed = `@@${id}\n${m.home.team.managerName} and ${m.away.team.managerName} were separated by ${m.margin}. Fixed on the retry.`;
+    const { client, calls } = fakeClient([{ text: bad }, { text: fixed }]);
+    setRoastClient(client);
+    const issue = await roastIssue("weekly_roast", facts, ctx, { now: NOW });
+    expect(calls).toHaveLength(2);
+    const retry = String(calls[1].messages[0].content);
+    expect(retry.split("\n").filter((l) => l.startsWith("@@"))).toEqual([expect.stringMatching(new RegExp(`^@@${id}: `))]);
+    expect(retry).toContain("NOTE: your last draft broke the rules with: 123.45 (not in FACTS)");
+    expect(allText(issue)).toContain("Fixed on the retry.");
+    expect(issue.usage?.inputTokens).toBe(200);
+
+    // Still failing after the retry: the slot gets its code-written fallback, not "Nobody looked good." alone.
+    const { client: c2 } = fakeClient([{ text: bad }]);
+    setRoastClient(c2);
+    const again = await roastIssue("weekly_roast", facts, ctx, { now: NOW });
+    expect(again.factsOnly).toBe(false);
+    const blocks = again.sections.find((x) => x.heading === "The matchups")!.blocks;
+    const first = blocks[1];
+    expect(first.type === "paragraph" && first.text).not.toContain("Nobody looked good.");
+    expect(allText(again)).not.toContain("123.45");
+  });
+
   it("falls back to facts only when most sentences fail the check", async () => {
     const reply = planIssue(facts, ctx)
       .slots.map((s) => `@@${s.id}\nThey scored 999.99. It was 123.45 of pain.`)
@@ -416,13 +442,54 @@ describe("roastItem", () => {
     }
   });
 
+  it("a priority league never gets bids in FACTS or '$0' in the facts line", async () => {
+    const plan = planItem("waiver", [{ ...WAIVER, bid: null, overpayBy: null, losingBids: [{ team: ref(4), bid: 0 }] }], 100, { waiverMode: "priority" });
+    expect(plan.facts).toEqual({
+      waiverMode: "priority",
+      claims: [{ manager: "Priya", team: "Waiver Wire Priya", type: "waiver", added: [{ name: "Deshawn Ruiz", pos: "WR", nflTeam: "KC", age: 23, value: null }], dropped: [], losingBids: [{ manager: "Wes", why: "priority" }] }],
+    });
+    expect(plan.factsOnlyText).toBe("Waiver Wire Priya (Priya) added Deshawn Ruiz (also claimed by: Wes).");
+    expect(plan.task).toContain("no bids");
+  });
+
+  it("draft pick FACTS: position rank, who was passed on, position count, clock at the right scale", () => {
+    const picks = [pick(1, 1, "Case Whitfield", "QB", 3), pick(2, 2, "Tre Holloway", "WR", 1), pick(5, 1, "Colt Easley", "QB", 20)];
+    const value = (id: string, name: string, position: string, overallRank: number) =>
+      ({ sleeperId: id, name, position, team: null, age: 25, value: 5000 - overallRank, overallRank, positionRank: 1, redraftValue: 0, trend30Day: 0 }) as const;
+    const fc = [value("x2", "Tre Holloway", "WR", 1), value("y1", "Ace Burke", "RB", 2), value("x1", "Case Whitfield", "QB", 3), value("y2", "Lon Pryor", "WR", 4), value("y3", "Moe Kent", "TE", 25)];
+    const p5 = { ...picks[2], fcPositionRank: 14, secondsOnClock: 540 };
+    const plan = planItem("draft_pick", p5, 100, { picks, draft: { fc: [...fc], pickTimerSeconds: 14400, rookieOnly: false } });
+    expect(plan.facts).toMatchObject({
+      posRank: "QB14",
+      minutesOnClock: 9,
+      clockLimitHours: 4,
+      passedOn: [
+        { name: "Ace Burke", pos: "RB", fcRank: 2 },
+        { name: "Lon Pryor", pos: "WR", fcRank: 4 },
+      ],
+      posCountForManager: 2,
+    });
+    expect(plan.facts).not.toHaveProperty("hoursOnClock");
+    // A rookie draft ranks against veterans, so nobody counts as passed on.
+    expect(planItem("draft_pick", p5, 100, { picks, draft: { fc: [...fc], pickTimerSeconds: 0, rookieOnly: true } }).facts).not.toHaveProperty("passedOn");
+  });
+
+  it("The Daily Roast's code dek leads with the worst fact, not the counts in its first paragraph", () => {
+    const daily: DailyRoastFacts = { kind: "daily_roast", date: "2030-10-08", sinceMs: 0, trades: [TRADE], waivers: [WAIVER], injuries: [], lineupAlerts: [], draftPicks: [], hasMaterial: true };
+    const plan = planIssue(daily, ctx);
+    expect(plan.fallbackDek).toBe("Rory gave Kevin 1,830 in FantasyCalc value in one trade.");
+    const first = plan.sections[0].blocks[0];
+    expect(first.type === "slot" && first.fallback).toEqual([{ type: "paragraph", text: "1 trade. 1 waiver move." }]);
+    expect(planIssue({ ...daily, trades: [] }, ctx).fallbackDek).toBe("Priya paid $38 for Deshawn Ruiz when the next bid was $4.");
+  });
+
   it("waiver batches roast as one item", async () => {
     const zero: WaiverFact = { ...WAIVER, transactionId: "w2", team: ref(1), bid: 1, losingBids: [{ team: ref(4), bid: 0 }], overpayBy: 1, added: [{ ...WAIVER.added[0], playerId: "p5", name: "Jalen Crane" }] };
     const r = await roastItem("waiver", [WAIVER, zero], ctx);
     expect(r).toMatchObject({ id: "waiver:w-5000", kind: "waiver", rosterIds: [3, 1] });
     expect(r.text).toContain("Waiver Wire Priya (Priya) added Deshawn Ruiz for $38 (also bid: Wes $4).");
     const plan = planItem("waiver", [WAIVER, zero], 100);
-    expect(plan.facts).toMatchObject({ faabBudget: 100, claims: [{ manager: "Priya", bid: 38, overpayBy: 34 }, { manager: "Kevin", bid: 1 }] });
+    expect(plan.facts).toMatchObject({ waiverMode: "faab", faabBudget: 100, claims: [{ manager: "Priya", bid: 38, overpayBy: 34 }, { manager: "Kevin", bid: 1 }] });
   });
 
   it("draft picks carry their earlier picks and time on the clock into FACTS", async () => {

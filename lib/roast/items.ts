@@ -6,7 +6,7 @@
 import { roastIds } from "@/lib/archive";
 import type { DraftPickFact, RoastItemFact, RoastItemKind, TradeFact, WaiverFact } from "@/lib/types";
 import { label, num, pickLabel } from "./format";
-import type { DraftContext } from "./memory";
+import type { DraftContext } from "./memory-shape";
 import { pickPayload, tradePayload, waiverLine, waiversPayload, type SlotSpec, type WaiverMode } from "./plan";
 
 export interface ItemPlan {

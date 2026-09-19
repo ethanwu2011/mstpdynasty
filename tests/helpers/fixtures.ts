@@ -26,7 +26,7 @@ export function loadManifest(): FixtureManifest {
   return JSON.parse(readFileSync(manifestPath(), "utf8")) as FixtureManifest;
 }
 
-/** RT Dynasty (completed 2025 season) league id. */
+/** Dev fixture league (completed 2025 season) league id. */
 export function rtLeagueId(): string {
   return loadManifest().rt.leagueId;
 }

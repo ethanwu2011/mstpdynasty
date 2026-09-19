@@ -114,6 +114,7 @@ Use ESPN only for status, period, clock and kickoff time.
 ### `lib/store.ts`
 ```ts
 get<T>(key)  set(key, value, { ttlSeconds? })  del(key)  list(prefix): string[]  lock(key, ttlSeconds): boolean  unlock(key)
+incr(key, ttlSeconds): number   // atomic counter; the first hit starts the window (rate limits, keys.rate(name))
 keys.*   // the shared key convention; league data is always under `league:<leagueId>:`
 ```
 Backends: Upstash when KV env is set, memory under Vitest, else JSON files in `.data/`.
@@ -166,7 +167,8 @@ transactionFacts(sinceMs: number, ctx?, untilMs?): Promise<TransactionFacts>
 draftFacts(ctx?): Promise<DraftFacts>
 tnfFacts(week: number, ctx?): Promise<TnfFacts>
 shameEntries(ctx?): Promise<ShameBoard>
-standingsAsOf(week: number, ctx?): Promise<StandingRow[]>   // regular-season standings at the end of a week
+standingsAsOf(week: number, ctx?): Promise<StandingRow[]>   // regular-season standings at the end of a week (record, PF, fewer PA)
+loserOfTheWeekCounts(throughWeek: number, ctx?): Promise<Record<rosterId, number>>   // Loser of the Week crowns so far
 lastCompletedWeek(ctx): number
 
 isRoastConfigured(): boolean
@@ -196,9 +198,9 @@ ISSUE_TITLES, FACTS_ONLY_NOTE, SYSTEM_PROMPT
 ### Ops agent: `lib/jobs/index.ts`, `lib/email/index.ts`, routes
 ```ts
 runDaily(now?: Date): Promise<JobRunReport>
-runTick(now?: Date): Promise<JobRunReport>        // `locked: true` when the 2-minute cooldown is held
+runTick(now?: Date): Promise<JobRunReport>        // `locked: true` when the cooldown or an in-flight run is held
 sendIssue(issue: Issue, mode?: NewsletterMode): Promise<SendResult>
-subscribe(input: SubscribeInput): Promise<SubscribeResult>     // { email, managerKey }
+subscribe(input: SubscribeInput, now?, { ip? }): Promise<SubscribeResult>   // { email, managerKey }; ip for the per-IP limit
 unsubscribe(token: string): Promise<UnsubscribeResult>         // token from the signed link
 ```
 Routes: `/api/cron/daily`, `/api/tick`, `/api/admin/approve`, `/api/unsubscribe`, `/api/subscribe`,
@@ -212,7 +214,15 @@ proxy). Jobs persist issues and roasts through `lib/archive.ts` and write a run 
   function for them). Its transactions run from the last Daily Roast up to the job's clock, minus plain
   cuts (a drop with no add, of a player who is not a notable drop).
 - The tick roasts transactions from the last 7 days and picks of a draft that is live or ended in the last
-  7 days, at most 6 roasts per tick, so a wiped store cannot trigger hundreds of LLM calls.
+  7 days, at most 6 roasts per tick, so a wiped store cannot trigger hundreds of LLM calls. It takes the
+  cooldown lock before loading the league, holds an in-flight lock until the run ends, claims each item
+  before its model call, and merges the roast index before writing it.
+- Subscriptions: at most 30 confirmed and 10 pending; a pending address gets at most 2 confirmation emails
+  and keeps its first 7-day expiry; 5 sign-ups per IP and 20 confirmation emails per hour site-wide
+  (`lib/email/limits.ts`). A confirmed address gets the same "subscribed" answer as a new one. The password
+  gate allows 10 attempts per IP and 100 overall per 15 minutes. `/api/tick` needs the gate cookie or the
+  cron bearer when the gate is on. Without `CRON_SECRET`, `/api/cron/daily` runs in dev only while no
+  RESEND/ANTHROPIC key is set.
 - The Weekly Roast pins odds and power rankings to the recapped week (`runSeasonSim({ fromWeek: week + 1,
   persist: true })`, `getPowerRankings(ctx, { asOfWeek: week })`), then `backfillOddsHistory(ctx)`.
 - Also exported from `lib/jobs`: `listJobRuns`, `planDaily`, `recapWeekFor`, `earlyGamesWeekFor`,
@@ -228,6 +238,11 @@ Consume only the public functions above plus the shared modules. Render all thre
 (pre-draft, drafting, in-season, plus offseason/complete). When a result has `placeholder: true`,
 show a small "sample data" marker. Home page may trigger the tick with `after()` from `next/server`
 by calling `runTick()`; the ops agent owns what it does.
+- Password gate, second line: call `await requireGate("/the/path")` from `@/lib/email/require-gate` at the
+  top of every page that shows league data (or in a route-group layout that does not wrap `/enter`).
+  `proxy.ts` alone is not enough (Next advisories on proxy bypass). It is a no-op without SITE_PASSWORD.
+- `lib/env`, `lib/email`, `lib/roast` and `lib/jobs` import `server-only`: importing them from a
+  `"use client"` component fails the build. Pass plain data to client components instead.
 
 ## Data shapes (see `lib/types.ts` for every field)
 
@@ -238,11 +253,14 @@ by calling `runTick()`; the ops agent owns what it does.
 - `PowerRankings { season, asOfWeek, formula, rows: PowerRow[], placeholder }`.
 - `OddsHistory { season, snapshots: OddsSnapshot[], placeholder }`.
 - `WeeklyFacts { week, season, matchups: MatchupFact[], teams: TeamWeekFact[], highest, lowest, loserOfTheWeek, standings, placeholder }`.
+  `TeamWeekFact` also carries `benchMistake` (best single swap, flip or not), `topStarter`, `worstStarter`
+  (furthest below projection) and `boomBench`.
 - `TransactionFacts { sinceMs, untilMs, trades: TradeFact[], waivers: WaiverFact[], placeholder }`.
 - `DraftFacts { draftId, status, startTime, rounds, teams, picks: DraftPickFact[], onTheClock, positionRuns, grades, placeholder }`.
 - `TnfFacts { week, games, players: TnfPlayerFact[], teams, placeholder }`.
 - `ShameBoard { entries: ShameEntry[], placeholder }`.
-- `Issue { id, slug, kind, leagueId, season, week, date, title, dek, sections: IssueSection[], factsOnly, note, status, createdAt, sentAt, recipientCount, model, usage, imageUrl, placeholder }`.
+- `Issue { id, slug, kind, leagueId, season, week, date, title, dek, dekSource?, sections: IssueSection[], factsOnly, note, status, createdAt, sentAt, recipientCount, model, usage, imageUrl, placeholder }`.
+  `dekSource: "model"` means the dek is also the email subject; a `"code"` dek gets "Title, week N:" in front.
 - `Roast { id, kind, leagueId, rosterIds, text, facts, source, model, createdAt, usage }`.
 - `IssueFacts = DailyRoastFacts | ThursdayFalloutFacts | WeeklyRoastFacts | DraftGradesFacts`.
 

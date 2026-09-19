@@ -51,6 +51,39 @@ describe.skipIf(!hasFixtures())("facts on the RT fixture league", () => {
     }
   });
 
+  it("player stories: top starter, worst starter vs projection, best bench player, biggest bench mistake", async () => {
+    let mistakes = 0;
+    for (const [w, wk] of weeks) {
+      const raw = await getMatchups(ctx.leagueId, w);
+      for (const t of wk.teams) {
+        const m = raw.find((x) => x.roster_id === t.team.rosterId)!;
+        const starters = m.starters.filter((id) => id && id !== "0");
+        const bench = m.players.filter((id) => !starters.includes(id));
+        if (t.topStarter) {
+          expect(starters).toContain(t.topStarter.playerId);
+          for (let i = 0; i < m.starters.length; i++) if (m.starters[i] !== "0") expect(t.topStarter.points + 0.011).toBeGreaterThanOrEqual(m.starters_points[i]);
+        }
+        if (t.worstStarter) {
+          expect(starters).toContain(t.worstStarter.playerId);
+          expect(t.worstStarter.projected! - t.worstStarter.points).toBeGreaterThan(0);
+        }
+        if (t.boomBench) {
+          expect(bench).toContain(t.boomBench.playerId);
+          for (const id of bench) expect(t.boomBench.points + 0.011).toBeGreaterThanOrEqual(m.players_points[id] ?? 0);
+        }
+        // The flip swap, when there is one, is the same swap as the bench mistake.
+        const flip = wk.matchups.find((x) => x.flipSwap?.team.rosterId === t.team.rosterId)?.flipSwap;
+        if (flip) expect(t.benchMistake).toEqual(flip);
+        if (t.benchMistake) {
+          mistakes++;
+          expect(t.benchMistake.gain).toBeGreaterThan(0);
+          expect(t.benchMistake.gain).toBeLessThanOrEqual(t.benchPointsLeft + 0.011);
+        }
+      }
+    }
+    expect(mistakes).toBeGreaterThan(50);
+  });
+
   it("season sum of optimal lineups reproduces Sleeper's own max points (ppts)", () => {
     let exact = 0;
     for (const r of ctx.rosters) {

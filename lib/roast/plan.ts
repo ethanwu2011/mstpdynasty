@@ -25,7 +25,7 @@ import type {
   WeeklyRoastFacts,
 } from "@/lib/types";
 import { label, money, num, para, pct, pickLabel, pts, r1, r2, sentences, signed, who } from "./format";
-import { EMPTY_MEMORY, type DraftContext, type PayloadMemory } from "./memory";
+import { EMPTY_MEMORY, type DraftContext, type PayloadMemory } from "./memory-shape";
 
 export const ISSUE_TITLES: Record<IssueKind, string> = {
   daily_roast: "The Daily Roast",

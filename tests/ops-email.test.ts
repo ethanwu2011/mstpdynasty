@@ -200,6 +200,17 @@ describe("review and approve", () => {
   });
 });
 
+describe("subjects", () => {
+  it("a dek the model wrote is the whole subject; a code-written one gets the title and week", () => {
+    const opts = { unsubscribeUrl: "https://x.test/u", webUrl: null };
+    const model = makeIssue({ factsOnly: false, dekSource: "model", dek: "Rory benched 24.3 and blamed the wind." });
+    expect(renderIssueEmail(model, opts).subject).toBe("Rory benched 24.3 and blamed the wind.");
+    expect(renderIssueEmail(makeIssue({ dek: "Kevin's Kitchen put up 150.20." }), opts).subject).toBe("The Weekly Roast, week 3: Kevin's Kitchen put up 150.20.");
+    const grades = makeIssue({ kind: "draft_grades", title: "Draft Grades", week: null, dek: "Most value drafted: Sam I Am (A+). Least: Dev Null (F)." });
+    expect(renderIssueEmail(grades, opts).subject).toBe("Draft Grades. Most value drafted: Sam I Am (A+). Least: Dev Null (F).");
+  });
+});
+
 describe("approve links are bound to the reviewed version", () => {
   it("a draft rebuilt under the same slug cannot be sent with the old link", async () => {
     await addSubscriber("a@example.com");

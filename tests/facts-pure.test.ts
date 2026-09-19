@@ -7,7 +7,8 @@ import { bestSwap, benchPointsLeft, flipSwapFor, swapCandidates, teamOptimal, ze
 import { draftGrade, ordinal, tradeGrade } from "@/lib/facts/util";
 import { approxPickValue, buildTrade, buildWaivers, type LosingBidFact, type TransactionEnv } from "@/lib/facts/transactions";
 import { autopausedMs, buildDraftPicks, clockSeconds, parsePickSeen, positionRunLengths, positionRuns, rosterForPick, slotForPick, verdictFor } from "@/lib/facts/draft";
-import { streakOf, weekResults } from "@/lib/facts/weekly";
+import { standingsThrough, streakOf, weekResults } from "@/lib/facts/weekly";
+import type { FactsLoader } from "@/lib/facts/load";
 import { assembleShame, transactionShame } from "@/lib/facts/shame";
 import type { FantasyCalcSnapshot, FantasyCalcValue, PlayersMap, SleeperDraft, SleeperMatchup } from "@/lib/types";
 import { fakeCtx, tx } from "./facts-synthetic";
@@ -110,6 +111,21 @@ describe("results and streaks", () => {
     expect(res.get(2)).toMatchObject({ result: "W", points: 110 });
     expect(res.get(3)?.result).toBe("T");
     expect(res.get(5)).toMatchObject({ result: null, opponentRosterId: null });
+  });
+
+  it("standings tiebreak: record, then points for, then FEWER points against, then roster id", async () => {
+    const ctx = fakeCtx();
+    // Week 1: 1 beats 2 100-90, 3 beats 4 100-80. Teams 1 and 3 tie on record and points for;
+    // 3 allowed fewer points, so 3 ranks first.
+    const week1 = [m(1, 1, 100), m(2, 1, 90), m(3, 2, 100), m(4, 2, 80)];
+    const loader = { ctx, matchups: async (w: number) => (w === 1 ? week1 : []) } as unknown as FactsLoader;
+    const rows = await standingsThrough(1, loader);
+    expect(rows.map((r) => [r.rank, r.team.rosterId, r.pointsFor, r.pointsAgainst])).toEqual([
+      [1, 3, 100, 80],
+      [2, 1, 100, 90],
+      [3, 2, 90, 100],
+      [4, 4, 80, 100],
+    ]);
   });
 
   it("streaks", () => {

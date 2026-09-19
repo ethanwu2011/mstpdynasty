@@ -411,7 +411,7 @@ export function sanitize(text: string): string {
   return s.trim();
 }
 
-/** Abbreviations that never end a sentence ("St. Brown", "Mrs. Worthy", "vs. Kevin"). */
+/** Abbreviations that never end a sentence ("St. Brown", "Mrs. Doubtfire", "vs. Kevin"). */
 const NO_SPLIT_ABBR = /^\(?(?:St|Jr|Sr|Mr|Mrs|Ms|Dr|vs|Mt|Ft)\.$/;
 /** Words before a lone capital letter that make it a grade ("gets a D."), not an initial. */
 const GRADE_LEAD = new Set(["a", "an", "grade", "graded", "gets", "got", "earns", "earned", "the", "his", "her", "their"]);

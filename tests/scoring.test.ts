@@ -1,7 +1,7 @@
 /**
  * Recompute every player's points from fixture stat lines with lib/scoring.ts and compare
  * with Sleeper's own players_points (tolerance 0.01), for every week of:
- *   - RT Dynasty (2025): half PPR, 4-pt pass TD, -2 INT, K slot
+ *   - the dev fixture league (2025), checked against its own scoring_settings
  *   - the scoring-check league (2025): MSTP's slots and headline scoring (full PPR, +0.5 TE
  *     reception, 6-pt pass TD), checked against its own scoring_settings
  */
@@ -53,7 +53,7 @@ describe.skipIf(!hasFixtures())("league scoring matches Sleeper", () => {
     players = await getPlayers();
   });
 
-  it("RT Dynasty: every player, every week 1-17", async () => {
+  it("dev fixture league: every player, every week 1-17", async () => {
     const manifest = loadManifest();
     const league = await getLeague(manifest.rt.leagueId);
     const { mismatches, checked, startersChecked } = await compareLeague(league, manifest.weeks.matchups, players);
