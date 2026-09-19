@@ -23,3 +23,16 @@ describe("currentLines hides lines whose numbers went stale", () => {
     expect(out["1"]).toBeTruthy();
   });
 });
+
+describe("currentLines tolerates small drift", () => {
+  const rows = [row("1", "Justin", { playoffPct: 65.8, titlePct: 11.7, lastPlacePct: 4.1, projectedPoints: 183.8, projRank: 2 })];
+  it("keeps 66% and 12% when the row says 65.8 and 11.7", () => {
+    expect(currentLines({ "1": "Justin reaches the playoffs 66% of the time and wins it 12%." }, rows)["1"]).toBeTruthy();
+  });
+  it("keeps a line that drifted a point or two", () => {
+    expect(currentLines({ "1": "Justin is 64% to make it and still acts like it is 100% his." }, [row("1", "Justin", { playoffPct: 65.8, titlePct: 100 })])["1"]).toBeTruthy();
+  });
+  it("hides a line whose rank is wrong now", () => {
+    expect(currentLines({ "1": "Justin has the 3rd-best lineup and a 12% title shot." }, rows)["1"]).toBeUndefined();
+  });
+});

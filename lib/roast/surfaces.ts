@@ -575,12 +575,27 @@ export async function refreshSurfaceLines(
 
 const escapeRe = (x: string) => x.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
+/** Every number anywhere in a row's facts (nested objects and arrays included). */
+function factNumbers(value: unknown, out: number[] = []): number[] {
+  if (typeof value === "number" && Number.isFinite(value)) out.push(value);
+  else if (Array.isArray(value)) for (const v of value) factNumbers(v, out);
+  else if (value && typeof value === "object") for (const v of Object.values(value)) factNumbers(v, out);
+  return out;
+}
+
+/** How far a number in a line may drift from today's value before the line counts as stale. */
+function tolerance(v: number, pct: boolean): number {
+  if (pct) return 2; // percentage points: 12% for 11.7 stays, 51% for 47.7 goes
+  if (!Number.isInteger(v)) return Math.max(1.5, Math.abs(v) * 0.02); // points like 170.1
+  return 0; // ranks, counts, pick numbers: exact
+}
+
 /**
- * Only the lines that are still true. A line was checked against the numbers of the moment it
- * was written; odds and projections move with every pick and every score, so at render each
- * line is checked again, against its own row plus the rows of any manager it names, using the
- * same number checks as when it was written. A line whose numbers no longer match is left out
- * (and the next run rewrites it) instead of showing a stale number.
+ * Only the lines that are still true. A line was checked when it was written, but odds and
+ * projections move with every pick and every score. At render each number in a line is compared
+ * with today's numbers for its own row and the rows of any manager it names: small drift is
+ * allowed (a line saying 12% while the row now says 11.7% stays), a number that is clearly out of
+ * date (51% when the row says 47.7%) hides the line until the next run rewrites it.
  */
 export function currentLines(lines: SurfaceLineMap, rows: SurfaceRow[]): SurfaceLineMap {
   const out: SurfaceLineMap = {};
@@ -590,9 +605,22 @@ export function currentLines(lines: SurfaceLineMap, rows: SurfaceRow[]): Surface
     const named = rows.filter(
       (r) => r === row || r.managers.some((m) => m && new RegExp(`\\b${escapeRe(m)}\\b`, "i").test(line)),
     );
-    const { allowed, exempt } = lineSources(named, {});
-    const checked = checkText(line, allowed, exempt, { cuck: { left: 99 } });
-    if (checked.dropped.length === 0) out[row.id] = line;
+    const known = named.flatMap((r) => factNumbers(r.facts));
+    let fresh = true;
+    // Numbers as written: "47.7%", "12%", "170.1", "8th", "4.08". Years and pick labels are skipped.
+    for (const m of line.matchAll(/(\d+(?:\.\d+)?)(\s*%|(?:st|nd|rd|th)\b)?/g)) {
+      const raw = m[1];
+      const n = Number(raw);
+      const pct = Boolean(m[2] && m[2].includes("%"));
+      if (!pct && /^\d\.\d\d$/.test(raw)) continue; // a pick label like 4.08
+      if (!pct && n >= 1900 && n <= 2100) continue; // a year
+      const tol = tolerance(n, pct);
+      if (!known.some((v) => Math.abs(v - n) <= tol || (pct && Math.abs(v * 100 - n) <= tol))) {
+        fresh = false;
+        break;
+      }
+    }
+    if (fresh) out[row.id] = line;
   }
   return out;
 }
