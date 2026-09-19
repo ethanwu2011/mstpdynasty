@@ -30,7 +30,7 @@ export function LeadPanel({
 }) {
   // The panel label is the h2; the roast headline inside is an h3.
   return (
-    <Panel label="The latest roast" labelRight={right} span={span} id="latest-roast">
+    <Panel label="Latest" labelRight={right} span={span} id="latest-roast">
       <div className="flex flex-1 flex-col gap-10">
         {data ? <RoastBlock {...data} size="hero" animate headingLevel={3} /> : empty}
         {below}

@@ -61,18 +61,22 @@ export async function HomePreDraft({ ctx }: { ctx: LeagueContext }) {
 export async function HomeDrafting({ ctx }: { ctx: LeagueContext }) {
   const [facts, pickRoasts, issues, shame] = await Promise.all([
     safe(draftFacts(ctx), null, "draft facts"),
-    safe(listRoasts(ctx.leagueId, "draft_pick", 5), [], "pick roasts"),
+    safe(listRoasts(ctx.leagueId, "draft_pick", 400), [], "pick roasts"),
     safe(listIssues(ctx.leagueId, { limit: 1 }), [], "issues"),
     safe(shameEntries(ctx), null, "shame"),
   ]);
   const latestPick = facts?.picks.length ? [...facts.picks].sort((a, b) => b.pickNo - a.pickNo)[0] : null;
-  const lead = pickRoasts[0] ? roastToBlock(pickRoasts[0]) : latestPick ? pickFallback(latestPick, facts?.placeholder) : null;
-  const earlier = pickRoasts.slice(1, 5);
+  // Order by pick number, not by when the line was written (older picks get rewritten too).
+  const pickNoOf = (r: { id: string }) => Number(r.id.split(":").pop()) || 0;
+  const byPick = [...pickRoasts].sort((a, b) => pickNoOf(b) - pickNoOf(a));
+  const newestRoast = latestPick ? byPick.find((r) => pickNoOf(r) === latestPick.pickNo) : undefined;
+  const lead = newestRoast ? roastToBlock(newestRoast) : latestPick ? pickFallback(latestPick, facts?.placeholder) : null;
+  const earlier = byPick.filter((r) => r !== newestRoast).slice(0, 4);
   const live = ctx.draft?.status === "drafting";
   return (
     <Board>
       <AutoRefresh enabled={live} seconds={30} />
-      <LeadPanel data={lead} empty={<EmptyLead line="The draft is open and nobody has picked. The first roast lands with pick 1.01." />} />
+      <LeadPanel data={lead} empty={<EmptyLead line="The draft is open and nobody has picked yet. Pick 1.01 is up." />} />
       <OnTheClockPanel ctx={ctx} facts={facts} serverNow={ctx.loadedAt} span={4} />
       <BoardStrip facts={facts} />
       {earlier.length ? <EarlierRoastsPanel roasts={earlier} span={8} /> : <ShamePanel board={shame} span={8} hideSample />}

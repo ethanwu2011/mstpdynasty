@@ -41,7 +41,7 @@ export function DraftCountdownLead({ ctx, serverNow }: { ctx: LeagueContext; ser
       </p>
 
       <h3 className="type-display m-0 text-j3 md:text-j4 xl:text-j5">
-        <span className="board-wipe block">The roasting starts at pick 1.01</span>
+        <span className="board-wipe block">Pick 1.01 is up next</span>
       </h3>
 
       {start ? (
@@ -82,7 +82,7 @@ export function DraftCountdownLead({ ctx, serverNow }: { ctx: LeagueContext; ser
       <footer className="type-label mt-auto flex flex-wrap items-center gap-x-3 gap-y-2">
         <LiveSquare size={12} />
         {start ? <time dateTime={new Date(start).toISOString()}>{etStamp(start)}</time> : <span>Start time not set</span>}
-        <span className="text-ink-muted">By The Roast</span>
+        <span className="text-ink-muted">MSTP Dynasty</span>
         <Link href="/draft" className="link-ink ml-auto px-0.5">
           Draft board
         </Link>
@@ -358,7 +358,7 @@ export function BoardStrip({ facts, count = 10 }: { facts: DraftFacts | null; co
 export function EarlierRoastsPanel({ roasts, span = 8 }: { roasts: Roast[]; span?: PanelSpan }) {
   const blocks: RoastBlockData[] = roasts.map(roastToBlock);
   return (
-    <Panel label="Earlier picks, roasted" span={span} pad={false}>
+    <Panel label="Earlier picks" span={span} pad={false}>
       <div className="grid flex-1 grid-cols-1 gap-px bg-ink md:grid-cols-2">
         {blocks.map((b, i) => (
           <div key={i} className="flex bg-paper px-4 pb-5 pt-6 md:px-6">

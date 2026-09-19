@@ -21,7 +21,7 @@ import type { DailyRoastFacts, PowerRankings, SimResult, TradeFact } from "@/lib
 import { hasFixtures, loadManifest, rtLeagueId } from "./helpers/fixtures";
 import { ref } from "./facts-synthetic";
 
-const PROMPT_SHA256 = "1c66daaa6cdbdac61fc3515aeebfe8f05774a9e8632a7849b9f271a670ff979e";
+const PROMPT_SHA256 = "3a3e69d42624e94293778aa1cbb9c7e4c2414ce9858a641479d361e43d0cc65a";
 
 const trade = (id: string, net: number): TradeFact => ({
   kind: "trade",

@@ -16,7 +16,7 @@ export const num = (n: number) => Math.round(n).toLocaleString("en-US");
 export const signed = (n: number) => (n > 0 ? `+${num(n)}` : n < 0 ? `-${num(-n)}` : "0");
 
 /** "Team Name (Manager)" */
-export const label = (t: TeamRef) => `${t.teamName} (${t.managerName})`;
+export const label = (t: TeamRef) => (t.teamName === t.managerName ? t.managerName : `${t.teamName} (${t.managerName})`);
 
 /** Compact team identity for the FACTS payload. */
 export const who = (t: TeamRef) => ({ manager: t.managerName, team: t.teamName });
