@@ -46,7 +46,8 @@ afterEach(() => {
 
 describe("issue names", () => {
   it("never announce the roast", () => {
-    expect(ISSUE_TITLES).toEqual({ daily: "The Daily", thursday_fallout: "Thursday Night Fallout", weekly_recap: "Week N Recap", draft_grades: "Draft Grades" });
+    // The recap is always named with its week ("Week 5 Recap"); "Weekly Recap" is only the kind's generic label.
+    expect(ISSUE_TITLES).toEqual({ daily: "The Daily", thursday_fallout: "Thursday Night Fallout", weekly_recap: "Weekly Recap", draft_grades: "Draft Grades" });
     expect(issueTitle("weekly_recap", 5)).toBe("Week 5 Recap");
     expect(issueTitle("daily", 5)).toBe("The Daily");
     for (const t of Object.values(ISSUE_TITLES)) expect(t).not.toMatch(/roast|burn|cooked/i);
@@ -326,7 +327,8 @@ describe("league recipients", () => {
     const toBo = t.sent[0].messages.find((m) => m.to === addr("bo"))!;
     const token = linkIn(toBo.text, "/api/unsubscribe").searchParams.get("token")!;
     expect(await unsubscribe(token)).toEqual({ ok: true, status: "unsubscribed" });
-    expect((await unsubscribe(token)).status).toBe("not_found");
+    // Idempotent: the second click writes the same marker and still answers "unsubscribed".
+    expect(await unsubscribe(token)).toEqual({ ok: true, status: "unsubscribed" });
     expect(await recipients()).toEqual([addr("ann")]);
     expect(await recipientSummary()).toEqual({ configured: true, count: 1, optedOut: 1 });
     // The opt-out is stored by HMAC ref, never by address.

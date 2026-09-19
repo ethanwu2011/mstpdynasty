@@ -4,15 +4,17 @@
  * Resend, from "MSTP Dynasty" (EMAIL_FROM, default DEFAULT_EMAIL_FROM in lib/env). One
  * text-first HTML email per issue plus a plain-text part (lib/email/render.ts).
  *
- * Recipients: the private env var LEAGUE_EMAILS (comma-separated; a Vercel secret, never in the
- * repo, a test, a doc or a log) minus stored opt-outs (`recipients()`). There is no public
- * sign-up. Opt-outs are stored by HMAC ref, never by address, so no address is ever written to
- * the store.
+ * Recipients (`recipients()`, the only implementation): the private env var LEAGUE_EMAILS
+ * (comma-separated; a Vercel secret, never in the repo, a test, a doc or a log) plus the
+ * confirmed subscribers the old sign-up form stored, minus stored opt-outs. There is no public
+ * sign-up any more, so nothing new is ever added to the subscriber records. Opt-outs are stored
+ * by HMAC ref, never by address.
  *
  *   review mode  every issue goes first to COMMISSIONER_EMAIL only, with an HMAC-signed,
  *                single-use, 7-day "Approve and send to the league" link (/api/admin/approve)
  *   auto mode    straight to every recipient
- *   sendTest     a marked test copy to COMMISSIONER_EMAIL only (POST /api/admin/test-email)
+ *   sendTest     a marked [Test] copy to COMMISSIONER_EMAIL only (POST /api/admin/test-email
+ *                with the bearer, and GET /api/admin/send-test through sendTestCopy)
  *
  * Every email carries a signed unsubscribe link plus RFC 8058 one-click headers. Links carry
  * an HMAC reference to the address, never the address itself. Nothing is ever emailed about a
@@ -25,7 +27,7 @@ import { createHash } from "node:crypto";
 import { getIssue, listIssues, saveIssue } from "@/lib/archive";
 import { isDevLeague, leagueId as currentLeagueId, newsletterMode, siteUrl } from "@/lib/env";
 import * as store from "@/lib/store";
-import type { Issue, NewsletterMode, RecipientSummary, SendResult, UnsubscribeResult } from "@/lib/types";
+import type { Issue, NewsletterMode, RecipientSummary, SendResult, Subscriber, UnsubscribeResult } from "@/lib/types";
 import { claimOnce, markDone, releaseClaim } from "@/lib/jobs/once";
 import { renderIssueEmail } from "./render";
 import { adminSecret, deriveId, optOutSecret, optOutSecrets, safeEqual, signToken, subscriberRef, verifyToken, verifyUnsubToken } from "./sign";
@@ -94,14 +96,27 @@ const shortHash = (s: string) => createHash("sha256").update(s).digest("base64ur
 /** Error text for results and logs, with any address blanked out. */
 const errText = (err: unknown) => scrubAddresses(err instanceof Error ? err.message : String(err));
 
+function isSubscriber(v: unknown): v is Subscriber {
+  const o = v as Subscriber | null;
+  return Boolean(o && typeof o.email === "string" && typeof o.confirmed === "boolean");
+}
+
 /**
- * Delete sign-up records the old public form stored (they held addresses in plain text). The
- * daily job calls this, so a store that ever had them ends up with none. Returns how many.
+ * Sign-up records the old public form stored, pending ones included, oldest first. Nothing
+ * writes them any more; confirmed ones still get the league email until they opt out.
  */
-export async function purgeLegacySubscribers(leagueId: string = currentLeagueId()): Promise<number> {
-  const ks = await store.list(store.keys.legacySubscriberPrefix(leagueId));
-  for (const k of ks) await store.del(k);
-  return ks.length;
+export async function listSubscribers(leagueId: string = currentLeagueId()): Promise<Subscriber[]> {
+  const ks = await store.list(store.keys.subscriberPrefix(leagueId));
+  const subs = (await Promise.all(ks.map((k) => store.get<Subscriber>(k)))).filter(isSubscriber);
+  return subs.sort((a, b) => a.createdAt - b.createdAt);
+}
+
+/** Confirmed subscribers' addresses (valid, lowercased). Server-only data, never rendered or logged. */
+async function confirmedSubscribers(leagueId: string): Promise<string[]> {
+  return (await listSubscribers(leagueId))
+    .filter((s) => s.confirmed)
+    .map((s) => normalizeEmail(s.email))
+    .filter((e): e is string => Boolean(e));
 }
 
 /* ----------------------------- recipients ---------------------------- */
@@ -131,22 +146,42 @@ async function isOptedOut(leagueId: string, email: string): Promise<boolean> {
   return false;
 }
 
+/** LEAGUE_EMAILS plus confirmed subscribers, each address once, before opt-outs. */
+async function candidates(leagueId: string): Promise<string[]> {
+  return [...new Set([...leagueEmailsFromEnv(), ...(await confirmedSubscribers(leagueId))])];
+}
+
 /**
- * Who gets the league email: LEAGUE_EMAILS minus stored opt-outs. Server-only data: never
- * render, return from a route, or log these addresses (use recipientSummary()).
+ * Who gets the league email: LEAGUE_EMAILS plus confirmed subscribers, minus stored opt-outs.
+ * The one recipients() in the codebase. Server-only data: never render, return from a route,
+ * or log these addresses (use recipientSummary()).
  */
 export async function recipients(leagueId: string = currentLeagueId()): Promise<string[]> {
-  const all = leagueEmailsFromEnv();
   const out: string[] = [];
-  for (const e of all) if (!(await isOptedOut(leagueId, e))) out.push(e);
+  for (const e of await candidates(leagueId)) if (!(await isOptedOut(leagueId, e))) out.push(e);
   return out;
 }
 
 /** Counts only, safe for pages and /api/health. */
 export async function recipientSummary(leagueId: string = currentLeagueId()): Promise<RecipientSummary> {
-  const all = leagueEmailsFromEnv();
+  const all = await candidates(leagueId);
   const count = (await recipients(leagueId)).length;
   return { configured: all.length > 0, count, optedOut: all.length - count };
+}
+
+/* ------------------------------ health ------------------------------ */
+
+const EMAIL_STATUS_KEY = "ops:email-status";
+
+/** Last send outcome for /api/health: counts and scrubbed errors only, never addresses. */
+async function recordEmailStatus(result: SendResult): Promise<void> {
+  const error = result.error ? scrubAddresses(result.error).slice(0, 240) : undefined;
+  await store.set(EMAIL_STATUS_KEY, { at: Date.now(), status: result.status, recipients: result.recipients, error }).catch(() => {});
+}
+
+/** What recordEmailStatus stored last (null before the first send). */
+export async function readEmailStatus(): Promise<unknown> {
+  return store.get(EMAIL_STATUS_KEY).catch(() => null);
 }
 
 /** Everyone a league send goes to: recipients(), capped at MAX_RECIPIENTS. */
@@ -180,11 +215,14 @@ export async function sendIssue(issue: Issue, mode: NewsletterMode = newsletterM
   if (!adminSecret()) return notConfigured("ADMIN_SECRET is not set (it signs the approve and unsubscribe links).");
   if (isDevLeague(issue.leagueId)) return skipped("Dev league: never emailed.");
   if (issue.placeholder) return skipped("Placeholder issue: never emailed.");
+  let result: SendResult;
   try {
-    return mode === "review" ? await sendReview(issue, transport) : await sendToLeague(issue, transport);
+    result = mode === "review" ? await sendReview(issue, transport) : await sendToLeague(issue, transport);
   } catch (err) {
-    return { status: "error", recipients: 0, messageIds: [], error: errText(err) };
+    result = { status: "error", recipients: 0, messageIds: [], error: errText(err) };
   }
+  await recordEmailStatus(result);
+  return result;
 }
 
 /**
@@ -300,6 +338,21 @@ export async function testSendPreflight(leagueId: string = currentLeagueId()): P
  * never touches the league list, never emails about a dev league. `test_sent` on success.
  */
 export async function sendTest(opts: SendTestOptions = {}): Promise<SendResult> {
+  const result = await sendTestOnce(opts);
+  // Only a send that was attempted: a refused request (no key, no COMMISSIONER_EMAIL) is not news.
+  if (result.status === "test_sent" || result.status === "error") await recordEmailStatus(result);
+  return result;
+}
+
+/**
+ * A [Test] copy of one issue to COMMISSIONER_EMAIL, and nothing else (GET /api/admin/send-test,
+ * which holds its own 15-minute lock, so the hourly count is not taken here).
+ */
+export async function sendTestCopy(issue: Issue): Promise<SendResult> {
+  return sendTest({ issue, counted: true });
+}
+
+async function sendTestOnce(opts: SendTestOptions): Promise<SendResult> {
   const transport = getTransport();
   if (!transport) return notConfigured("RESEND_API_KEY is not set.");
   if (!adminSecret()) return notConfigured("ADMIN_SECRET is not set (it signs the unsubscribe link).");
@@ -431,11 +484,23 @@ export function isUnsubscribeTokenValid(token: string): boolean {
   return v.ok && Boolean(v.payload.r);
 }
 
+/** The stored subscriber an unsubscribe ref points at, under any secret it may be signed with. */
+async function subscriberByRef(leagueId: string, ref: string): Promise<Subscriber | null> {
+  for (const s of await listSubscribers(leagueId)) {
+    for (const secret of optOutSecrets()) {
+      const r = subscriberRef(s.email, secret);
+      if (r && safeEqual(r, ref)) return s;
+    }
+  }
+  return null;
+}
+
 /**
  * Opt an address out. `token` is the HMAC-signed token from the unsubscribe link, which only
- * carries the address's HMAC ref. The opt-out is stored under that ref (keys.optOut), so the
- * address stays out of recipients() for good, even if it is later added to LEAGUE_EMAILS
- * again. "not_found" when that ref already opted out.
+ * carries the address's HMAC ref. The opt-out marker is stored under that ref (keys.optOut), so
+ * the address stays out of recipients() for good, whether it came from LEAGUE_EMAILS or a
+ * confirmed subscription (whose stored record is deleted too). Idempotent: a second click
+ * writes the same marker and answers "unsubscribed" again.
  */
 export async function unsubscribe(token: string): Promise<UnsubscribeResult> {
   const v = verifyUnsubToken(token);
@@ -443,8 +508,9 @@ export async function unsubscribe(token: string): Promise<UnsubscribeResult> {
   const l = v.payload.l;
   const ref = v.payload.r;
   try {
-    if (await store.get(store.keys.optOut(l, ref))) return { ok: false, status: "not_found" };
-    await store.set(store.keys.optOut(l, ref), { at: Date.now() });
+    if (!(await store.get(store.keys.optOut(l, ref)))) await store.set(store.keys.optOut(l, ref), { at: Date.now() });
+    const sub = await subscriberByRef(l, ref);
+    if (sub) await store.del(store.keys.subscriber(l, sub.email));
     return { ok: true, status: "unsubscribed" };
   } catch {
     return { ok: false, status: "error" };

@@ -9,6 +9,7 @@
  * bidi-override characters are stripped from both parts, and the subject is forced onto
  * one line.
  */
+import { issueTitle } from "@/lib/roast/plan";
 import { etToMs, formatEt } from "@/lib/time";
 import type { Issue, IssueBlock } from "@/lib/types";
 
@@ -54,27 +55,39 @@ export function issueDateLabel(date: string): string {
   return formatEt(ms, { weekday: "long", month: "long", day: "numeric" });
 }
 
-/** True when the title already names the week ("Week 5 Recap"). */
-const titleHasWeek = (issue: Issue) => Boolean(issue.week) && new RegExp(`\\bweek ${issue.week}\\b`, "i").test(issue.title);
-
 function metaLine(issue: Issue): string {
   const parts = [issueDateLabel(issue.date)];
-  if (issue.week && !titleHasWeek(issue)) parts.push(`Week ${issue.week}`);
+  if (issue.week && issue.kind !== "weekly_recap") parts.push(`Week ${issue.week}`);
   return parts.join(" \u00b7 ");
 }
 
 /**
- * The sender is already "MSTP Dynasty", so a dek the model wrote is the whole subject (it is
- * written to be one). A code-written dek is a plain fact line, so it gets the issue title (and
- * the week, when the title does not carry it) in front: "Week 9 Recap: <fact>",
- * "Thursday Night Fallout, week 9: <fact>" (one colon), or "Draft Grades. <fact>".
+ * The issue's name, from its kind and week ("The Daily", "Week 9 Recap"), so an issue stored
+ * under an older name still goes out under the current one.
+ */
+export function issueName(issue: Pick<Issue, "kind" | "week">): string {
+  return issueTitle(issue.kind, issue.week);
+}
+
+/** The headline the writer wrote (the dek), or null for a facts-only issue with a code dek. */
+export function issueHeadline(issue: Pick<Issue, "dek" | "dekSource" | "factsOnly">): string | null {
+  const dek = oneLine(issue.dek);
+  return dek && issue.dekSource === "model" && !issue.factsOnly ? dek : null;
+}
+
+/**
+ * The subject is the headline: a dek the model wrote is the whole subject (it is written to be
+ * one). A code-written dek is a plain fact line, so it gets the issue name in front:
+ * "Week 9 Recap: <fact>", "Thursday Night Fallout, week 5: <fact>" (one colon), or
+ * "Draft Grades. <fact>". A review copy is marked "[Review]", a test copy "[Test]".
  */
 export function issueSubject(issue: Issue, review: boolean | "review" | "test" = false): string {
-  const title = oneLine(issue.title);
+  const title = oneLine(issueName(issue));
   const dek = oneLine(issue.dek);
-  const withWeek = Boolean(issue.week);
-  const lead = withWeek && !titleHasWeek(issue) ? `${title}, week ${issue.week}` : title;
-  const base = truncate(dek && issue.dekSource === "model" && !issue.factsOnly ? dek : dek ? `${lead}${withWeek ? ":" : "."} ${dek}` : lead, 140);
+  const withWeek = issue.week && issue.kind !== "weekly_recap";
+  const lead = withWeek ? `${title}, week ${issue.week}` : title;
+  const sep = issue.week ? ":" : ".";
+  const base = truncate(issueHeadline(issue) ?? (dek ? `${lead}${sep} ${dek}` : lead), 140);
   if (review === "test") return `[Test] ${base}`;
   return review ? `[Review] ${base}` : base;
 }
@@ -157,14 +170,17 @@ function link(href: string, label: string): string {
 
 export function renderIssueHtml(issue: Issue, opts: IssueEmailOptions): string {
   const review = Boolean(opts.approveUrl);
-  const preheader = oneLine(issue.dek) || oneLine(issue.title);
+  const name = issueName(issue);
+  // The writer's headline is the H1; a facts-only issue leads with its name and the fact line.
+  const headline = issueHeadline(issue);
+  const preheader = oneLine(issue.dek) || oneLine(name);
   const parts: string[] = [];
 
   parts.push(
-    `<p style="margin:0 0 18px;font-size:12px;letter-spacing:0.14em;text-transform:uppercase;color:${MUTED};">${escapeHtml(LEAGUE_NAME)}</p>`,
-    `<h1 style="margin:0 0 6px;font-size:28px;line-height:1.2;font-weight:bold;color:${INK};">${escapeHtml(issue.title)}</h1>`,
+    `<p style="margin:0 0 18px;font-size:12px;letter-spacing:0.14em;text-transform:uppercase;color:${MUTED};">${escapeHtml(`${LEAGUE_NAME} \u00b7 ${name}`)}</p>`,
+    `<h1 style="margin:0 0 6px;font-size:28px;line-height:1.2;font-weight:bold;color:${INK};">${escapeHtml(headline ?? name)}</h1>`,
   );
-  if (oneLine(issue.dek)) parts.push(`<p style="margin:0 0 10px;font-size:19px;line-height:1.4;font-style:italic;">${escapeHtml(issue.dek)}</p>`);
+  if (!headline && oneLine(issue.dek)) parts.push(`<p style="margin:0 0 10px;font-size:19px;line-height:1.4;font-style:italic;">${escapeHtml(issue.dek)}</p>`);
   parts.push(`<p style="margin:0 0 26px;font-size:13px;color:${MUTED};">${escapeHtml(metaLine(issue))}</p>`);
 
   if (opts.test) {
@@ -204,7 +220,7 @@ export function renderIssueHtml(issue: Issue, opts: IssueEmailOptions): string {
     "<!doctype html>",
     '<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">',
     '<meta name="color-scheme" content="light only"><meta name="supported-color-schemes" content="light">',
-    `<title>${escapeHtml(issue.title)}</title></head>`,
+    `<title>${escapeHtml(headline ?? name)}</title></head>`,
     `<body style="margin:0;padding:0;background:#ffffff;color:${INK};">`,
     `<div style="display:none;max-height:0;overflow:hidden;opacity:0;color:transparent;">${escapeHtml(preheader)}</div>`,
     '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#ffffff;"><tr><td align="center" style="padding:28px 16px 40px;">',
@@ -248,8 +264,10 @@ function textBlock(block: IssueBlock): string {
 
 export function renderIssueText(issue: Issue, opts: IssueEmailOptions): string {
   const out: string[] = [];
-  out.push(LEAGUE_NAME.toUpperCase(), "", oneLine(issue.title));
-  if (oneLine(issue.dek)) out.push(oneLine(issue.dek));
+  const name = issueName(issue);
+  const headline = issueHeadline(issue);
+  out.push(`${LEAGUE_NAME} \u00b7 ${name}`.toUpperCase(), "", headline ?? oneLine(name));
+  if (!headline && oneLine(issue.dek)) out.push(oneLine(issue.dek));
   out.push(metaLine(issue), "");
   if (opts.test) out.push("TEST COPY. It went to the commissioner only.", "");
   if (opts.approveUrl) {

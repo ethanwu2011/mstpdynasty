@@ -188,7 +188,8 @@ export function LeagueRulesPanel({ ctx, span = 4, mdSpan = 12 }: { ctx: LeagueCo
 
 /* ------------------------------ on the clock ------------------------------ */
 
-export function OnTheClockPanel({ ctx, facts, serverNow, span = 4 }: { ctx: LeagueContext; facts: DraftFacts | null; serverNow: number; span?: PanelSpan }) {
+/** Who is on the clock and who is next. No running time on the clock: the site never knows when a pick was made. */
+export function OnTheClockPanel({ ctx, facts, span = 4 }: { ctx: LeagueContext; facts: DraftFacts | null; span?: PanelSpan }) {
   const d = ctx.draft;
   const teams = facts?.teams || d?.settings.teams || 0;
   const total = facts ? facts.rounds * teams : 0;
@@ -204,7 +205,7 @@ export function OnTheClockPanel({ ctx, facts, serverNow, span = 4 }: { ctx: Leag
     next = { pickNo: made + 1, round: at.round, label: at.label, manager: m?.name ?? "Unknown", team: m?.teamName ?? "" };
   }
   const upcoming = d && next ? [1, 2, 3].map((k) => next.pickNo + k).filter((n) => n <= total).map((n) => ({ n, ...pickAt(d, n) })) : [];
-  const since = d?.last_picked ?? d?.start_time ?? null;
+  const resumes = facts?.resumesAt ?? null;
   const round = next?.round ?? facts?.rounds ?? 0;
 
   return (
@@ -220,11 +221,11 @@ export function OnTheClockPanel({ ctx, facts, serverNow, span = 4 }: { ctx: Leag
             <Numeral value={next.label} size="d60" label={`Pick ${next.label}`} />
           </div>
 
-          {since ? (
-            <div className="flex flex-col gap-2">
-              <span className="type-label text-ink-muted">{d?.last_picked ? "On the clock for" : "Since the draft opened"}</span>
-              <Countdown target={since} serverNow={serverNow} mode="up" size="d40" label="Time on the clock" />
-            </div>
+          {resumes ? (
+            <p className="type-label m-0 flex items-center gap-2">
+              <LiveSquare size={10} />
+              Draft paused. Picks resume at {resumes}.
+            </p>
           ) : null}
 
           {upcoming.length ? (
@@ -362,14 +363,25 @@ export function BoardStrip({ facts, lines, count = 10 }: { facts: DraftFacts | n
 
 /* ------------------------------ earlier roasts ------------------------------ */
 
-export function EarlierRoastsPanel({ roasts, lines, span = 8 }: { roasts: Roast[]; lines?: SurfaceLineMap; span?: PanelSpan }) {
+export function EarlierRoastsPanel({
+  roasts,
+  lines,
+  label = "Earlier picks",
+  span = 8,
+}: {
+  roasts: Roast[];
+  lines?: SurfaceLineMap;
+  /** Panel label: "Earlier picks" on the home page, "Every pick, newest first" on /draft. */
+  label?: string;
+  span?: PanelSpan;
+}) {
   const blocks: RoastBlockData[] = roasts.map((r) => {
     const f = r.facts;
     const line = !Array.isArray(f) && f.kind === "draft_pick" ? lineOf(lines, f.pickNo) : null;
     return { ...roastToBlock(r), lede: line };
   });
   return (
-    <Panel label="Earlier picks" span={span} pad={false}>
+    <Panel label={label} span={span} pad={false}>
       <div className="grid flex-1 grid-cols-1 gap-px bg-ink md:grid-cols-2">
         {blocks.map((b, i) => (
           <div key={i} className="flex bg-paper px-4 pb-5 pt-6 md:px-6">

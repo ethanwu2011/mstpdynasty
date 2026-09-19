@@ -12,6 +12,7 @@
  */
 import { listOddsSnapshots, saveOddsSnapshot } from "@/lib/archive";
 import { getLeagueContext, teamRef } from "@/lib/league";
+import { rosterPotentialPoints } from "@/lib/sleeper";
 import type {
   DraftOdds,
   LeagueContext,
@@ -209,7 +210,15 @@ export async function prepareSeasonSim(ctx: LeagueContext, fromWeek?: number, st
       teams: rosterIds.map((id) => {
         const r = records.get(id)!;
         const p = params.get(id)!;
-        return { rosterId: id, wins: r.wins, losses: r.losses, ties: r.ties, pointsFor: r.pointsFor, mean: p.mean, sd: p.sd };
+        const games = r.wins + r.losses + r.ties;
+        // Sleeper's Max PF counts the same games only when its record matches the one rebuilt
+        // here (a sim as of an earlier week would otherwise see later weeks' max points).
+        const sleeper = ctx.rosters.find((x) => x.roster_id === id);
+        const sameGames = sleeper && sleeper.settings.wins + sleeper.settings.losses + (sleeper.settings.ties ?? 0) === games;
+        const potential = sleeper && sameGames ? rosterPotentialPoints(sleeper) : 0;
+        const maxPointsFor = potential > r.pointsFor ? potential : r.pointsFor;
+        const maxGap = games > 0 ? (maxPointsFor - r.pointsFor) / games : 0;
+        return { rosterId: id, wins: r.wins, losses: r.losses, ties: r.ties, pointsFor: r.pointsFor, maxPointsFor, maxGap, mean: p.mean, sd: p.sd };
       }),
       weeks,
       playoffTeams: frame.playoffTeams,

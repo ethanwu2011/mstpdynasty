@@ -512,7 +512,7 @@ export interface SimTeamOdds {
   byePct: number;
   titlePct: number;
   lastPlacePct: number;
-  /** Approximate chance of holding the 1.01 (worst non-playoff finish). Label it approximate in UI. */
+  /** Approximate chance of holding the 1.01 (lowest Max PF among the teams that miss the playoffs). Label it approximate in UI. */
   firstPickPct: number;
 }
 
@@ -673,8 +673,10 @@ export interface DraftPickFact {
   /** fcRank - pickNo (expected pick minus actual). Positive = reach, negative = steal. */
   reach: number | null;
   verdict: "reach" | "steal" | "fair" | "unranked";
-  /** Seconds the pick sat on the clock, when known (Sleeper does not expose it; filled from tick timestamps). */
-  secondsOnClock: number | null;
+  /**
+   * When the site first noticed the pick (tick timestamps), not when it was made. Only good for
+   * ordering and "noticed at" stamps: never a time on the clock.
+   */
   pickedAt: number | null;
   /** Length of the position run this pick belongs to (1 = no run). */
   positionRun: number;
@@ -699,6 +701,8 @@ export interface DraftFacts {
   picks: DraftPickFact[];
   /** Next pick when the draft is live. */
   onTheClock: { pickNo: number; round: number; team: TeamRef } | null;
+  /** When picks resume ("8 AM ET", config/draft.ts), only while the draft is paused. */
+  resumesAt: string | null;
   positionRuns: Array<{ position: string; startPick: number; length: number }>;
   /** Only once the draft is complete. */
   grades: DraftGrade[] | null;
@@ -940,6 +944,12 @@ export interface Issue {
   /** Loser of the Week image (phase 2), null for now. */
   imageUrl: string | null;
   placeholder: boolean;
+  /**
+   * What the writer used, never printed: the cold open's history, the closer and the short
+   * lines, so later issues are told not to repeat them (lib/roast/index.ts PREVIOUS). Absent on
+   * facts-only and older issues.
+   */
+  writerNotes?: { allusion: string | null; closer: string | null; lines: string[] };
 }
 
 export interface DailyFacts {
@@ -1013,8 +1023,20 @@ export interface SendResult {
   error?: string;
 }
 
+/**
+ * A record the old public sign-up form stored (keys.subscriber). Nothing creates new ones: the
+ * public sign-up is gone. Confirmed ones are league recipients until they opt out.
+ */
+export interface Subscriber {
+  email: string;
+  managerKey: string;
+  createdAt: number;
+  confirmed: boolean;
+}
+
 export interface UnsubscribeResult {
   ok: boolean;
+  /** "not_found" is kept for compatibility; unsubscribing is idempotent and answers "unsubscribed". */
   status: "unsubscribed" | "not_found" | "bad_signature" | "error";
 }
 

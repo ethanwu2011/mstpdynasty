@@ -323,7 +323,6 @@ describe("the batched writer", () => {
       fcPositionRank: 12,
       reach: fcRank - 7,
       verdict: "reach",
-      secondsOnClock: null,
       pickedAt: null,
       positionRun: 1,
     });
@@ -353,13 +352,19 @@ describe("line checks", () => {
     expect(checkLine("Manager 3 has scored 700 points.", rows[2], allowed, exempt).reasons.join()).toMatch(/700 \(not in FACTS\)/);
   });
 
-  it("never announces itself: roast, burn and cooked are out unless a team is named that", () => {
-    for (const bad of ["Manager 3 got roasted by his own lineup.", "Manager 3 is cooked at 1-4.", "Manager 3 burned his season by week 5.", "Manager 3 is a savage at 1-4."]) {
+  it("never announces itself: the newsletter's joke-announcing words are out unless a team is named that", () => {
+    // The same list the newsletter's post-check uses (ANNOUNCE_TERMS in lib/roast/banned.ts).
+    for (const bad of ["Manager 3 got roasted by his own lineup.", "Manager 3 is a savage at 1-4.", "Sick burn, Manager 3 is 1-4.", "Manager 3 is 1-4, no offense."]) {
       expect(checkLine(bad, rows[2], allowed, exempt).reasons.join()).toMatch(/banned/);
     }
-    const burn: SurfaceRow = { id: "9", managers: ["Kevin"], facts: { manager: "Kevin", team: "Burn Notice" } };
-    const b = lineSources([burn], {});
-    expect(checkLine("Kevin named his team Burn Notice and then played like it.", burn, b.allowed, b.exempt).reasons).toEqual([]);
+    const roast: SurfaceRow = { id: "9", managers: ["Kevin"], facts: { manager: "Kevin", team: "Pot Roast" } };
+    const b = lineSources([roast], {});
+    expect(checkLine("Kevin named his team Pot Roast and then played like it.", roast, b.allowed, b.exempt).reasons).toEqual([]);
+  });
+
+  it("slurs and the medical or school theme are out on a line exactly as in an issue", () => {
+    expect(checkLine("Manager 3 is 1-4 and needs a doctor.", rows[2], allowed, exempt).reasons.join()).toMatch(/banned/);
+    expect(checkLine("Manager 3 is 1-4, a report card nobody signs.", rows[2], allowed, exempt).reasons.join()).toMatch(/banned/);
   });
 
   it("slot ids never count as numbers a line may state", () => {
@@ -379,7 +384,7 @@ describe("line checks", () => {
     const msg = linesMessage("odds", rows, { "Manager 1": "Still thinks kickers matter." }, { context: "Draft is live." });
     expect(msg.split("\n").slice(0, 3)).toEqual([
       "LINES: season odds",
-      "TASK: One line per team on its season odds. The playoff and title odds are the headline. Draft is live. Each line is one sentence of at most 30 words about that row's manager, by first name. Reply with the JSON object only.",
+      "TASK: One line per team on its season odds. The playoff and title odds are the headline. Draft is live. Each slot is one row of a table printed on the site: its SLOTS line names the manager the row is about, and FACTS holds that row's facts under the same slot id. Write each line in the same voice as an ITEM, cut to one sentence of at most 30 words about that row's manager, by first name: the row's number, then the worst reading of it. At most one epic clause. Another row's manager and number are fair for contrast. No two lines on one table share a shape or a punchline.",
       "SLOTS:",
     ]);
     expect(msg).toContain("@@r2: Manager 2");

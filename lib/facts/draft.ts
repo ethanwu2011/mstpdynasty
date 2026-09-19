@@ -1,7 +1,8 @@
 /**
  * Draft facts: every pick with FantasyCalc reach/steal, position runs, who is on the clock,
- * time on the clock (when the tick recorded first-seen times, minus the draft's overnight
- * autopause) and grades once complete.
+ * when picks resume while the draft is paused or in Sleeper's overnight autopause (the time is
+ * always config/draft.ts, never Sleeper's autopause end) and grades once complete. There is no
+ * time on the clock: the tick only knows when it first noticed a pick, not when it was made.
  *
  * Reach = expected pick - pickNo: positive = taken earlier than FantasyCalc says (a reach),
  * negative = the player fell (a steal). (The lib/types.ts comment writes the formula the other
@@ -11,6 +12,7 @@
  * rank by FantasyCalc value within that rookie class, since overall ranks would make every
  * rookie pick look like a steal.
  */
+import { DRAFT_RESUMES_LABEL } from "@/config/draft";
 import { teamRef } from "@/lib/league";
 import * as store from "@/lib/store";
 import type {
@@ -119,35 +121,31 @@ export function parsePickSeen(raw: unknown, draftId?: string): Map<number, numbe
   return out;
 }
 
-const DAY_MS = 24 * 3600 * 1000;
-
 /**
- * Milliseconds between `from` and `to` that fall inside the draft's daily autopause window.
- * Sleeper stores the window as minutes after midnight UTC (MSTP: 180 to 840, which is
- * 11 PM to 10 AM Eastern in daylight time); a window may wrap past midnight. The clock does
- * not run during it, so it is not "time on the clock".
+ * Whether Sleeper's own overnight autopause is on right now. Sleeper keeps the draft "drafting"
+ * through it; the window is in minutes after midnight UTC (180 to 840 is 11 PM to 10 AM EDT) and
+ * may wrap past midnight.
  */
-export function autopausedMs(from: number, to: number, settings: SleeperDraft["settings"]): number {
+export function inAutopause(settings: SleeperDraft["settings"] | null | undefined, now: number): boolean {
+  if (!settings?.autopause_enabled) return false;
   const start = settings.autopause_start_time;
   const end = settings.autopause_end_time;
-  if (!settings.autopause_enabled || start == null || end == null || start === end || to <= from) return 0;
-  if (to - from > 400 * DAY_MS) return 0;
-  let paused = 0;
-  // Start one day early so a window that began the previous day and wraps midnight is counted.
-  for (let day = Math.floor(from / DAY_MS) * DAY_MS - DAY_MS; day < to; day += DAY_MS) {
-    const ws = day + start * 60_000;
-    const we = end > start ? day + end * 60_000 : day + DAY_MS + end * 60_000;
-    const lo = Math.max(from, ws);
-    const hi = Math.min(to, we);
-    if (hi > lo) paused += hi - lo;
-  }
-  return paused;
+  if (typeof start !== "number" || typeof end !== "number" || start === end) return false;
+  const d = new Date(now);
+  const m = d.getUTCHours() * 60 + d.getUTCMinutes();
+  return start < end ? m >= start && m < end : m >= start || m < end;
 }
 
-/** Seconds the clock actually ran between the previous pick (or the start) and this one. */
-export function clockSeconds(prevAt: number | null, pickedAt: number | null, settings: SleeperDraft["settings"]): number | null {
-  if (pickedAt === null || prevAt === null || pickedAt < prevAt) return null;
-  return Math.max(0, Math.round((pickedAt - prevAt - autopausedMs(prevAt, pickedAt, settings)) / 1000));
+/**
+ * When picks resume, for a draft in this state: the commissioner's time (config/draft.ts) while
+ * the draft is paused, or while Sleeper's overnight autopause is on (pass the draft settings and
+ * the clock), otherwise nothing. The time itself never comes from Sleeper: its autopause ends
+ * at 10 AM, and the league picks again at 8.
+ */
+export function resumesAtFor(status: SleeperDraft["status"], settings?: SleeperDraft["settings"] | null, now = Date.now()): string | null {
+  if (status === "paused") return DRAFT_RESUMES_LABEL;
+  if (status === "drafting" && inAutopause(settings, now)) return DRAFT_RESUMES_LABEL;
+  return null;
 }
 
 export interface DraftEnv {
@@ -196,8 +194,6 @@ export function buildDraftPicks(env: DraftEnv): DraftPickFact[] {
     const fc = snap?.bySleeperId[p.player_id] ?? null;
     const fcRank = rookie ? (rookie.get(p.player_id) ?? null) : (fc?.overallRank ?? null);
     const reach = fcRank === null ? null : fcRank - p.pick_no;
-    const pickedAt = env.seen.get(p.pick_no) ?? null;
-    const prevAt = p.pick_no === 1 ? draft.start_time : (env.seen.get(p.pick_no - 1) ?? null);
     return {
       kind: "draft_pick",
       draftId: draft.draft_id,
@@ -210,8 +206,7 @@ export function buildDraftPicks(env: DraftEnv): DraftPickFact[] {
       fcPositionRank: fc?.positionRank ?? null,
       reach,
       verdict: verdictFor(p.pick_no, reach),
-      secondsOnClock: clockSeconds(prevAt, pickedAt, draft.settings),
-      pickedAt,
+      pickedAt: env.seen.get(p.pick_no) ?? null,
       positionRun: runLengths[i],
     };
   });
@@ -252,6 +247,7 @@ export async function computeDraftFacts(loader: FactsLoader): Promise<DraftFacts
       teams: ctx.rosters.length,
       picks: [],
       onTheClock: null,
+      resumesAt: null,
       positionRuns: [],
       grades: null,
       placeholder: false,
@@ -284,6 +280,7 @@ export async function computeDraftFacts(loader: FactsLoader): Promise<DraftFacts
     teams,
     picks,
     onTheClock,
+    resumesAt: resumesAtFor(draft.status, draft.settings, Date.now()),
     positionRuns: positionRuns(picks.map((p) => ({ pickNo: p.pickNo, position: p.player.position }))),
     grades: draft.status === "complete" && picks.length ? draftGrades(ctx, picks) : null,
     placeholder: false,

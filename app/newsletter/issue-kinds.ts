@@ -51,6 +51,12 @@ export function kindFromSlug(slug: string | undefined): IssueKind | null {
 
 export const issueName = (k: IssueKind) => ISSUE_TITLES[k] ?? k;
 
+/** The name one issue prints under ("The Daily", "Week 7 Recap"), whatever older name it was stored with. */
+export const issueTitleOf = (i: Pick<Issue, "kind" | "week">) => issueTitle(i.kind, i.week);
+
+/** The writer's headline (the dek it wrote), or null for a facts-only issue with a code-written dek. */
+export const issueHeadline = (i: Pick<Issue, "dek" | "dekSource" | "factsOnly">) => (i.dekSource === "model" && !i.factsOnly && i.dek?.trim() ? i.dek.trim() : null);
+
 /** Noon UTC on the issue's ET date: always the same calendar day in New York. */
 export const issueDay = (i: Pick<Issue, "date">) => Date.parse(`${i.date}T12:00:00Z`);
 

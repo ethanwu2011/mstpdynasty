@@ -8,6 +8,7 @@ import { Panel, type PanelSpan } from "@/components/Panel";
 import { RoastBlock, type RoastBlockData } from "@/components/RoastBlock";
 import { lineOf } from "@/components/RowLine";
 import { SampleMark, Tag } from "@/components/Tag";
+import { issueTitle } from "@/lib/roast";
 import type { Issue, ShameBoard, ShameEntry, ShameKind, SurfaceLineMap } from "@/lib/types";
 import { etStamp, fmtInt, fmtPts } from "../_lib/format";
 import { CADENCE, issueLabel, ISSUE_ORDER } from "../newsletter/issue-kinds";
@@ -69,7 +70,7 @@ export function IssuesPanel({
               Latest · {etStamp(latest.sentAt ?? latest.createdAt)}
               {latest.placeholder ? <SampleMark /> : null}
             </span>
-            <span className="type-display text-j2 group-hover:underline group-hover:decoration-4">{latest.title}</span>
+            <span className="type-display text-j2 group-hover:underline group-hover:decoration-4">{issueTitle(latest.kind, latest.week)}</span>
             {latest.dek ? <span className="text-body font-semibold">{latest.dek}</span> : null}
           </Link>
         ) : (

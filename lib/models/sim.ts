@@ -8,6 +8,12 @@
  * 1 v winner(4/5) and 2 v winner(3/6). Reseeded brackets pair the best remaining seed with the
  * worst every round. Sleeper also plays 3rd- and 5th-place games (the 5th-place game in round
  * two, Week 16 for a Week 15 start); they decide no title and are not simulated.
+ *
+ * The 1.01 (next year's first rookie pick) goes to the team with the lowest Max PF (points its
+ * best possible lineup would have scored all season) among the teams that miss the playoffs, and
+ * then to whoever holds that team's first-round pick. Max PF is the team's Max PF so far plus,
+ * every simulated week, its simulated score and the points its best lineup has added on top of
+ * its score per game so far.
  */
 import type { RosterId } from "@/lib/types";
 import { createRng } from "./math";
@@ -18,6 +24,10 @@ export interface SimTeamInput {
   losses: number;
   ties: number;
   pointsFor: number;
+  /** Max PF so far (Sleeper's "ppts": the best possible lineup's points). Default: pointsFor. */
+  maxPointsFor?: number;
+  /** Points the best lineup adds over the actual score per game so far (Max PF - PF per game). Default 0. */
+  maxGap?: number;
   /** Weekly score distribution. */
   mean: number;
   sd: number;
@@ -44,6 +54,7 @@ export interface SimCounts {
   bye: number[];
   title: number[];
   last: number[];
+  /** Holder of the 1.01: lowest Max PF among the teams that missed the playoffs. */
   firstPick: number[];
   /** Sum over runs of final regular-season wins (ties count half). */
   winsSum: number[];
@@ -67,6 +78,8 @@ export function simulateSeason(input: SimInput): SimCounts {
   const sds = input.teams.map((t) => t.sd);
   const baseWins = input.teams.map((t) => t.wins + t.ties / 2);
   const basePf = input.teams.map((t) => t.pointsFor);
+  const baseMax = input.teams.map((t) => Math.max(t.maxPointsFor ?? t.pointsFor, t.pointsFor));
+  const gaps = input.teams.map((t) => Math.max(0, t.maxGap ?? 0));
   const weeks = input.weeks.map((pairs) =>
     pairs
       .map(([a, b]) => [idx.get(a), idx.get(b)] as const)
@@ -96,6 +109,7 @@ export function simulateSeason(input: SimInput): SimCounts {
   const rng = createRng(input.seed);
   const wins = new Float64Array(n);
   const pf = new Float64Array(n);
+  const maxPf = new Float64Array(n);
   const standing: number[] = ids.map((_, i) => i);
   const seedOf = new Int32Array(n);
   const score = (i: number) => means[i] + sds[i] * rng.normal();
@@ -116,6 +130,7 @@ export function simulateSeason(input: SimInput): SimCounts {
     for (let i = 0; i < n; i++) {
       wins[i] = baseWins[i];
       pf[i] = basePf[i];
+      maxPf[i] = baseMax[i];
     }
     for (const pairs of weeks) {
       for (const [a, b] of pairs) {
@@ -123,6 +138,8 @@ export function simulateSeason(input: SimInput): SimCounts {
         const sb = score(b);
         pf[a] += sa;
         pf[b] += sb;
+        maxPf[a] += sa + gaps[a];
+        maxPf[b] += sb + gaps[b];
         if (sa > sb) wins[a] += 1;
         else if (sb > sa) wins[b] += 1;
         else {
@@ -139,7 +156,12 @@ export function simulateSeason(input: SimInput): SimCounts {
     }
     const lastIdx = standing[n - 1];
     counts.last[lastIdx]++;
-    counts.firstPick[holder[lastIdx]]++;
+    // The 1.01: lowest Max PF among the teams outside the playoff field (everyone when no team
+    // misses). A tie goes to the team that finished lower.
+    const outside = P > 0 && P < n ? standing.slice(P) : standing;
+    let worst = outside[0];
+    for (const i of outside) if (maxPf[i] <= maxPf[worst]) worst = i;
+    counts.firstPick[holder[worst]]++;
     if (P === 0) continue;
     for (let s = 0; s < P; s++) counts.playoff[standing[s]]++;
     for (let s = 0; s < byes; s++) counts.bye[standing[s]]++;

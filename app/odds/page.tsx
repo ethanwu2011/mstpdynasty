@@ -201,7 +201,7 @@ function HowItWorks({ ctx, sim, future, drafting }: { ctx: LeagueContext; sim: P
         )}
         {drafting ? null : (
           <p className="m-0 text-fine text-ink-muted">
-            <span aria-hidden>* </span>1.01 odds are approximate: they assume the worst record picks first in next year&apos;s rookie draft.
+            <span aria-hidden>* </span>1.01 odds are approximate: next year&apos;s first rookie pick goes to the lowest Max PF among the teams that miss the playoffs.
           </p>
         )}
         <dl className="m-0 mt-auto border-t-2 border-ink">

@@ -11,7 +11,7 @@ import { SampleMark } from "@/components/Tag";
 import { formatEt } from "@/lib/time";
 import type { Issue, IssueKind, SeasonPhase } from "@/lib/types";
 import { issueEvent, issueToBlock } from "../_lib/roast-view";
-import { CADENCE, issueDay, issueLabel, ISSUE_ORDER, KIND_PLURAL, kindSlug, monthLabel } from "./issue-kinds";
+import { CADENCE, issueDay, issueLabel, ISSUE_ORDER, issueTitleOf, KIND_PLURAL, kindSlug, monthLabel } from "./issue-kinds";
 
 export interface NewsletterViewProps {
   /** null when the archive could not be read. */
@@ -51,7 +51,7 @@ function leadBlock(issue: Issue): RoastBlockData {
     .join("\n\n");
   return {
     ...issueToBlock(issue),
-    kicker: issue.week && !/week/i.test(issue.title) ? `Week ${issue.week}` : undefined,
+    kicker: issue.week && !/week/i.test(issueTitleOf(issue)) ? `Week ${issue.week}` : undefined,
     text,
     tags: <IssueTags issue={issue} />,
   };
@@ -130,7 +130,7 @@ function ArchiveRow({ issue }: { issue: Issue }) {
           />
         </span>
         <span className="flex min-w-0 flex-col gap-1">
-          <span className="type-display text-j2 group-hover:underline group-hover:decoration-4">{issue.title}</span>
+          <span className="type-display text-j2 group-hover:underline group-hover:decoration-4">{issueTitleOf(issue)}</span>
           <span className="type-label text-ink-muted">{issue.week ? `Week ${issue.week}` : `${issue.season} season`}</span>
         </span>
         <span className="col-start-2 flex min-w-0 flex-col gap-1 md:col-start-auto">

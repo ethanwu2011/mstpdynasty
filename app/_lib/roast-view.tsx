@@ -4,6 +4,7 @@
  */
 import type { RoastBlockData, RoastReceiptItem } from "@/components/RoastBlock";
 import { SampleMark } from "@/components/Tag";
+import { issueTitle } from "@/lib/roast/plan";
 import { formatEt } from "@/lib/time";
 import type { DraftPickFact, Issue, Roast, StandingRow, TradeFact, WaiverFact, WeeklyFacts } from "@/lib/types";
 import { fmtInt, fmtPts, fmtSigned, ordinal, pickLabel } from "./format";
@@ -190,10 +191,12 @@ export function issueToBlock(issue: Issue): RoastBlockData {
     .filter((b): b is { type: "paragraph"; text: string } => b.type === "paragraph")
     .slice(0, 2)
     .map((b) => b.text);
+  // The name from kind and week, so an issue stored under an older name shows the current one.
+  const title = issueTitle(issue.kind, issue.week);
   return {
-    event: issueEvent(issue),
-    kicker: issue.week && !/week/i.test(issue.title) ? `Week ${issue.week}` : undefined,
-    victim: issue.title,
+    event: issueEvent({ ...issue, title }),
+    kicker: issue.week && !/week/i.test(title) ? `Week ${issue.week}` : undefined,
+    victim: title,
     lede: issue.dek,
     text: paragraphs.join("\n\n") || issue.note || "",
     at: issue.sentAt ?? issue.createdAt,

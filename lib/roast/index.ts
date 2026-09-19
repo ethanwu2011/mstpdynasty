@@ -7,16 +7,23 @@
  *      lines, the slots the model fills, and the compact FACTS payload (plus league memory:
  *      rap sheets, Loser of the Week crowns, draft slots, odds movement)
  *   2. call (llm.ts): one request with the frozen, cached system prompt (persona.ts)
- *   3. check (postcheck.ts): a slot passes only if EVERY sentence passes (numbers in FACTS and
- *      next to the right name, no invented streaks, scores or box-score stats, no theme words,
- *      filler, banned shapes or caps). Removing one sentence would leave a punchline with no
- *      setup, so a failing slot is re-asked once (one call for all failing slots, with a note
- *      saying what failed), and if it fails again its code-written fallback is used in full
+ *   3. check (postcheck.ts): a slot passes only if EVERY sentence passes (league stats in FACTS
+ *      and next to the right name, exact claims like "17 spots early", "age 29", "30 picks left",
+ *      "8 AM" and "round 4 resumes" equal to their FACTS value, history and hyperbole numbers
+ *      free, no invented streaks, scores, pick times or box-score stats, no theme words, slurs,
+ *      filler or banned shapes, at most one all-caps rant sentence and one cuck chair per issue). Removing a
+ *      sentence can leave a punchline with no setup, so a failing slot is re-asked once (one
+ *      call for all failing slots, with a note saying what failed). If it fails again and only
+ *      one sentence in the middle failed, the rest is kept (the punchline and the manager's name
+ *      survive); otherwise its code-written fallback is used in full
  *   4. render: slots become paragraphs; anything missing falls back to code-written lines
+ * Issues also see PREVIOUS (the last issues' history, headlines, closers and short lines, from
+ * each issue's never-printed writerNotes), the same way item posts see RECENT.
  * Never throws for LLM reasons: no key, refusal, API error or too many failed slots all
  * publish facts only (factsOnly: true, note FACTS_ONLY_NOTE, which is null: no apology).
  */
 import "server-only";
+import { listIssues } from "@/lib/archive";
 import { getLeagueContext } from "@/lib/league";
 import * as store from "@/lib/store";
 import { etDate } from "@/lib/time";
@@ -35,16 +42,16 @@ import type {
 } from "@/lib/types";
 import { configured } from "@/lib/env";
 import { draftFacts } from "@/lib/facts";
-import { ITEM_SLOT_ID, planItem, type ItemPlan } from "./items";
+import { planItem, type ItemPlan } from "./items";
 import { addUsage, callRoastModel, hasRoastClient, ISSUE_REQUEST, ITEM_REQUEST, sharedStoreMissing } from "./llm";
-import { draftContext, EMPTY_MEMORY, issueMemory, type PayloadMemory } from "./memory";
+import { draftContext, EMPTY_MEMORY, issueMemory, starterCounts, type PayloadMemory } from "./memory";
 import { loadRoastNotes, notesFor } from "./notes";
-import { planDaily, planDraftGrades, planThursday, planWeekly, type IssuePlan, type SlotSpec, type WaiverMode } from "./plan";
-import { AllowedNumbers, checkText, describeDrops, limitExclamations, parseSlots, sanitize, type Dropped } from "./postcheck";
+import { ALLUSION_SLOT, HIDDEN_SLOTS, planDaily, planDraftGrades, planThursday, planWeekly, type IssuePlan, type SlotSpec, type WaiverMode } from "./plan";
+import { AllowedNumbers, checkText, describeDrops, limitExclamations, parseSlots, sanitize, splitSentences, type Dropped } from "./postcheck";
 
 export { ISSUE_TITLES, issueTitle } from "./plan";
 export { SYSTEM_PROMPT } from "./persona";
-export { issueMemory } from "./memory";
+export { draftContext, issueMemory } from "./memory";
 export { buildRoastRequest, hasRoastClient, MAX_WRITER_CALLS_PER_DAY, ROAST_MODEL, setRoastClient, sharedStoreMissing } from "./llm";
 export {
   checkLine,
@@ -79,11 +86,10 @@ export {
   tradeRows,
   type TeamPageInput,
 } from "./surface-rows";
-export { draftContext } from "./memory";
 
 /**
- * The note on a facts-only issue: none. The facts simply run (docs/SITE_SPEC.md ROUND 2: nothing
- * a reader sees talks about the writer). Kept as an export so callers and tests read one value.
+ * The note on a facts-only issue: none. The facts simply run (never announce the writer:
+ * nothing a reader sees talks about it). Kept as an export so callers and tests read one value.
  */
 export const FACTS_ONLY_NOTE: string | null = null;
 
@@ -95,6 +101,18 @@ export const MAX_ITEM_SENTENCES = 3;
 
 /** How many recent roasts of the same kind an item roast sees, so it does not repeat itself. */
 export const RECENT_ROASTS = 8;
+
+/** How many published issues PREVIOUS looks back over (allusions; fewer for the other lists). */
+export const PREVIOUS_ISSUES = 10;
+
+/** A sentence this short is a signature line ("That is the whole joke."): later issues must not repeat it. */
+const SHORT_LINE_WORDS = 7;
+
+/** All-caps rant sentences allowed per issue (never in the headline, never in an item). */
+export const CAPS_PER_ISSUE = 1;
+
+/** Cuck-chair sentences allowed per issue (the persona's rule, enforced by the post-check). */
+export const CUCK_CHAIR_PER_ISSUE = 1;
 
 export interface RoastOptions {
   /** Clock for the issue date and createdAt (tests). */
@@ -127,8 +145,11 @@ interface Promptable {
   facts: Record<string, unknown>;
 }
 
-/** The per-request user message. Deterministic for the same facts and lore. */
-export function userMessage(p: Promptable, lore: Record<string, string>): string {
+/**
+ * The per-request user message. Deterministic for the same facts, lore and previous issues.
+ * PREVIOUS (issues only, when there is any) goes last, so everything before it stays the same.
+ */
+export function userMessage(p: Promptable, lore: Record<string, string>, previous: Record<string, unknown> | null = null): string {
   return [
     p.header,
     `TASK: ${p.task}`,
@@ -138,6 +159,7 @@ export function userMessage(p: Promptable, lore: Record<string, string>): string
     JSON.stringify(p.facts),
     "LORE:",
     JSON.stringify(lore),
+    ...(previous && Object.keys(previous).length ? ["PREVIOUS:", JSON.stringify(previous)] : []),
   ].join("\n");
 }
 
@@ -154,7 +176,7 @@ function logDrops(label: string, dropped: Dropped[]): void {
 /** The note appended to a retry: what failed, in plain words. */
 function retryNote(reasons: string[], extra = ""): string {
   const what = reasons.length ? reasons.slice(0, 12).join("; ") : "material FACTS does not support";
-  return `\nNOTE: your last draft broke the rules with: ${what}. ${extra}Write it again. Use only numbers that appear in FACTS, each in the same sentence as (or right after) the name it belongs to, and none of the banned words or shapes.`;
+  return `\nNOTE: your last draft broke the rules with: ${what}. ${extra}Write it again. Every league number (points, picks, spots, ranks, ages, dollars, records, streaks, percentages, anything next to a name or a stat word) must appear in FACTS, in the same sentence as (or right after) the name it belongs to. History and hyperbole numbers stay in sentences with no league name and no stat word. None of the banned words or shapes.`;
 }
 
 /* ------------------------------------------------------------------ */
@@ -166,6 +188,14 @@ function retryNote(reasons: string[], extra = ""): string {
  * FACTS; the sections are the same with or without it.
  */
 export function planIssue(facts: IssueFacts, ctx: LeagueContext, memory: PayloadMemory = EMPTY_MEMORY): IssuePlan {
+  const plan = planFor(facts, ctx, memory);
+  // The hidden allusion slot rides right after the cold open it names.
+  const at = plan.slots.findIndex((s) => s.id === "cold-open");
+  if (at >= 0) plan.slots.splice(at + 1, 0, ALLUSION_SLOT);
+  return plan;
+}
+
+function planFor(facts: IssueFacts, ctx: LeagueContext, memory: PayloadMemory): IssuePlan {
   switch (facts.kind) {
     case "weekly_recap":
       return planWeekly(facts, memory);
@@ -176,6 +206,41 @@ export function planIssue(facts: IssueFacts, ctx: LeagueContext, memory: Payload
     case "draft_grades":
       return planDraftGrades(facts, memory);
   }
+}
+
+/**
+ * What the last published issues already used, for PREVIOUS: the histories of their cold opens,
+ * their headlines, closers and short signature lines. Null when there is nothing (a new league,
+ * or only facts-only issues). Never throws.
+ */
+export async function previousIssues(leagueId: string, slug: string): Promise<Record<string, unknown> | null> {
+  try {
+    const issues = (await listIssues(leagueId, { limit: PREVIOUS_ISSUES + 1 })).filter((i) => i.slug !== slug && !i.factsOnly).slice(0, PREVIOUS_ISSUES);
+    const uniq = (xs: Array<string | null | undefined>) => [...new Set(xs.map((x) => x?.trim()).filter((x): x is string => Boolean(x)))];
+    const out: Record<string, unknown> = {};
+    const allusions = uniq(issues.map((i) => i.writerNotes?.allusion));
+    const headlines = uniq(issues.filter((i) => i.dekSource === "model").map((i) => i.dek)).slice(0, 5);
+    const closers = uniq(issues.map((i) => i.writerNotes?.closer)).slice(0, 3);
+    const lines = uniq(issues.slice(0, 3).flatMap((i) => i.writerNotes?.lines ?? [])).slice(0, 15);
+    if (allusions.length) out.allusions = allusions;
+    if (headlines.length) out.headlines = headlines;
+    if (closers.length) out.closers = closers;
+    if (lines.length) out.lines = lines;
+    return Object.keys(out).length ? out : null;
+  } catch {
+    return null;
+  }
+}
+
+/** The never-printed notes an issue keeps for PREVIOUS. */
+function writerNotesFor(raw: Map<string, string>, prose: Map<string, string>, names: string[]): NonNullable<Issue["writerNotes"]> {
+  const allusion = sanitize(raw.get(ALLUSION_SLOT.id) ?? "").split("\n")[0].trim().slice(0, 120) || null;
+  const closer = prose.get("closer")?.replace(/\s+/g, " ").trim() || null;
+  const lines = [...prose.entries()]
+    .filter(([id]) => id !== "dek")
+    .flatMap(([, text]) => splitSentences(text.replace(/\s+/g, " "), names))
+    .filter((x) => x.split(/\s+/).length <= SHORT_LINE_WORDS);
+  return { allusion, closer, lines: [...new Set(lines)] };
 }
 
 const paragraphs = (text: string): IssueBlock[] =>
@@ -199,28 +264,41 @@ export function renderSections(plan: IssuePlan, prose: Map<string, string> | nul
     .filter((sec) => sec.blocks.length > 0);
 }
 
-/** Slots from one reply that pass every check, and what failed in the rest. */
-function acceptSlots(reply: string, slots: SlotSpec[], allowed: AllowedNumbers, exempt: string, label: string) {
+/**
+ * Slots from one reply that pass every check, and what failed in the rest. `partial` holds, for
+ * a failed slot, what is left when exactly one sentence failed and it was not the last one, at
+ * least two sentences remain and the slot still names its manager: a last resort after the retry.
+ * `caps` is the issue's all-caps allowance, spent in reading order by accepted slots only.
+ */
+function acceptSlots(reply: string, slots: SlotSpec[], allowed: AllowedNumbers, exempt: string, label: string, caps: { left: number }, cuck: { left: number }) {
   const raw = parseSlots(reply);
   const accepted = new Map<string, string>();
+  const partial = new Map<string, string>();
   const failed: SlotSpec[] = [];
   const reasons: string[] = [];
   for (const s of slots) {
+    if (HIDDEN_SLOTS.has(s.id)) continue;
     const text = raw.get(s.id);
     if (!text) {
       failed.push(s);
       reasons.push(`slot ${s.id} was missing`);
       continue;
     }
-    const checked = checkText(text, allowed, exempt);
+    const before = caps.left;
+    const beforeCuck = cuck.left;
+    const checked = checkText(text, allowed, exempt, s.id === "dek" ? { cuck } : { caps, cuck });
     logDrops(`${label} ${s.id}`, checked.dropped);
     if (checked.dropped.length === 0 && checked.text) accepted.set(s.id, checked.text);
     else {
+      caps.left = before;
+      cuck.left = beforeCuck;
       failed.push(s);
       reasons.push(...describeDrops(checked.dropped));
+      const named = !s.manager || new RegExp(`(?<![A-Za-z])${s.manager.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![A-Za-z])`).test(checked.text);
+      if (checked.dropped.length === 1 && !checked.lastDropped && checked.kept >= 2 && named && checked.capsUsed === 0 && checked.cuckUsed === 0) partial.set(s.id, checked.text);
     }
   }
-  return { accepted, failed, reasons: [...new Set(reasons)] };
+  return { raw, accepted, partial, failed, reasons: [...new Set(reasons)] };
 }
 
 /** Write a full newsletter issue from its facts. Never throws for LLM reasons. */
@@ -230,7 +308,7 @@ export async function roastIssue(kind: IssueKind, facts: IssueFacts, ctx?: Leagu
   const date = etDate(now);
   if (facts.kind !== kind) console.warn(`[roast] roastIssue: kind ${kind} does not match facts.kind ${facts.kind}; using facts.kind`);
   const writer = hasRoastClient();
-  const memory = writer ? await issueMemory(facts, c, now).catch(() => EMPTY_MEMORY) : EMPTY_MEMORY;
+  const memory = writer ? await issueMemory(facts, c).catch(() => EMPTY_MEMORY) : EMPTY_MEMORY;
   const plan = planIssue(facts, c, memory);
   const slug = `${date}-${plan.kind.replace(/_/g, "-")}`;
   const lore = writer ? notesFor(await loadRoastNotes(), plan.managers) : {};
@@ -260,35 +338,49 @@ export async function roastIssue(kind: IssueKind, facts: IssueFacts, ctx?: Leagu
     placeholder: plan.placeholder,
   };
 
-  const res = await callRoastModel(userMessage(plan, lore), label, ISSUE_REQUEST);
+  const previous = writer ? await previousIssues(c.leagueId, slug) : null;
+  const res = await callRoastModel(userMessage(plan, lore, previous), label, ISSUE_REQUEST);
   if (!res.ok) return { ...base, model: res.model, usage: res.usage };
   let usage: RoastUsage | null = res.usage;
   let model: string | null = res.model;
 
   const { allowed, exempt } = numberSources(plan, lore);
-  const first = acceptSlots(res.text, plan.slots, allowed, exempt, label);
+  const visible = plan.slots.filter((s) => !HIDDEN_SLOTS.has(s.id));
+  const caps = { left: CAPS_PER_ISSUE };
+  const cuck = { left: CUCK_CHAIR_PER_ISSUE };
+  const first = acceptSlots(res.text, visible, allowed, exempt, label, caps, cuck);
   const accepted = first.accepted;
   let failed = first.failed;
+  let second: ReturnType<typeof acceptSlots> | null = null;
   if (failed.length) {
     // One more call for just the failing slots. The system prompt is cached, so this is cheap.
     const retry = { ...plan, slots: failed };
-    const again = await callRoastModel(userMessage(retry, lore) + retryNote(first.reasons), `${label} retry`, ISSUE_REQUEST);
+    const again = await callRoastModel(userMessage(retry, lore, previous) + retryNote(first.reasons), `${label} retry`, ISSUE_REQUEST);
     usage = addUsage(usage, again.usage);
     model = again.model ?? model;
     if (again.ok) {
-      const second = acceptSlots(again.text, failed, allowed, exempt, `${label} retry`);
+      second = acceptSlots(again.text, failed, allowed, exempt, `${label} retry`, caps, cuck);
       for (const [id, text] of second.accepted) accepted.set(id, text);
       failed = second.failed;
     }
   }
-  if (!accepted.size || failed.length / Math.max(1, plan.slots.length) > MAX_FAILED_SLOT_SHARE) {
-    console.warn(`[roast] ${label}: ${failed.length} of ${plan.slots.length} slots failed the checks twice; publishing facts only`);
+  // Last resort: a slot that lost one sentence in the middle keeps the rest (never its punchline).
+  for (const s of failed) {
+    const kept = second?.partial.get(s.id) ?? first.partial.get(s.id);
+    if (kept) {
+      console.warn(`[roast] ${label}: kept ${s.id} without its one failed sentence`);
+      accepted.set(s.id, kept);
+    }
+  }
+  failed = failed.filter((s) => !accepted.has(s.id));
+  if (!accepted.size || failed.length / Math.max(1, visible.length) > MAX_FAILED_SLOT_SHARE) {
+    console.warn(`[roast] ${label}: ${failed.length} of ${visible.length} slots failed the checks twice; publishing facts only`);
     return { ...base, model, usage };
   }
   if (failed.length) console.warn(`[roast] ${label}: code fallback for ${failed.map((s) => s.id).join(", ")}`);
 
   // One exclamation point per issue at most, in reading order.
-  const order = plan.slots.map((s) => s.id).filter((id) => accepted.has(id));
+  const order = visible.map((s) => s.id).filter((id) => accepted.has(id));
   const limited = limitExclamations(order.map((id) => accepted.get(id)!));
   const prose = new Map(order.map((id, i) => [id, limited[i]]));
   const dek = prose.get("dek")?.split("\n")[0]?.trim();
@@ -301,6 +393,7 @@ export async function roastIssue(kind: IssueKind, facts: IssueFacts, ctx?: Leagu
     note: null,
     model,
     usage,
+    writerNotes: writerNotesFor(first.raw, prose, allowed.names),
   };
 }
 
@@ -342,8 +435,8 @@ async function writeItem(plan: ItemPlan, lore: Record<string, string>, recent: s
     usage = addUsage(usage, res.usage);
     model = res.model ?? model;
     if (!res.ok) return { text: null, model, usage };
-    const slots = parseSlots(res.text, ITEM_SLOT_ID);
-    const raw = slots.get(ITEM_SLOT_ID) ?? [...slots.values()][0] ?? "";
+    const slots = parseSlots(res.text, "roast");
+    const raw = slots.get("roast") ?? [...slots.values()][0] ?? "";
     const checked = checkText(raw, allowed, exempt);
     logDrops(plan.id, checked.dropped);
     // Only a clean roast is published: no failed sentence, and no more sentences than asked for.
@@ -356,7 +449,7 @@ async function writeItem(plan: ItemPlan, lore: Record<string, string>, recent: s
   return { text: null, model, usage };
 }
 
-/** 1-3 sentence instant roast of one trade, one waiver batch, or one draft pick. Never throws for LLM reasons. */
+/** 1-3 sentence instant post on one trade, one waiver batch, or one draft pick. Never throws for LLM reasons. */
 export async function roastItem(kind: RoastItemKind, fact: RoastItemFact, ctx?: LeagueContext, opts: RoastOptions = {}): Promise<Roast> {
   const c = ctx ?? (await getLeagueContext());
   const isPick = !Array.isArray(fact) && fact.kind === "draft_pick";
@@ -375,6 +468,8 @@ export async function roastItem(kind: RoastItemKind, fact: RoastItemFact, ctx?: 
     picks,
     draft,
     waiverMode: waiverModeOf(c),
+    commissioner: writer ? (c.managers.find((m) => m.isCommissioner)?.name ?? null) : null,
+    starters: writer && isPick ? starterCounts(c.starterSlots) : null,
   });
   const base: Roast = {
     id: plan.id,

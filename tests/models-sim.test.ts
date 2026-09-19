@@ -68,6 +68,26 @@ describe("bracket", () => {
     expect(c.title[1]).toBe(50); // roster 2: 1 loses to 6, 2 beats 4, then 2 beats 6
   });
 
+  it("the 1.01 goes to the lowest Max PF among the teams that miss the playoffs, not the worst record", () => {
+    // Rosters 7..10 miss the playoffs (worst record: 10). Roster 8 has the lowest Max PF among
+    // them; roster 2 is lower still but makes the playoffs, so it can never land the 1.01.
+    const maxPf: Record<number, number> = { 2: 900, 7: 1300, 8: 1100, 9: 1250, 10: 1400 };
+    const c = simulateSeason({
+      ...base(false),
+      teams: base(false).teams.map((t) => ({ ...t, maxPointsFor: maxPf[t.rosterId] ?? 1500 })),
+    });
+    expect(c.firstPick[7]).toBe(50);
+    expect(c.last[9]).toBe(50);
+    // A traded first follows the pick.
+    const traded = simulateSeason({
+      ...base(false),
+      teams: base(false).teams.map((t) => ({ ...t, maxPointsFor: maxPf[t.rosterId] ?? 1500 })),
+      firstPickHolder: new Map([[8, 3]]),
+    });
+    expect(traded.firstPick[2]).toBe(50);
+    expect(traded.firstPick[7]).toBe(0);
+  });
+
   it("round robin covers every team once per week and every opponent over n - 1 weeks", () => {
     const ids = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
     const met = new Set<string>();
@@ -146,15 +166,20 @@ describe.skipIf(!hasFixtures())("season simulator on the RT season", () => {
   });
 
   it("the 1.01 odds follow traded firsts to the team that holds the pick", async () => {
-    const r = await runSeasonSim({ ctx, fromWeek: 9, seed: 9 });
     const next = String(Number(ctx.season) + 1);
     const holder = new Map(ctx.rosters.map((x) => [x.roster_id, x.roster_id]));
     for (const p of await getTradedPicks(ctx.leagueId)) if (p.season === next && p.round === 1) holder.set(p.roster_id, p.owner_id);
     expect([...holder].some(([o, h]) => o !== h)).toBe(true);
-    for (const t of r.teams) {
-      const expected = r.teams.filter((o) => holder.get(o.team.rosterId) === t.team.rosterId).reduce((s, o) => s + o.lastPlacePct, 0);
-      expect(t.firstPickPct).toBeCloseTo(expected, 6);
-    }
+    // Same seed with and without the trades: who lands the 1.01 (lowest Max PF outside the
+    // playoffs) is the same team either way; only who holds its pick moves.
+    const prep = await prepareSeasonSim(ctx, 9);
+    const own = simulateSeason({ ...prep.input, firstPickHolder: undefined, runs: 2000, seed: 9 });
+    const held = simulateSeason({ ...prep.input, runs: 2000, seed: 9 });
+    expect(held.firstPick.reduce((a, b) => a + b, 0)).toBe(2000);
+    held.rosterIds.forEach((id, i) => {
+      const expected = own.rosterIds.reduce((sum, o, j) => sum + (holder.get(o) === id ? own.firstPick[j] : 0), 0);
+      expect(held.firstPick[i]).toBe(expected);
+    });
   });
 
   it("backtest: odds from the Week 8 standings vs who actually made the playoffs", async () => {

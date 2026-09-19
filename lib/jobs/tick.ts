@@ -33,6 +33,14 @@ export const TICK_LOOKBACK_MS = 7 * DAY_MS;
 const ROAST_CONCURRENCY = 3;
 /** A roast written with the writer configured but kept facts-only (post-check failed) is retried after this. */
 const REROAST_AFTER_MS = 30 * 60_000;
+/**
+ * Bump when the writer's voice changes: every item written in an older voice is written again.
+ * 3: the fake-epic voice of the approved Daily (headline, cold open, per-manager hits), with no
+ * pick-clock times.
+ * 4: that voice merged with round 3 (the same persona and post-check behind the stat-table
+ * lines, the once-per-issue cuck chair enforced by code): every stored item is written again.
+ */
+export const ROAST_VOICE = 4;
 /** Give up on the writer for an item after this many facts-only results while it was configured. */
 const MAX_WRITER_ATTEMPTS = 3;
 const RETRY_ERROR_AFTER_MS = 3600_000;
@@ -53,6 +61,8 @@ interface IndexEntry {
   w?: boolean;
   /** Facts-only results while the writer was configured. */
   n?: number;
+  /** ROAST_VOICE the item was written in. */
+  v?: number;
 }
 type RoastIndex = Record<string, IndexEntry>;
 
@@ -72,10 +82,12 @@ function wants(idx: RoastIndex, id: string, now: number, writerConfigured: boole
   const e = idx[id];
   if (!e) return true;
   if (e.s === "error") return now - e.t > RETRY_ERROR_AFTER_MS;
-  if (e.s === "llm" || !writerConfigured) return false;
+  if (!writerConfigured) return false;
+  if (e.s === "llm") return (e.v ?? 1) < ROAST_VOICE;
   // Written before the writer existed (for example before the API key was added): redo it now.
   if (!e.w) return true;
-  if ((e.n ?? 0) >= MAX_WRITER_ATTEMPTS) return false;
+  // Gave up on the writer: a new voice (and its new checks) gets one more try.
+  if ((e.n ?? 0) >= MAX_WRITER_ATTEMPTS) return (e.v ?? 1) < ROAST_VOICE;
   return now - e.t > REROAST_AFTER_MS;
 }
 
@@ -175,7 +187,7 @@ export async function tickOutcomes(ctx: LeagueContext, now: number): Promise<Job
       if (r.source === "placeholder") return "placeholder" as const;
       await saveRoast({ ...r, id: c.id });
       const prevN = index[c.id]?.n ?? 0;
-      updates[c.id] = { s: r.source, t: now, w: writer, n: writer && r.source !== "llm" ? prevN + 1 : prevN };
+      updates[c.id] = { s: r.source, t: now, w: writer, n: writer && r.source !== "llm" ? prevN + 1 : prevN, v: ROAST_VOICE };
       return "roasted" as const;
     } catch {
       updates[c.id] = { s: "error", t: now };

@@ -322,10 +322,12 @@ export const keys = {
   optOut: (leagueId: string, ref: string) => `league:${leagueId}:optout:${ref}`,
   optOutPrefix: (leagueId: string) => `league:${leagueId}:optout:`,
   /**
-   * Where the old public sign-up form kept its records (removed; they held addresses). Only the
-   * daily job's purge reads this prefix. Nothing writes under it any more.
+   * Subscriber records the old public sign-up form stored, keyed by lowercased email (nothing
+   * writes new ones: there is no public sign-up). Confirmed ones are league recipients until they
+   * opt out; lib/email reads them, and unsubscribe deletes one.
    */
-  legacySubscriberPrefix: (leagueId: string) => `league:${leagueId}:sub:`,
+  subscriber: (leagueId: string, email: string) => `league:${leagueId}:sub:${email.toLowerCase()}`,
+  subscriberPrefix: (leagueId: string) => `league:${leagueId}:sub:`,
   /** Job run log, one entry per run. */
   jobRun: (leagueId: string, startedAt: number) => `league:${leagueId}:job:${startedAt}`,
   jobRunPrefix: (leagueId: string) => `league:${leagueId}:job:`,

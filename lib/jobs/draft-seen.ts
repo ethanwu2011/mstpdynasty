@@ -1,14 +1,15 @@
 /**
  * Draft pick timestamps. Sleeper's pick objects carry no time, so the tick records when it
- * first sees each new pick, and lib/facts reads the result to fill
- * DraftPickFact.pickedAt / secondsOnClock.
+ * first sees each new pick, and lib/facts reads the result to fill DraftPickFact.pickedAt.
+ * That is when the site noticed the pick, not when it was made, so it never becomes a time on
+ * the clock.
  *
  * Store key: keys.snapshot(leagueId, "draft-pick-seen")
  * Value:     { [draftId]: { [pickNo]: epochMs } }
  *
  * When a tick sees exactly one new pick, the time is Sleeper's draft `last_picked` (exact) or
  * the tick time. When several picks landed between ticks, only the latest one gets a time and
- * the others stay unknown: better null than a made-up 0 seconds on the clock.
+ * the others stay unknown: better null than a made-up time.
  */
 import * as store from "@/lib/store";
 import type { SleeperDraft, SleeperDraftPick } from "@/lib/types";

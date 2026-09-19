@@ -1,4 +1,4 @@
-import { leagueEmailsFromEnv, recipientSummary } from "@/lib/email";
+import { readEmailStatus, recipientSummary } from "@/lib/email";
 import { adminSecretProblem, bearerOf, checkAdminAuth, checkCronAuth, clientIp } from "@/lib/email/gate";
 import { allowAdminAttempt } from "@/lib/email/limits";
 import { configured } from "@/lib/env";
@@ -10,13 +10,24 @@ export const dynamic = "force-dynamic";
 
 const NO_STORE = { "cache-control": "no-store" };
 
+/** Names only, never values: which relevant settings this deployment can see. */
+const ENV_NAMES = [
+  "ANTHROPIC_API_KEY", "RESEND_API_KEY", "EMAIL_FROM", "COMMISSIONER_EMAIL", "NEWSLETTER_MODE", "LEAGUE_EMAILS",
+  "KV_REST_API_URL", "KV_REST_API_TOKEN", "UPSTASH_REDIS_REST_URL", "UPSTASH_REDIS_REST_TOKEN", "KV_URL", "REDIS_URL",
+  "CRON_SECRET", "ADMIN_SECRET", "SITE_URL",
+];
+
 /**
- * Operational status only: which services are configured and how the last writer call went.
- * Public (when the site has no password) it says only whether a recipient list is configured.
- * With the CRON_SECRET or ADMIN_SECRET bearer it adds the counts (how many addresses the next
- * send would reach and how many opted out: a count, never an address, but in a ten-person league
- * a public opt-out count would still say somebody unsubscribed) and whether ADMIN_SECRET is
- * usable. Bearer attempts go through the admin limiter, counted before anything is compared.
+ * Operational status only, public: which services are configured, how the last writer call and
+ * the last email went (counts and scrubbed errors, never an address), which settings the
+ * deployment can see (names only) and the deployed commit. No secrets and no addresses.
+ *
+ * With the CRON_SECRET or ADMIN_SECRET bearer it adds detail: whether the writer actually runs
+ * (false on Vercel until the shared store is connected), whether COMMISSIONER_EMAIL is set, the
+ * recipient counts (how many addresses the next send would reach and how many opted out: a
+ * count, never an address, but in a ten-person league a public opt-out count would still say
+ * somebody unsubscribed) and whether ADMIN_SECRET is usable. Bearer attempts go through the
+ * admin limiter, counted before anything is compared.
  */
 export async function GET(req: Request) {
   let authed = false;
@@ -26,18 +37,28 @@ export async function GET(req: Request) {
     }
     authed = Boolean(process.env.CRON_SECRET && checkCronAuth(req).ok) || checkAdminAuth(req).ok;
   }
-  const [writer, recipients] = await Promise.all([readWriterStatus(), authed ? recipientSummary().catch(() => null) : Promise.resolve(null)]);
+  const [writer, email, recipients] = await Promise.all([
+    readWriterStatus(),
+    readEmailStatus(),
+    authed ? recipientSummary().catch(() => null) : Promise.resolve(null),
+  ]);
   return Response.json(
     {
       store: pickBackend(),
       writerConfigured: configured.anthropic(),
-      // False on Vercel until the shared store is connected, even with the key set.
-      writerRunning: isRoastConfigured(),
       emailConfigured: configured.resend(),
-      commissionerEmailConfigured: configured.commissionerEmail(),
-      recipients: authed ? recipients : { configured: leagueEmailsFromEnv().length > 0 },
-      ...(authed ? { adminSecret: adminSecretProblem() ?? "ok" } : {}),
       lastWriterCall: writer,
+      lastEmail: email,
+      envPresent: Object.fromEntries(ENV_NAMES.map((k) => [k, Boolean(process.env[k])])),
+      deployedAt: process.env.VERCEL_GIT_COMMIT_SHA?.slice(0, 7) ?? null,
+      ...(authed
+        ? {
+            writerRunning: isRoastConfigured(),
+            commissionerEmailConfigured: configured.commissionerEmail(),
+            recipients,
+            adminSecret: adminSecretProblem() ?? "ok",
+          }
+        : {}),
     },
     { headers: NO_STORE },
   );

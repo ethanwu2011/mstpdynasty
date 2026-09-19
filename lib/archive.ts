@@ -15,7 +15,7 @@ const LEGACY_TITLES: Record<string, (i: Issue) => string> = {
 };
 
 /** Notes older facts-only issues carried. A facts-only issue now has no note: the facts simply run. */
-const LEGACY_NOTES = new Set(["The writer called in sick. Facts only today."]);
+const LEGACY_NOTES = new Set(["The writer called in sick. Facts only today.", "The roast writer called in sick. Facts only today."]);
 
 /**
  * An issue stored before the 2026-09-18 rename, read as the current kind and title

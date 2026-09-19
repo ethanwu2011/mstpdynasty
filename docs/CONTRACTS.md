@@ -136,7 +136,7 @@ incr(key, ttlSeconds): number   // atomic counter; the first hit starts the wind
 keys.*   // the shared key convention; league data is always under `league:<leagueId>:`
          // round 3: keys.surfaceLines(leagueId, surface, key), keys.surfacePrefix(leagueId, surface?),
          // keys.optOut(leagueId, ref), keys.optOutPrefix(leagueId), keys.fantasyCalcValues(date), keys.fantasyCalcPrefix(),
-         // keys.fantasyCalcFetchLock(date), keys.seasonProjections(season), keys.legacySubscriberPrefix(leagueId) (purge only)
+         // keys.fantasyCalcFetchLock(date), keys.seasonProjections(season), keys.subscriber(leagueId, email) / keys.subscriberPrefix(leagueId) (read-only records of the old sign-up form)
 ```
 Backends: Upstash when KV env is set, memory under Vitest, else JSON files in `.data/`.
 `lock` is a cooldown: it returns false while held and expires by itself.
@@ -204,8 +204,9 @@ ISSUE_TITLES, FACTS_ONLY_NOTE, SYSTEM_PROMPT
   same waiver run (`w-<processing time>`; each free-agent move is its own `fa-<txid>` batch);
   `roastItem("waiver", WaiverFact[])` roasts a batch. `LosingBid.reason` says why a competing claim failed.
 - `DraftPickFact.reach = fcRank - pickNo` (positive = reach). For a rookie-only draft `fcRank` is the rank
-  within the rookie class. `secondsOnClock` excludes the draft's daily autopause window (Sleeper stores it as
-  minutes after midnight UTC) and is null unless the tick saw both this pick and the one before.
+  within the rookie class. There is no time on the clock: `pickedAt` is when the tick first noticed the pick,
+  not when it was made, so it never becomes a pick-clock duration. `DraftFacts.resumesAt` is "8 AM ET"
+  (`config/draft.ts`, set by the commissioner) while the draft is paused, never Sleeper's autopause window.
 - `WeeklyFacts.standings[].previousRank` is the rank one week earlier (null in week 1).
 - Pass `{ draftPicks }` to `roastItem` for a pick when you already have them (the tick does), to skip a
   `draftFacts()` call per pick.
@@ -215,7 +216,7 @@ ISSUE_TITLES, FACTS_ONLY_NOTE, SYSTEM_PROMPT
 - `IssueBlock` is plain text (no HTML, no markdown) so web and email render the same content.
 - Issue titles: "The Daily", "Thursday Night Fallout", "Week N Recap" ("Week 5 Recap"), "Draft Grades"
   (`ISSUE_TITLES`, `issueTitle(kind, week?)` in `lib/roast`). Kinds: `daily | thursday_fallout |
-  weekly_recap | draft_grades`.
+  weekly_recap | draft_grades`. The writer's headline (the dek) is the email subject and the H1.
 - `config/roast-notes.ts`: empty defaults only (one empty string per manager) and a comment explaining
   that real lore comes from env `ROAST_NOTES` (JSON, manager first name -> text) and/or the store key
   `roast-notes`, env winning. Lore never goes in the repo.
@@ -246,9 +247,8 @@ persist issues and roasts through `lib/archive.ts` and write a run log under `ke
   one-liners (`tickLines`: trades, picks and draft odds every run, every table at most hourly). A tick
   outcome for the snapshot or the lines appears only when it did something or failed.
 - `runDaily` stores the day's FantasyCalc snapshot first, then the issues, then refreshes every
-  surface's one-liners (`refreshLines(ctx, { scope: "all" })`) until 150 s into the run, and deletes any
-  record the old sign-up form left in the store (`purgeLegacySubscribers`). Outcomes: `fantasycalc_snapshot`,
-  `lines`, `legacy_subscribers` (only when it deleted something).
+  surface's one-liners (`refreshLines(ctx, { scope: "all" })`) until 150 s into the run. Outcomes:
+  `fantasycalc_snapshot`, `lines`.
 - The password gate allows 10 attempts per IP and 100 overall per 15 minutes. `/api/tick` needs the gate
   cookie or the cron bearer when the gate is on. Without `CRON_SECRET`, `/api/cron/daily` runs in dev only
   while no RESEND/ANTHROPIC key is set. Admin bearer attempts (right or wrong) are counted before the
@@ -322,14 +322,17 @@ tradeRows(TradeHindsight[])  shameRows(ShameEntry[])  draftRows(picks, draftCont
 - Pages call only `getSurfaceLines` (a store read; a render never waits on the model). It returns only
   rows that have a line; render a row's line only when it is there. No placeholder, no "line coming
   soon", no canned fallback.
-- The writer: rows go out in batches of `MAX_ROWS_PER_CALL` through `callRoastModel` (the frozen system
-  prompt, the spec's exact call shape). The user message is a `LINES:` request with one slot per row
-  (`r1`..`rN`) and FACTS keyed by slot; the reply is one JSON object, slot -> line (`@@slot` sections are
-  accepted too). A line is kept only if it is one sentence, at most about 30 words, names the row's
-  manager, and passes the same post-check as every issue and item (every number in FACTS and next to its
-  owner, no theme words, no self-reference: `roast`, `burn`, `cooked`, `savage` are banned in output
-  unless FACTS uses them). Failed rows get one retry in one call with a note saying what failed. Without
-  `ANTHROPIC_API_KEY`, or on a refusal or API error, the row has no line.
+- The writer: rows go out in batches of `MAX_ROWS_PER_CALL` through `callRoastModel` (the same frozen
+  system prompt as every issue and item, unchanged, and the spec's exact call shape). The user message
+  is a `LINES:` request with one slot per row (`r1`..`rN`, each naming the row's manager), a TASK that
+  says what a row is and the one-sentence shape of a line, a `KEYS` block (`LINES_GLOSSARY`: the FACTS
+  keys only table rows carry; the persona's glossary covers the rest) and FACTS keyed by slot. The reply
+  uses the persona's `@@slot` format (a JSON object, slot -> line, is read too). A line is kept only if
+  it is one sentence, at most about 30 words, names the row's manager by first name, and passes the same
+  post-check as every issue and item (every number in FACTS and next to its owner, exact claims, no
+  slurs, no theme words, no joke-announcing `ANNOUNCE_TERMS` word unless FACTS uses it). Failed rows get
+  one retry in one call with a note saying what failed. Without `ANTHROPIC_API_KEY`, or on a refusal or
+  API error, the row has no line.
 - The refresh policy: a row with no line (a new trade, a new pick, a new week's table) is written at
   once. A row that has a line is rewritten when its facts hash changes, at most once per
   `SURFACE_MAX_AGE_MS` (a day; draft odds every 30 minutes while the draft is live; a final week's
@@ -401,26 +404,31 @@ DRAFT_ODDS_CACHE_SECONDS = 21600
 
 ### Recipients and the test email: `lib/email`, `lib/jobs` (real)
 ```ts
-recipients(leagueId?: string): Promise<string[]>              // LEAGUE_EMAILS minus opt-outs. Server-only data
+recipients(leagueId?: string): Promise<string[]>              // LEAGUE_EMAILS plus confirmed subscribers, minus opt-outs. Server-only data
 recipientSummary(leagueId?: string): Promise<RecipientSummary> // { configured, count, optedOut }: safe to render
 leagueEmailsFromEnv(): string[]
 sendTest(opts?: { issue?: Issue | null; counted?: boolean }): Promise<SendResult>  // "test_sent": COMMISSIONER_EMAIL only
 testSendPreflight(leagueId?): Promise<SendResult | null>      // every check plus the hourly count, before anything is built
+sendTestCopy(issue: Issue): Promise<SendResult>               // GET /api/admin/send-test: one [Test] copy, COMMISSIONER_EMAIL only
 sendTestEmail(now?: Date, opts?: { ctx? }): Promise<TestEmailResult>   // lib/jobs: newest stored issue, else a sample Daily
-purgeLegacySubscribers(leagueId?): Promise<number>             // deletes records the old sign-up form stored
+listSubscribers(leagueId?): Promise<Subscriber[]>              // records the old sign-up form stored (nothing writes new ones)
+readEmailStatus(): Promise<unknown>                            // last send outcome for /api/health: counts, scrubbed error
 scrubAddresses(text): string                                   // blanks any address in error text
 MAX_TEST_SENDS_PER_HOUR = 10, MAX_RECIPIENTS = 30
 ```
-- No subscribe button, page or API. League sends go to `recipients()` (capped at `MAX_RECIPIENTS`);
+- No subscribe button, page or API. `recipients()` is the only recipient list in the codebase:
+  `LEAGUE_EMAILS` plus the confirmed subscribers the old sign-up form stored, minus opt-outs, each
+  address once. League sends go to `recipients()` (capped at `MAX_RECIPIENTS`);
   review mode sends every issue to `COMMISSIONER_EMAIL` only, with the approve link, and the approve
   link then sends to `recipients()`. `inspectApproveLink` reports `recipients` as a count.
 - `unsubscribe(token)` stores an opt-out under `keys.optOut(leagueId, subscriberRef(address))`: an HMAC
-  ref, never the address. An address that opted out stays out even if it is added to LEAGUE_EMAILS
-  again. Refs and unsubscribe links are keyed by `OPTOUT_SECRET` (set once, never rotated) or else
+  ref, never the address, and deletes the matching subscriber record if there is one. It is idempotent:
+  a second click writes nothing new and answers "unsubscribed" again. An address that opted out stays
+  out even if it is added to LEAGUE_EMAILS again. Refs and unsubscribe links are keyed by `OPTOUT_SECRET` (set once, never rotated) or else
   `ADMIN_SECRET`; links signed with either verify, and `recipients()` checks refs under both. A store
   error while reading opt-outs is thrown (the send fails and its claim is released), never read as
-  "not opted out". Nothing in the store holds an address; provider errors are scrubbed before they reach a result
-  or the job log.
+  "not opted out". Nothing new in the store holds an address; provider errors are scrubbed before they
+  reach a result, the job log or `lastEmail`.
 - `sendTest` renders the issue as a marked test copy ("[Test]" subject, "Test copy" banner, no approve
   link), marks nothing sent, skips dev leagues, and allows 10 per hour. `sendTestEmail` runs
   `testSendPreflight` first, so a refused or capped request never builds a sample (a model call).
@@ -430,9 +438,15 @@ MAX_TEST_SENDS_PER_HOUR = 10, MAX_RECIPIENTS = 30
   attempt is counted first, 429 past 10 per IP or 30 overall in 15 minutes). Body ignored. Calls `sendTestEmail()`, answers
   `{ status, recipients, issueSlug, sample, error? }` with no address in it (200 on `test_sent`, 409
   skipped, 503 not configured, 502 error). The proxy lets it through the password gate.
-- `/api/health` adds `commissionerEmailConfigured`, `writerRunning` and `recipients`: publicly only
-  `{ configured }`; with the CRON_SECRET or ADMIN_SECRET bearer the `RecipientSummary` counts and
-  `adminSecret` ("ok" or what is wrong with it). Bearer attempts go through the admin limiter.
+- `GET /api/admin/send-test` (no secret): checks COMMISSIONER_EMAIL and the email settings first (nothing
+  is built or sent without them), then takes a 15-minute lock, builds today's Daily from live data without
+  committing the daily cursor, and sends one "[Test]" copy through `sendTestCopy` to COMMISSIONER_EMAIL
+  only. The league list is never read.
+- `/api/health` is public and returns `store`, `writerConfigured`, `emailConfigured`, `lastWriterCall`,
+  `lastEmail` (status, count, scrubbed error), `envPresent` (setting names only) and `deployedAt`: no
+  secret and no address. With the CRON_SECRET or ADMIN_SECRET bearer it adds `writerRunning`,
+  `commissionerEmailConfigured`, the `RecipientSummary` counts as `recipients`, and `adminSecret` ("ok"
+  or what is wrong with it). Bearer attempts go through the admin limiter.
 
 ### Issue rename, sender, and the writer's voice
 - `IssueKind = "daily" | "thursday_fallout" | "weekly_recap" | "draft_grades"` (was `daily_roast`,
@@ -442,12 +456,15 @@ MAX_TEST_SENDS_PER_HOUR = 10, MAX_RECIPIENTS = 30
 - Email from `MSTP Dynasty` (`DEFAULT_EMAIL_FROM`, override with `EMAIL_FROM`), no byline: the meta line
   is the date (and the week when the title does not carry it); the footer says who it is sent to.
 - `FACTS_ONLY_NOTE` = `null`: a facts-only issue has no note (older stored issues lose the old one on read).
-- The system prompt (`lib/roast/persona.ts`, SHA-256 pinned in `tests/roast-prompt.test.ts`) is unnamed
-  and unsigned: no "The Roast", no byline, and hard rule 8 forbids announcing anything (no roast, burn,
-  take, joke or column; nobody got roasted, burned or cooked; never a word about itself). Its few-shots
-  use the slot id `item` for item requests and include a LINES example with a JSON reply. Task lines
-  say "Write 1 to 3 sentences on this trade", never "Roast". The post-check drops any sentence with a
-  `SELF_TERMS` word (`lib/roast/banned.ts`) unless FACTS or LORE uses it.
+- The system prompt (`lib/roast/persona.ts`, SHA-256 pinned in `tests/roast-prompt.test.ts`) is the
+  approved voice (a punchline headline, a fake-epic cold open, a hit on every manager, a closer). It is
+  unnamed and unsigned, and hard rule 9 forbids announcing anything. `persona.ts`, `plan.ts`,
+  `postcheck.ts`, `banned.ts`, `items.ts`, `index.ts` and `memory.ts` are the live voice; the stat-table
+  lines (`surfaces.ts`, `surface-rows.ts`, `lib/jobs/lines.ts`) go through the same prompt and the same
+  post-check. The post-check drops any sentence with an `ANNOUNCE_TERMS` word unless FACTS or LORE uses
+  it, any slur always, and a second cuck chair in one issue (`CUCK_CHAIR_PER_ISSUE`, the persona's rule).
+- `ROAST_VOICE` in `lib/jobs/tick.ts` is bumped whenever the voice changes, so every stored item is
+  written again in the current voice.
 
 ## Data shapes (see `lib/types.ts` for every field)
 
@@ -464,7 +481,8 @@ MAX_TEST_SENDS_PER_HOUR = 10, MAX_RECIPIENTS = 30
 - `DraftFacts { draftId, status, startTime, rounds, teams, picks: DraftPickFact[], onTheClock, positionRuns, grades, placeholder }`.
 - `TnfFacts { week, games, players: TnfPlayerFact[], teams, placeholder }`.
 - `ShameBoard { entries: ShameEntry[], placeholder }`.
-- `Issue { id, slug, kind, leagueId, season, week, date, title, dek, dekSource?, sections: IssueSection[], factsOnly, note, status, createdAt, sentAt, recipientCount, model, usage, imageUrl, placeholder }`.
+- `Issue { id, slug, kind, leagueId, season, week, date, title, dek, dekSource?, sections: IssueSection[], factsOnly, note, status, createdAt, sentAt, recipientCount, model, usage, imageUrl, placeholder, writerNotes? }`.
+  `writerNotes { allusion, closer, lines }` is never rendered: it tells later issues which history, closer and short lines not to reuse.
   `dekSource: "model"` means the dek is also the email subject; a `"code"` dek gets "Title, week N:" in front.
 - `Roast { id, kind, leagueId, rosterIds, text, facts, source, model, createdAt, usage }`.
 - `IssueFacts = DailyFacts | ThursdayFalloutFacts | WeeklyRecapFacts | DraftGradesFacts`

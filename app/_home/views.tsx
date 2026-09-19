@@ -108,7 +108,7 @@ export async function HomeDrafting({ ctx }: { ctx: LeagueContext }) {
         emptyLabel="Pick 1.01"
         empty={<EmptyLead line="The draft is open and nobody has picked." />}
       />
-      <OnTheClockPanel ctx={ctx} facts={facts} serverNow={ctx.loadedAt} span={4} />
+      <OnTheClockPanel ctx={ctx} facts={facts} span={4} />
       <BoardStrip facts={facts} lines={pickLines} />
       {oddsReady && odds ? (
         <OddsBoard

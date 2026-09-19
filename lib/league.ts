@@ -97,7 +97,8 @@ export function buildManagers(rosters: SleeperRoster[], users: SleeperUser[]): M
       };
     }
     const cfg = managerByUsername(user.display_name ?? "");
-    const teamName = user.metadata?.team_name?.trim() || `Team ${user.display_name}`;
+    // No custom Sleeper team name: use the manager's first name, never "Team <username>".
+    const teamName = user.metadata?.team_name?.trim() || cfg?.firstName || user.display_name || `Roster ${r.roster_id}`;
     const avatarUrl =
       user.metadata?.avatar || (user.avatar ? `https://sleepercdn.com/avatars/thumbs/${user.avatar}` : null);
     return {

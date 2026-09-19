@@ -14,7 +14,7 @@ import { Button } from "@/components/Button";
 import { DotMatrixFill } from "@/components/DotMatrixFill";
 import { Board, Panel } from "@/components/Panel";
 import { safe } from "../../_lib/phase";
-import { dayLabel, isPublic } from "../issue-kinds";
+import { dayLabel, isPublic, issueTitleOf } from "../issue-kinds";
 import { IssueView } from "./issue-view";
 
 type Params = Promise<{ slug: string }>;
@@ -38,7 +38,7 @@ export async function generateMetadata({ params }: { params: Params }): Promise<
   const { slug } = await params;
   const { issue } = await loadIssue(decode(slug));
   if (!issue) return { title: "Issue" };
-  return { title: `${issue.title}, ${dayLabel(issue)}`, description: issue.dek || undefined };
+  return { title: `${issueTitleOf(issue)}, ${dayLabel(issue)}`, description: issue.dek || undefined };
 }
 
 export default async function IssuePage({ params }: { params: Params }) {

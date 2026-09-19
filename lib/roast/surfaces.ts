@@ -3,12 +3,16 @@
  * pages, trades, the Wall of Shame, draft picks).
  *
  *   writer   surfaceLines(surface, rows): the rows go to the writer in batches (one call per
- *            MAX_ROWS_PER_CALL rows) through the same callRoastModel path, frozen system prompt
- *            and post-check as everything else. The reply is one JSON object, slot id -> line.
- *            A line survives only if it is one sentence, names the row's manager, and passes
- *            every check (each number in FACTS and next to the right name, no theme or
- *            self-reference words). Failed rows get one retry in one call. Without an API key
- *            (or on any failure) a row's line is null: absent, never a canned joke.
+ *            MAX_ROWS_PER_CALL rows) through the same callRoastModel path, the same frozen system
+ *            prompt (persona.ts, unchanged: a LINES request is one more request shape, explained
+ *            in its own user message with LINES_GLOSSARY for the keys only rows carry) and the
+ *            same post-check as every issue and item. The reply uses the persona's @@slot format
+ *            (a JSON object, slot id -> line, is accepted too). A line survives only if it is one
+ *            sentence, names the row's manager by first name, and passes every check (each
+ *            number in FACTS and next to the right name, exact claims such as a pick's reach or a
+ *            player's age, no slurs, theme or joke-announcing words). Failed rows get one retry in
+ *            one call. Without an API key (or on any failure) a row's line is null: absent, never
+ *            a canned joke.
  *   refresh  refreshSurfaceLines(surface, key, rows): run by the tick and the daily job, never by
  *            a page. Hashes each row's facts and only sends rows that changed or never got a
  *            line. New rows go out at once; a row that already has a line is rewritten at most
@@ -141,6 +145,25 @@ export function surfaceFactsHash(rows: SurfaceRow[]): string {
 /* the request                                                         */
 /* ------------------------------------------------------------------ */
 
+/**
+ * The FACTS keys only stat-table rows carry, glossed in every LINES request (the persona's own
+ * glossary covers the rest; tests/roast-prompt.test.ts checks the two together cover every key).
+ * Deterministic text: it never holds league data.
+ */
+export const LINES_GLOSSARY = [
+  "- r<n>: the facts for one row of the table, under the slot id of its line.",
+  "- asOf: when the table stands, like week 5 or before kickoff.",
+  "- pointsForRank: rank of pointsFor, 1 is the most. pointsPerGame: points per game played. expectedWins: average final win total across the simulated seasons.",
+  "- projectedRank: where his best lineup ranks by projected weekly points, 1 is the best.",
+  "- rosterSize: players on his roster. topPlayers: his most valuable players by FantasyCalc.",
+  "- then, now: one side of a trade valued at the time of the trade and today, each with valueIn, valueOut, net and grade. then is null when no value that old is stored. valueLost: what the losing side has given away as of today. lostSinceTrade: how much of valueLost piled up after the trade.",
+  "- entry: which Wall of Shame list a row is on. headline, detail: that entry as code wrote it (not a newsletter headline).",
+].join("\n");
+
+/** What a LINES request adds to the TASK: what a row is, and the one-sentence shape of a line. */
+const LINES_RULES =
+  "Each slot is one row of a table printed on the site: its SLOTS line names the manager the row is about, and FACTS holds that row's facts under the same slot id. Write each line in the same voice as an ITEM, cut to one sentence of at most 30 words about that row's manager, by first name: the row's number, then the worst reading of it. At most one epic clause. Another row's manager and number are fair for contrast. No two lines on one table share a shape or a punchline.";
+
 /** Slot ids the model sees: r1..rN in row order (row ids can hold characters slot ids cannot). */
 export const slotIdOf = (i: number) => `r${i + 1}`;
 
@@ -166,14 +189,14 @@ function factsOf(entries: Slotted[]): Record<string, Record<string, unknown>> {
 }
 
 function buildMessage(surface: RoastSurface, entries: Slotted[], lore: Record<string, string>, opts: LinesPromptOptions): string {
-  const task = [SURFACE_TASKS[surface], opts.context?.trim(), "Each line is one sentence of at most 30 words about that row's manager, by first name. Reply with the JSON object only."]
-    .filter(Boolean)
-    .join(" ");
+  const task = [SURFACE_TASKS[surface], opts.context?.trim(), LINES_RULES].filter(Boolean).join(" ");
   return [
     `LINES: ${SURFACE_LABELS[surface]}`,
     `TASK: ${task}`,
     "SLOTS:",
     ...entries.map((e) => `@@${e.slot}: ${e.row.managers.join(" vs ") || "the row"}`),
+    "KEYS (only table rows use these):",
+    LINES_GLOSSARY,
     "FACTS:",
     JSON.stringify(factsOf(entries)),
     "LORE:",
@@ -187,8 +210,8 @@ export function linesMessage(surface: RoastSurface, rows: SurfaceRow[], lore: Re
 }
 
 /**
- * The reply: one JSON object (slot id -> line). Tolerates a code fence or stray text around it,
- * and falls back to "@@slot" sections when the model used the issue format instead.
+ * The reply: "@@slot" sections, the persona's format. A JSON object (slot id -> line), with or
+ * without a code fence around it, is read too.
  */
 export function parseLinesReply(reply: string): Map<string, string> {
   const out = new Map<string, string>();

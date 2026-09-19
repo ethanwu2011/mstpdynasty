@@ -11,6 +11,7 @@ import { Panel, type PanelSpan } from "@/components/Panel";
 import { Receipt, RoastBlock, type RoastBlockData } from "@/components/RoastBlock";
 import { lineOf, RowLine } from "@/components/RowLine";
 import { LiveSquare, SampleMark } from "@/components/Tag";
+import { resumesAtFor } from "@/lib/facts/draft";
 import type { DraftGrade, DraftPickFact, Issue, LeagueContext, SleeperDraft, SurfaceLineMap } from "@/lib/types";
 import { clockLength, etStamp, fmtInt, ordinal, pickLabel } from "../_lib/format";
 import { slotPicks } from "../_lib/draft";
@@ -229,14 +230,15 @@ export function LatestPickPanel({
   );
 }
 
-/** Who is on the clock, how long they have sat there, and the next three up. */
-export function ClockPanel({ ctx, board, draft, stage, placeholder, span = 4 }: { ctx: LeagueContext; board: BoardModel; draft: SleeperDraft; stage: "live" | "paused"; placeholder: boolean; span?: PanelSpan }) {
+/**
+ * Who is on the clock, when picks resume while the draft is paused, and the next three up.
+ * No running time on the clock: the site never knows when a pick was made.
+ */
+export function ClockPanel({ board, draft, stage, placeholder, span = 4 }: { board: BoardModel; draft: SleeperDraft; stage: "live" | "paused"; placeholder: boolean; span?: PanelSpan }) {
   const c = board.clock;
   const cells = board.roundRows.flatMap((r) => r.cells);
   const upcoming = c ? cells.filter((x) => x.pickNo > c.pickNo).slice(0, 3) : [];
-  // Before the first pick Sleeper's last_picked can be stale, so the clock runs from the start.
-  const firstUp = board.made === 0;
-  const since = firstUp ? (draft.start_time ?? null) : (draft.last_picked ?? draft.start_time ?? null);
+  const resumes = resumesAtFor(draft.status);
   const clock = clockLength(draft.settings.pick_timer);
   const doneRounds = Math.floor(board.made / Math.max(1, board.teams));
   return (
@@ -254,13 +256,8 @@ export function ClockPanel({ ctx, board, draft, stage, placeholder, span = 4 }: 
           {stage === "paused" ? (
             <p className="type-label m-0 flex items-center gap-2">
               <LiveSquare size={10} />
-              Draft paused. The clock is stopped.
+              {resumes ? `Draft paused. Picks resume at ${resumes}.` : "Draft paused."}
             </p>
-          ) : since ? (
-            <div className="flex flex-col gap-2">
-              <span className="type-label text-ink-muted">{firstUp ? "Since the scheduled start" : "On the clock for"}</span>
-              <Countdown target={since} serverNow={ctx.loadedAt} mode="up" size="d40" label="Time on the clock" />
-            </div>
           ) : null}
 
           {upcoming.length ? (

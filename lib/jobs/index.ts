@@ -31,7 +31,6 @@ import * as store from "@/lib/store";
 import { etDate } from "@/lib/time";
 import type { JobOutcome, JobRunReport, LeagueContext, NflGame } from "@/lib/types";
 import { ensureDailySnapshot, type DailySnapshotResult } from "@/lib/fantasycalc";
-import { purgeLegacySubscribers } from "@/lib/email";
 import { runIssueJob } from "./issues";
 import { refreshLines, tickLines } from "./lines";
 import { logJobRun } from "./log";
@@ -130,9 +129,7 @@ export async function runDaily(now: Date = new Date(), opts: JobOptions & { sche
     const lines = await refreshLines(ctx, { now: t, scope: "all", deadline: startedAt + DAILY_LINES_DEADLINE_MS }).catch(
       (err): JobOutcome => ({ job: "lines", status: "error", detail: errText(err) }),
     );
-    const purged = await purgeLegacySubscribers(ctx.leagueId).catch(() => 0);
-    const extra: JobOutcome[] = purged ? [{ job: "legacy_subscribers", status: "ran", detail: `Deleted ${purged} stored sign-up record${purged === 1 ? "" : "s"} from the old public form.` }] : [];
-    const r = report([head, ...(snapshot ? [snapshot] : []), ...[...plan.skipped, ...ran].sort((a, b) => order(a) - order(b)), lines, ...extra]);
+    const r = report([head, ...(snapshot ? [snapshot] : []), ...[...plan.skipped, ...ran].sort((a, b) => order(a) - order(b)), lines]);
     await logJobRun(ctx.leagueId, r);
     return r;
   } catch (err) {

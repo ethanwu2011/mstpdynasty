@@ -4,11 +4,13 @@ import { getIssue, saveIssue } from "@/lib/archive";
 import {
   approveIssue,
   inspectApproveLink,
+  listSubscribers,
   MAX_RECIPIENTS,
-  purgeLegacySubscribers,
+  readEmailStatus,
   recipients,
   scrubAddresses,
   sendIssue,
+  sendTestCopy,
   setEmailTransportForTests,
   unsubscribe,
 } from "@/lib/email";
@@ -76,7 +78,7 @@ describe("rendering", () => {
     expect(text).not.toContain(RLO);
     expect(text).toContain('<script>alert("x")</script>'); // plain text is not HTML
     expect(subject).not.toMatch(/[\r\n]/);
-    // A code-written dek: title and week lead the subject, with one colon.
+    // A code-written dek: the issue name leads the subject, with one colon.
     expect(subject.startsWith("Week 3 Recap: ")).toBe(true);
   });
 
@@ -201,6 +203,25 @@ describe("subjects", () => {
     expect(renderIssueEmail(makeIssue({ dek: "Kevin's Kitchen put up 150.20." }), opts).subject).toBe("Week 3 Recap: Kevin's Kitchen put up 150.20.");
     const grades = makeIssue({ kind: "draft_grades", title: "Draft Grades", week: null, dek: "Most value drafted: Sam I Am (A+). Least: Dev Null (F)." });
     expect(renderIssueEmail(grades, opts).subject).toBe("Draft Grades. Most value drafted: Sam I Am (A+). Least: Dev Null (F).");
+    const daily = makeIssue({ kind: "daily", title: "The Daily Roast", week: null, dek: "Theo took Tavon Reyes at pick 1, 8 spots before his FantasyCalc rank." });
+    expect(renderIssueEmail(daily, opts).subject).toBe("The Daily. Theo took Tavon Reyes at pick 1, 8 spots before his FantasyCalc rank.");
+  });
+
+  it("the writer's headline is the subject and the H1; nothing says Roast", () => {
+    const opts = { unsubscribeUrl: "https://x.test/u", webUrl: null };
+    const headline = "Theo Stacked Two Tight Ends on Top and Still Couldn't Stay Up";
+    // Stored under the old name: it still goes out as The Daily.
+    const issue = makeIssue({ kind: "daily", title: "The Daily Roast", week: null, factsOnly: false, dekSource: "model", dek: headline });
+    const { subject, html, text } = renderIssueEmail(issue, opts);
+    expect(subject).toBe(headline);
+    expect(html).toContain(`>${headline.replace("'", "&#39;")}</h1>`);
+    expect(html).toContain("MSTP Dynasty \u00b7 The Daily</p>");
+    expect(text.split("\n").slice(0, 3)).toEqual(["MSTP DYNASTY \u00b7 THE DAILY", "", headline]);
+    expect(`${subject}\n${html}\n${text}`).not.toMatch(/roast/i);
+    // A facts-only issue keeps its name as the H1 and the fact line under it.
+    const plain = renderIssueEmail(makeIssue({ dek: "Kevin's Kitchen put up 150.20." }), opts).html;
+    expect(plain).toContain(">Week 3 Recap</h1>");
+    expect(plain).toContain("Kevin&#39;s Kitchen put up 150.20.</p>");
   });
 });
 
@@ -223,18 +244,65 @@ describe("approve links are bound to the reviewed version", () => {
 
 describe("no public sign-up", () => {
   it("lib/email has no sign-up or confirm flow left", () => {
-    for (const gone of ["subscribe", "confirmSubscription", "listSubscribers", "SUBSCRIBE_MESSAGES", "MAX_SUBSCRIBERS", "renderConfirmEmail"]) {
+    for (const gone of ["subscribe", "confirmSubscription", "SUBSCRIBE_MESSAGES", "MAX_SUBSCRIBERS", "renderConfirmEmail", "purgeLegacySubscribers"]) {
       expect(gone in emailModule).toBe(false);
     }
   });
+});
 
-  it("the daily purge deletes records the old form stored, which held addresses", async () => {
-    const prefix = store.keys.legacySubscriberPrefix(MSTP_LEAGUE_ID);
-    await store.set(`${prefix}${addr("old")}`, { email: addr("old"), confirmed: true });
-    await store.set(`${prefix}${addr("older")}`, { email: addr("older"), confirmed: false });
-    expect(await purgeLegacySubscribers(MSTP_LEAGUE_ID)).toBe(2);
-    expect(await store.list(prefix)).toEqual([]);
-    expect(await purgeLegacySubscribers(MSTP_LEAGUE_ID)).toBe(0);
+describe("recipients(): LEAGUE_EMAILS plus confirmed subscribers, minus opt-outs", () => {
+  const subscribe = (local: string, confirmed: boolean) =>
+    store.set(store.keys.subscriber(MSTP_LEAGUE_ID, addr(local)), { email: addr(local), managerKey: "x", createdAt: 1, confirmed });
+
+  it("confirmed subscribers the old form stored still get the league email; pending ones do not; each address once", async () => {
+    leagueList("a", "b");
+    await subscribe("b", true); // also on the league list: sent once
+    await subscribe("c", true);
+    await subscribe("d", false);
+    expect((await recipients(MSTP_LEAGUE_ID)).sort()).toEqual([addr("a"), addr("b"), addr("c")]);
+    const issue = makeIssue();
+    await saveIssue(issue);
+    expect(await sendIssue(issue, "auto")).toMatchObject({ status: "sent", recipients: 3 });
+    expect(t.sent[0].messages.map((m) => m.to).sort()).toEqual([addr("a"), addr("b"), addr("c")]);
+  });
+
+  it("a subscriber who unsubscribes gets an opt-out marker and loses the record; again is still fine", async () => {
+    await subscribe("c", true);
+    const issue = makeIssue();
+    await saveIssue(issue);
+    await sendIssue(issue, "auto");
+    const token = linkIn(t.sent[0].messages[0].text, "/api/unsubscribe").searchParams.get("token")!;
+    expect(await unsubscribe(token)).toEqual({ ok: true, status: "unsubscribed" });
+    expect(await unsubscribe(token)).toEqual({ ok: true, status: "unsubscribed" });
+    expect(await listSubscribers(MSTP_LEAGUE_ID)).toEqual([]);
+    expect(await recipients(MSTP_LEAGUE_ID)).toEqual([]);
+    // Added to the league list later: the opt-out still holds.
+    leagueList("c");
+    expect(await recipients(MSTP_LEAGUE_ID)).toEqual([]);
+  });
+});
+
+describe("sendTestCopy (GET /api/admin/send-test)", () => {
+  it("sends one [Test] copy to COMMISSIONER_EMAIL only, never the league list, and marks nothing sent", async () => {
+    leagueList("a", "b");
+    const issue = makeIssue();
+    await saveIssue(issue);
+    const res = await sendTestCopy(issue);
+    expect(res).toMatchObject({ status: "test_sent", recipients: 1 });
+    expect(t.sent).toHaveLength(1);
+    expect(t.sent[0].messages.map((m) => m.to)).toEqual([addr("commish")]);
+    expect(t.sent[0].messages[0].subject.startsWith("[Test] ")).toBe(true);
+    expect((await getIssue(MSTP_LEAGUE_ID, issue.slug))?.status).toBe(issue.status);
+    expect(await readEmailStatus()).toMatchObject({ status: "test_sent", recipients: 1 });
+  });
+
+  it("without COMMISSIONER_EMAIL nothing is sent to anyone", async () => {
+    vi.stubEnv("COMMISSIONER_EMAIL", "");
+    leagueList("a", "b");
+    const issue = makeIssue();
+    await saveIssue(issue);
+    expect((await sendTestCopy(issue)).status).toBe("not_configured");
+    expect(t.sent).toHaveLength(0);
   });
 });
 
@@ -257,7 +325,8 @@ describe("league recipients", () => {
     expect((await unsubscribe(`${token}x`)).status).toBe("bad_signature");
     expect((await unsubscribe("")).status).toBe("bad_signature");
     expect(await unsubscribe(token)).toEqual({ ok: true, status: "unsubscribed" });
-    expect((await unsubscribe(token)).status).toBe("not_found");
+    // Idempotent: a second click still reads as unsubscribed (the opt-out marker stays).
+    expect((await unsubscribe(token)).status).toBe("unsubscribed");
     expect(await recipients(MSTP_LEAGUE_ID)).toEqual([addr("b")]);
 
     // Nothing in the store holds an address: opt-outs are keyed by an HMAC ref.

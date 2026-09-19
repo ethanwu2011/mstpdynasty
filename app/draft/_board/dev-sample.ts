@@ -71,7 +71,6 @@ export async function devSample(
       fcPositionRank: v.positionRank,
       reach,
       verdict: reach >= band ? "reach" : reach <= -band ? "steal" : "fair",
-      secondsOnClock: null,
       pickedAt: now - (n - pickNo) * 9 * 60_000,
       positionRun: 1,
     });
@@ -104,6 +103,7 @@ export async function devSample(
       teams,
       picks,
       onTheClock: next && nextRoster !== null ? { pickNo: n + 1, round: next.round, team: teamRef(ctx, nextRoster) } : null,
+      resumesAt: null,
       positionRuns: [],
       grades,
       placeholder: true,

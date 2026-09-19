@@ -13,7 +13,7 @@ import { HeaderBar } from "@/components/HeaderBar";
 import { Board, Panel } from "@/components/Panel";
 import { LiveSquare, SampleMark } from "@/components/Tag";
 import type { Issue, IssueBlock, IssueSection } from "@/lib/types";
-import { CADENCE, dayLabel, WHEN } from "../issue-kinds";
+import { CADENCE, dayLabel, issueHeadline, issueTitleOf, WHEN } from "../issue-kinds";
 
 export interface IssueViewProps {
   issue: Issue;
@@ -108,6 +108,9 @@ function Section({ section, index }: { section: IssueSection; index: number }) {
 
 function Masthead({ issue }: { issue: Issue }) {
   const sent = issue.sentAt ? `Sent to ${issue.recipientCount ?? 0} ${issue.recipientCount === 1 ? "inbox" : "inboxes"}` : null;
+  // The writer's headline is the H1, as in the email; a facts-only issue leads with its name.
+  const name = issueTitleOf(issue);
+  const headline = issueHeadline(issue);
   return (
     <Panel
       label="The newsletter"
@@ -117,13 +120,13 @@ function Masthead({ issue }: { issue: Issue }) {
       <div className="grid lg:grid-cols-[minmax(0,1fr)_auto]">
         <div className="flex flex-col gap-6 px-4 pb-6 pt-7 md:px-8 md:pb-8 md:pt-10">
           <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-            <p className="type-label m-0">{CADENCE[issue.kind]}</p>
+            <p className="type-label m-0">{headline ? name : CADENCE[issue.kind]}</p>
             {issue.placeholder ? <SampleMark /> : null}
           </div>
-          <h1 className="type-display m-0 text-j3 md:text-j4 xl:text-j5">
-            <span className="board-wipe block">{issue.title}</span>
+          <h1 className={cx("type-display m-0 text-j3 md:text-j4", !headline && "xl:text-j5")}>
+            <span className="board-wipe block">{headline ?? name}</span>
           </h1>
-          {issue.dek ? <p className="measure m-0 text-lede font-semibold">{issue.dek}</p> : null}
+          {!headline && issue.dek ? <p className="measure m-0 text-lede font-semibold">{issue.dek}</p> : null}
           <p className="type-label m-0 flex flex-wrap items-center gap-x-3 gap-y-2">
             <LiveSquare size={12} />
             <time dateTime={issue.date}>{dayLabel(issue)}</time>
@@ -154,7 +157,7 @@ function Neighbor({ issue, label, align }: { issue: Issue; label: string; align:
         {label} · {dayLabel(issue)}
         {align === "right" ? <PixelArrow /> : null}
       </span>
-      <span className="type-display text-j2 group-hover:underline group-hover:decoration-4">{issue.title}</span>
+      <span className="type-display text-j2 group-hover:underline group-hover:decoration-4">{issueTitleOf(issue)}</span>
       {issue.dek ? <span className="measure text-data text-ink-muted">{issue.dek}</span> : null}
     </Link>
   );
@@ -204,7 +207,7 @@ export function IssueView({ issue, older, newer }: IssueViewProps) {
           </nav>
           <div className="flex flex-col gap-4 px-4 pb-6 pt-6 xl:px-6">
             <p className="m-0 text-data text-ink-muted">
-              {issue.title} goes out {WHEN[issue.kind]}, by email to the ten managers. The same words live here.
+              {issueTitleOf(issue)} goes out {WHEN[issue.kind]}, by email to the ten managers. The same words live here.
             </p>
             <Link href="/newsletter" className="type-label link-ink hit-area self-start px-0.5">
               Every issue

@@ -28,6 +28,7 @@ import { fireTick } from "../_lib/tick";
 import { devSample } from "./_board/dev-sample";
 import { BoardLegend, DraftBoard, RoundJump } from "./_board/DraftBoard";
 import { buildBoard, type BoardModel, type BoardStage } from "./_board/model";
+import { EarlierRoastsPanel } from "../_home/draft";
 import { BestDraftPanel, ClockPanel, GradesLead, GradesPending, GradesTable, LatestPickPanel, OrderPanel, PreDraftLead } from "./_panels";
 
 export const metadata: Metadata = {
@@ -154,6 +155,9 @@ export default async function DraftPage({ searchParams }: { searchParams: Search
         more={{ href: "/odds", label: "Full odds" }}
       />
     ) : null;
+  // Every written pick, newest pick first (by pick number, not by when it was written).
+  const pickNoOf = (id: string) => Number(id.split(":").pop()) || 0;
+  const written = roasts.filter((r) => r.source === "llm").sort((a, b) => pickNoOf(b.id) - pickNoOf(a.id));
 
   return (
     <Board>
@@ -168,7 +172,7 @@ export default async function DraftPage({ searchParams }: { searchParams: Search
       ) : stage === "live" || stage === "paused" ? (
         <>
           <LatestPickPanel board={board} placeholder={placeholder} lines={pickLines} span={8} />
-          <ClockPanel ctx={ctx} board={board} draft={draft} stage={stage} placeholder={placeholder} span={4} />
+          <ClockPanel board={board} draft={draft} stage={stage} placeholder={placeholder} span={4} />
           {oddsPanel}
         </>
       ) : grades ? (
@@ -188,6 +192,7 @@ export default async function DraftPage({ searchParams }: { searchParams: Search
       )}
 
       <BoardPanel board={board} stage={stage} placeholder={placeholder} factsMissing={factsMissing} lines={pickLines} />
+      {written.length ? <EarlierRoastsPanel roasts={written} lines={pickLines} label="Every pick, newest first" span={12} /> : null}
     </Board>
   );
 }

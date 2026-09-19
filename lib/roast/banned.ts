@@ -26,6 +26,7 @@ export function term(label: string, source?: string, flags = "i"): BannedTerm {
 
 /**
  * Filler and AI tells, banned outright (no FACTS exemption). The prompt lists every label.
+ * ("absolutely" is not here on purpose: "Holloway absolutely fucks Rory" is a house headline.)
  * ("clinic" is in THEME_TERMS: banned too, but a team named after one can still be named.)
  */
 export const BANNED_FILLER: BannedTerm[] = [
@@ -35,7 +36,6 @@ export const BANNED_FILLER: BannedTerm[] = [
   term("without further ado"),
   term("let that sink in"),
   term("it's giving"),
-  term("absolutely"),
   term("certainly"),
   term("talk about"),
   term("yikes"),
@@ -53,6 +53,66 @@ export const BANNED_FILLER: BannedTerm[] = [
   term("RIP", "RIP|R\\.I\\.P\\.?", ""),
   term("pour one out"),
   term("in this economy"),
+];
+
+/**
+ * Words that announce the joke instead of making it (docs/SITE_SPEC.md DECISIONS ROUND 2:
+ * never announce the roast). Dropped unless FACTS or LORE uses the same word, so a team that
+ * is really called "Pot Roast" can still be named. The prompt lists every label.
+ */
+export const ANNOUNCE_TERMS: BannedTerm[] = [
+  term("roast", "roast(?:s|ed|ing|er)?"),
+  term("savage"),
+  term("no offense"),
+  term("sick burn"),
+  term("shots fired"),
+  term("no mercy"),
+];
+
+/**
+ * Slurs and slur-adjacent insults. Never allowed, whatever FACTS or LORE says, and never
+ * printed in the prompt (the persona states the rule in words). Logged as "slur" only.
+ * Covers group slurs and sexual orientation used as an insult; crude insults about a
+ * manager's decisions (clown, fraud, dumbass, bitch) are a different thing and stay legal.
+ */
+export const SLUR_TERMS: BannedTerm[] = [
+  "n[i1!]gg(?:a|as|az|er|ers|uh)",
+  "f[a@4]g(?:s|g[oi]ts?|gy)?",
+  "homos?",
+  "no\\s+homo",
+  "gay(?:s|er|est)?",
+  "quee?rs?",
+  "d[y]kes?",
+  "tr[a@]nn(?:y|ies)",
+  "shemales?",
+  "retard(?:s|ed)?",
+  "tards?",
+  "sp[a@]z(?:z|zes|tic)?",
+  "midgets?",
+  "sp[i1]cs?",
+  "ch[i1]nks?",
+  "g[o0]{2}ks?",
+  "k[i1]kes?",
+  "wetbacks?",
+  "beaners?",
+  "rag\\s*heads?",
+  "towel\\s*heads?",
+  "coons?",
+  "japs?",
+  "gyp(?:p?ed|sy|sies)",
+  "wops?",
+  "dagos?",
+].map((source) => term("slur", source));
+
+/**
+ * Claims about how long someone took to pick. The site only knows when it noticed a pick,
+ * not when it was made, so FACTS has no pick times and any such claim is invented. The
+ * league's pick clock (clockLimitHours) is a real setting and stays legal ("four hours per pick").
+ */
+export const CLOCK_CLAIMS: RegExp[] = [
+  /\b(?:took|takes|taking|spent|spends|sat|sits|sitting|burned|burnt|burns|wasted|wastes|needed|needs|used|uses|killed|ran)\b[^.!?]{0,40}?\b(?:hours?|minutes?|mins?|seconds?|secs?)\b/i,
+  /\b(?:hours?|minutes?|mins?|seconds?|secs?|all\s+(?:day|night))\s+(?:on|off)\s+the\s+clock\b/i,
+  /\bon\s+the\s+clock\s+for\s+(?:\S+\s+){0,3}?(?:hours?|minutes?|seconds?|days?)\b/i,
 ];
 
 /**
@@ -133,7 +193,9 @@ export const THEME_TERMS: BannedTerm[] = [
   term("white coat"),
   term("pager"),
   term("intern", "interns?"),
-  term("resident", "residents?|residency"),
+  // Not plain "resident": "the residents fled the city" is history, not the theme.
+  term("residency"),
+  term("chief resident"),
   term("med school"),
   term("medical school"),
   term("med student"),
@@ -167,21 +229,6 @@ export const THEME_TERMS: BannedTerm[] = [
 ];
 
 /**
- * Self-reference (docs/SITE_SPEC.md DECISIONS ROUND 2: never announce the roast). The writer
- * never names the genre of what it writes or says anyone got roasted, burned or cooked: it
- * states the fact. A sentence using one is dropped unless FACTS or LORE uses the same word
- * (a team literally named "Burn Notice" can still be named). The prompt lists every label.
- */
-export const SELF_TERMS: BannedTerm[] = [
-  term("roast", "roast(?:s|ed|ing|er|ers)?"),
-  term("burn", "burn(?:s|ed|t|ing)?"),
-  term("cooked"),
-  term("savage", "savage(?:ly|ry)?"),
-  term("verdict", "verdicts?"),
-  term("column", "columns?"),
-];
-
-/**
  * Box-score words. FACTS carries fantasy points only, never stat lines, so a sentence with one
  * of these is an invented stat unless FACTS or LORE uses the same word.
  */
@@ -201,6 +248,77 @@ export const BOX_SCORE_TERMS: BannedTerm[] = [
 
 /** "<number> catches" style counts (only with a number in front: "targets" alone is a verb). */
 export const COUNTED_STATS = ["catches", "carries", "targets", "snaps", "touches", "completions"];
+
+/**
+ * Words that make a nearby number a league stat (postcheck.ts `isLeagueStat`). The prompt lists
+ * every label, so the writer can see each word that turns a history number into a checked one.
+ * "straight", "minutes" and "place" are left out on purpose: streaks and pick times have their
+ * own checks, digit ordinals ("10th place") are stats anyway, and "took place in 1854" is history.
+ */
+export const STAT_WORDS: Array<{ label: string; source: string }> = [
+  { label: "points", source: "points?" },
+  { label: "pts", source: "pts" },
+  { label: "score", source: "scor(?:e|es|ed|ing)" },
+  { label: "put up", source: "put\\s+up" },
+  { label: "posted", source: "posted" },
+  { label: "projected", source: "projected" },
+  { label: "projection", source: "projections?" },
+  { label: "optimal", source: "optimal" },
+  { label: "bench", source: "bench(?:ed)?" },
+  { label: "pick", source: "picks?" },
+  { label: "picked", source: "picked" },
+  { label: "spot", source: "spots?" },
+  { label: "reach", source: "reach(?:ed|es)?" },
+  { label: "steal", source: "steals?" },
+  { label: "rank", source: "rank(?:s|ed|ing)?" },
+  { label: "overall", source: "overall" },
+  { label: "round", source: "rounds?" },
+  { label: "record", source: "record" },
+  { label: "win", source: "wins?" },
+  { label: "loss", source: "loss(?:es)?" },
+  { label: "lost by", source: "lost\\s+by" },
+  { label: "won by", source: "won\\s+by" },
+  { label: "game", source: "games?" },
+  { label: "streak", source: "streak" },
+  { label: "in a row", source: "in\\s+a\\s+row" },
+  { label: "week", source: "weeks?" },
+  { label: "season", source: "seasons?" },
+  { label: "all-play", source: "all-play" },
+  { label: "FAAB", source: "faab" },
+  { label: "dollars", source: "dollars?" },
+  { label: "bucks", source: "bucks?" },
+  { label: "bid", source: "bids?" },
+  { label: "paid", source: "paid" },
+  { label: "pay", source: "pays?" },
+  { label: "overpay", source: "overpa\\w*" },
+  { label: "spent", source: "spent" },
+  { label: "cost", source: "costs?" },
+  { label: "worth", source: "worth" },
+  { label: "value", source: "value[sd]?" },
+  { label: "FantasyCalc", source: "fantasycalc" },
+  { label: "net", source: "net" },
+  { label: "grade", source: "grade" },
+  { label: "age", source: "age[sd]?" },
+  { label: "year-old", source: "year-olds?" },
+  { label: "years old", source: "years?\\s+old" },
+  { label: "QB", source: "qbs?" },
+  { label: "RB", source: "rbs?" },
+  { label: "WR", source: "wrs?" },
+  { label: "TE", source: "tes?" },
+  { label: "FLEX", source: "flex" },
+  { label: "quarterback", source: "quarterbacks?" },
+  { label: "running back", source: "running\\s+backs?" },
+  { label: "receiver", source: "receivers?" },
+  { label: "wideout", source: "wideouts?" },
+  { label: "tight end", source: "tight\\s+ends?" },
+  { label: "percent", source: "percent" },
+  { label: "odds", source: "odds" },
+  { label: "playoffs", source: "playoffs?" },
+  { label: "title", source: "title" },
+  { label: "margin", source: "margin" },
+  { label: "hours", source: "hours?" },
+  { label: "clock", source: "clock" },
+];
 
 /** All-caps words (3+ letters) that are ordinary league shorthand, not shouting. */
 export const CAPS_ALLOWED = new Set(["FAAB", "PPR", "NFL", "TNF", "MNF", "SNF", "ADP", "IDP", "FLEX", "IR"]);

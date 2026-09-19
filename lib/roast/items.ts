@@ -1,8 +1,8 @@
 /**
- * Plans for the instant item write-ups (site only): one trade, one waiver batch, one draft pick.
- * Same shape as issue plans: a FACTS payload, one "item" slot, and a deterministic
- * facts-only line used when the model is unavailable or fails the checks. Task wording never
- * names the genre (no "roast"): the writer states the fact.
+ * Plans for the instant item posts (site only): one trade, one waiver batch, one draft pick.
+ * Same shape as issue plans: a FACTS payload, one "roast" slot (1 to 3 sentences, same voice as
+ * the newsletter), and a deterministic facts-only line used when the model is unavailable or
+ * fails the checks.
  */
 import { roastIds } from "@/lib/archive";
 import type { DraftPickFact, RoastItemFact, RoastItemKind, TradeFact, WaiverFact } from "@/lib/types";
@@ -28,6 +28,10 @@ export interface PickContext {
   picks?: DraftPickFact[];
   /** FantasyCalc values, pick clock and draft type for a pick's "passed on", clock limit and position count. */
   draft?: Omit<DraftContext, "picks"> | null;
+  /** The commissioner's first name: added to FACTS when he is in the item (he is never spared). */
+  commissioner?: string | null;
+  /** Starting lineup slots per position, for draft picks ({ QB: 2, TE: 1 }). */
+  starters?: Record<string, number> | null;
   /** "priority" when the league does not run on FAAB (default "faab"). */
   waiverMode?: WaiverMode;
   /** playerId -> draft slot ("1.03"), for "draftedAt" on player objects. */
@@ -49,12 +53,17 @@ export function pickFactsOnly(p: DraftPickFact): string {
   if (p.fcRank === null) return `${base} FantasyCalc does not rank him.`;
   if (p.verdict === "reach") return `${base} FantasyCalc rank ${p.fcRank}, a reach of ${p.reach} spots.`;
   if (p.verdict === "steal") return `${base} FantasyCalc rank ${p.fcRank}, a steal of ${Math.abs(p.reach ?? 0)} spots.`;
-  return `${base} FantasyCalc rank ${p.fcRank}, taken where he was ranked.`;
+  return `${base} FantasyCalc rank ${p.fcRank}, about right.`;
 }
 
-/** The one slot of an item request (the id is only ever seen by the model). */
-export const ITEM_SLOT_ID = "item";
-const ROAST_SLOT = (brief: string): SlotSpec => ({ id: ITEM_SLOT_ID, brief });
+const ROAST_SLOT = (brief: string): SlotSpec => ({ id: "roast", brief });
+
+const ITEM_BRIEF = "1 to 3 sentences.";
+
+/** FACTS gets the commissioner only when he is one of the managers in the item. */
+function withCommissioner(facts: Record<string, unknown>, managers: string[], commissioner: string | null | undefined): Record<string, unknown> {
+  return commissioner && managers.includes(commissioner) ? { ...facts, commissioner } : facts;
+}
 
 /** Plan an item roast. The fact's own shape decides the kind (`kind` is kept for the public signature). */
 export function planItem(kind: RoastItemKind, fact: RoastItemFact, faabBudget: number, extra: PickContext = {}): ItemPlan {
@@ -69,26 +78,27 @@ export function planItem(kind: RoastItemKind, fact: RoastItemFact, faabBudget: n
       header: batch.length === 1 && batch[0].type === "free_agent" ? "ITEM: free agent move" : "ITEM: waiver run",
       task:
         (extra.waiverMode ?? "faab") === "faab"
-          ? "Write 1 to 3 sentences on these moves. Go after the worst decision: a $0 bid that lost, an overpay, a bid that failed because the roster was full, or a bad drop."
-          : "Write 1 to 3 sentences on these moves. Go after the worst decision: a claim lost on waiver priority, a claim that failed because the roster was full, or a bad drop. This league has no bids.",
-      slots: [ROAST_SLOT("1 to 3 sentences.")],
-      facts: waiversPayload(batch, faabBudget, extra.waiverMode ?? "faab", extra.draftSlots),
+          ? "One post on these moves, 1 to 3 brutal sentences. Go after the worst decision: a $0 bid that lost, an overpay, a bid that failed because the roster was full, or a bad drop."
+          : "One post on these moves, 1 to 3 brutal sentences. Go after the worst decision: a claim lost on waiver priority, a claim that failed because the roster was full, or a bad drop. This league has no bids.",
+      slots: [ROAST_SLOT(ITEM_BRIEF)],
+      facts: withCommissioner(waiversPayload(batch, faabBudget, extra.waiverMode ?? "faab", extra.draftSlots), managers, extra.commissioner),
       factsOnlyText: waiverFactsOnly(batch),
       managers,
     };
   }
   if ((fact as TradeFact).kind === "trade") {
     const t = fact as TradeFact;
+    const managers = t.sides.map((s) => s.team.managerName);
     return {
       kind: "trade",
       id: roastIds.trade(t.transactionId),
       rosterIds: t.sides.map((s) => s.team.rosterId),
       header: "ITEM: trade",
-      task: "Write 1 to 3 sentences on this trade. Make clear who won it by value.",
-      slots: [ROAST_SLOT("1 to 3 sentences.")],
-      facts: tradePayload(t, extra.draftSlots),
+      task: "One post on this trade, 1 to 3 brutal sentences. Make clear who won it by value, and hit both sides.",
+      slots: [ROAST_SLOT(ITEM_BRIEF)],
+      facts: withCommissioner(tradePayload(t, extra.draftSlots), managers, extra.commissioner),
       factsOnlyText: tradeFactsOnly(t),
-      managers: t.sides.map((s) => s.team.managerName),
+      managers,
     };
   }
   const p = fact as DraftPickFact;
@@ -101,13 +111,18 @@ export function planItem(kind: RoastItemKind, fact: RoastItemFact, faabBudget: n
     id: roastIds.pick(p.draftId, p.pickNo),
     rosterIds: [p.team.rosterId],
     header: "ITEM: draft pick",
-    task: "Write 1 or 2 sentences on this draft pick. Use the reach or steal, who he passed on, how many at that position he now has, the position run, his earlier picks or the time on the clock if they are in FACTS.",
-    slots: [ROAST_SLOT("1 or 2 sentences.")],
-    facts: {
-      ...pickPayload(p, draft),
-      earlierPicks: earlierOwn.map((x) => ({ pick: pickLabel(x), player: x.player.name, pos: x.player.position })),
-      justBefore: justBefore.map((x) => ({ pick: pickLabel(x), manager: x.team.managerName, player: x.player.name, pos: x.player.position })),
-    },
+    task: "One post on this draft pick, 1 to 3 brutal sentences. Use the reach or steal, who he passed on and who took that player, how many at that position he now has, the position run or his earlier picks if they are in FACTS.",
+    slots: [ROAST_SLOT(ITEM_BRIEF)],
+    facts: withCommissioner(
+      {
+        ...pickPayload(p, draft),
+        ...(extra.starters ? { starters: extra.starters } : {}),
+        earlierPicks: earlierOwn.map((x) => ({ pick: pickLabel(x), player: x.player.name, pos: x.player.position })),
+        justBefore: justBefore.map((x) => ({ pick: pickLabel(x), manager: x.team.managerName, player: x.player.name, pos: x.player.position })),
+      },
+      [p.team.managerName],
+      extra.commissioner,
+    ),
     factsOnlyText: pickFactsOnly(p),
     managers: [p.team.managerName],
   };
