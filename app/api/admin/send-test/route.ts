@@ -1,6 +1,6 @@
 /**
  * GET /api/admin/send-test: builds today's Daily from live data and emails a [Test] copy to the
- * commissioner only (COMMISSIONER_EMAIL, else the first LEAGUE_EMAILS address).
+ * commissioner only (COMMISSIONER_EMAIL; nothing is sent if it is not set).
  * Safe without a secret: the recipient is fixed server-side, nothing reaches the league list,
  * the daily cursor is not moved (the 8 AM send is unaffected), and it runs at most once per 15 minutes.
  */

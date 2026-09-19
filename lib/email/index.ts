@@ -266,14 +266,15 @@ async function sendToSubscribers(issue: Issue, transport: EmailTransport): Promi
 }
 
 /**
- * A test copy of an issue to ONE address: COMMISSIONER_EMAIL, or else the first LEAGUE_EMAILS entry.
+ * A test copy of an issue to ONE address: COMMISSIONER_EMAIL, and nothing else.
  * Never sends to the league list, never marks the issue sent. Used by /api/admin/send-test.
  */
 export async function sendTestCopy(issue: Issue): Promise<SendResult> {
   const transport = getTransport();
   if (!transport) return notConfigured("RESEND_API_KEY is not set.");
-  const to = normalizeEmail(process.env.COMMISSIONER_EMAIL ?? "") ?? leagueEmails()[0] ?? null;
-  if (!to) return notConfigured("No COMMISSIONER_EMAIL or LEAGUE_EMAILS set.");
+  // Only ever the commissioner. Never guess from the league list.
+  const to = normalizeEmail(process.env.COMMISSIONER_EMAIL ?? "");
+  if (!to) return notConfigured("COMMISSIONER_EMAIL is not set.");
   let result: SendResult;
   try {
     const unsub = unsubscribeLink(issue.leagueId, to);
