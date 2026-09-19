@@ -47,6 +47,7 @@ import { addUsage, callRoastModel, hasRoastClient, ISSUE_REQUEST, ITEM_REQUEST, 
 import { draftContext, EMPTY_MEMORY, issueMemory, starterCounts, type PayloadMemory } from "./memory";
 import { loadRoastNotes, notesFor } from "./notes";
 import { ALLUSION_SLOT, HIDDEN_SLOTS, planDaily, planDraftGrades, planThursday, planWeekly, type IssuePlan, type SlotSpec, type WaiverMode } from "./plan";
+import { recordDrops } from "./status";
 import { AllowedNumbers, checkText, describeDrops, limitExclamations, parseSlots, sanitize, splitSentences, type Dropped } from "./postcheck";
 
 export { ISSUE_TITLES, issueTitle } from "./plan";
@@ -173,6 +174,8 @@ function numberSources(p: Promptable, lore: Record<string, string>): { allowed: 
 
 function logDrops(label: string, dropped: Dropped[]): void {
   for (const d of dropped) console.warn(`[roast] ${label}: failed sentence (${describeDrops([d]).join("; ")}): ${d.sentence}`);
+  // Also keep the last few in the store so /api/health can show why lines were thrown out.
+  void recordDrops(dropped.map((d) => ({ at: Date.now(), label, reasons: describeDrops([d]), sentence: d.sentence }))).catch(() => {});
 }
 
 /** The note appended to a retry: what failed, in plain words. */

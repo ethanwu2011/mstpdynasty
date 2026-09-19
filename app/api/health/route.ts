@@ -4,7 +4,7 @@ import { allowAdminAttempt } from "@/lib/email/limits";
 import { configured } from "@/lib/env";
 import { isRoastConfigured } from "@/lib/roast";
 import { pickBackend } from "@/lib/store";
-import { readWriterStatus } from "@/lib/roast/status";
+import { readDrops, readWriterStatus } from "@/lib/roast/status";
 
 export const dynamic = "force-dynamic";
 
@@ -37,9 +37,10 @@ export async function GET(req: Request) {
     }
     authed = Boolean(process.env.CRON_SECRET && checkCronAuth(req).ok) || checkAdminAuth(req).ok;
   }
-  const [writer, email, recipients] = await Promise.all([
+  const [writer, email, drops, recipients] = await Promise.all([
     readWriterStatus(),
     readEmailStatus(),
+    readDrops(),
     authed ? recipientSummary().catch(() => null) : Promise.resolve(null),
   ]);
   return Response.json(
@@ -49,6 +50,8 @@ export async function GET(req: Request) {
       emailConfigured: configured.resend(),
       lastWriterCall: writer,
       lastEmail: email,
+      // Sentences the fact check threw out most recently (the same text the site would have shown).
+      recentDrops: drops.slice(0, 12),
       envPresent: Object.fromEntries(ENV_NAMES.map((k) => [k, Boolean(process.env[k])])),
       deployedAt: process.env.VERCEL_GIT_COMMIT_SHA?.slice(0, 7) ?? null,
       ...(authed
