@@ -31,7 +31,10 @@ export const MAX_ROASTS_PER_TICK = 6;
 /** Transactions older than this are never roasted by the tick. */
 export const TICK_LOOKBACK_MS = 7 * DAY_MS;
 const ROAST_CONCURRENCY = 3;
-const REROAST_AFTER_MS = DAY_MS;
+/** A roast written with the writer configured but kept facts-only (post-check failed) is retried after this. */
+const REROAST_AFTER_MS = 30 * 60_000;
+/** Give up on the writer for an item after this many facts-only results while it was configured. */
+const MAX_WRITER_ATTEMPTS = 3;
 const RETRY_ERROR_AFTER_MS = 3600_000;
 
 type Group = "roast_trades" | "roast_waivers" | "roast_picks";
@@ -46,6 +49,10 @@ interface Candidate {
 interface IndexEntry {
   s: RoastSource | "error";
   t: number;
+  /** Whether the joke writer was configured when this entry was written. */
+  w?: boolean;
+  /** Facts-only results while the writer was configured. */
+  n?: number;
 }
 type RoastIndex = Record<string, IndexEntry>;
 
@@ -66,6 +73,9 @@ function wants(idx: RoastIndex, id: string, now: number, writerConfigured: boole
   if (!e) return true;
   if (e.s === "error") return now - e.t > RETRY_ERROR_AFTER_MS;
   if (e.s === "llm" || !writerConfigured) return false;
+  // Written before the writer existed (for example before the API key was added): redo it now.
+  if (!e.w) return true;
+  if ((e.n ?? 0) >= MAX_WRITER_ATTEMPTS) return false;
   return now - e.t > REROAST_AFTER_MS;
 }
 
@@ -164,7 +174,8 @@ export async function tickOutcomes(ctx: LeagueContext, now: number): Promise<Job
       const r = await roastItem(c.kind, c.fact, ctx, { now, draftPicks });
       if (r.source === "placeholder") return "placeholder" as const;
       await saveRoast({ ...r, id: c.id });
-      updates[c.id] = { s: r.source, t: now };
+      const prevN = index[c.id]?.n ?? 0;
+      updates[c.id] = { s: r.source, t: now, w: writer, n: writer && r.source !== "llm" ? prevN + 1 : prevN };
       return "roasted" as const;
     } catch {
       updates[c.id] = { s: "error", t: now };
