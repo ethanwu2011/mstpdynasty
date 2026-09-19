@@ -1,0 +1,44 @@
+/*
+ * A loading field in pure CSS: the 9x9 dot matrix with its bulbs off, and the lit dots wiping
+ * across it in pixel steps, over and over. Same look as DotMatrixFill's loading state at a
+ * fraction of the markup (no per-dot SVG), for fallbacks that ship with every page load.
+ */
+.field {
+  position: relative;
+  height: calc(var(--rows, 6) * 9px);
+  overflow: hidden;
+  background-color: var(--color-paper-shade);
+  background-image:
+    linear-gradient(to right, var(--color-paper) 3px, transparent 3px),
+    linear-gradient(to bottom, var(--color-paper) 3px, transparent 3px);
+  background-size: 9px 9px;
+}
+
+.field::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background-color: var(--color-ink);
+  background-image:
+    linear-gradient(to right, var(--color-paper) 3px, transparent 3px),
+    linear-gradient(to bottom, var(--color-paper) 3px, transparent 3px);
+  background-size: 9px 9px;
+  mask-image: linear-gradient(to right, transparent, #000 70%);
+  clip-path: inset(0 0 0 0);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .field::after {
+    animation: matrix-wipe 2.4s steps(24, end) infinite;
+  }
+}
+
+@keyframes matrix-wipe {
+  0% {
+    clip-path: inset(0 100% 0 0);
+  }
+  75%,
+  100% {
+    clip-path: inset(0 0 0 0);
+  }
+}

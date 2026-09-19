@@ -1,0 +1,285 @@
+/*
+ * The draft board. One DOM for both layouts:
+ *   phones and tablets: a list in pick order, one section per round with a sticky round bar;
+ *   lg and up:          the full grid, rounds as rows and draft slots as columns, a sticky
+ *                       team header, and the round gutter on the left.
+ * Cells are placed on the grid with --r (round) and --c (slot + 1), so the DOM stays in
+ * pick order (the order a snake actually runs) and keyboard focus follows the draft.
+ */
+
+/* ------------------------------ phones and tablets ------------------------------ */
+
+.round {
+  display: block;
+}
+
+.roundHead {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  margin: 0;
+  scroll-margin-top: 0;
+}
+
+/*
+ * Each round is two lists: the picks made (and the one on the clock) as full rows, then the
+ * picks still to come as small tiles. Separate lists keep every row full, and a filler of
+ * unlit bulbs closes a short last row so no ink shows through.
+ */
+.made,
+.todo {
+  display: grid;
+  gap: 1px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  background: var(--color-ink);
+}
+.made {
+  grid-template-columns: minmax(0, 1fr);
+}
+.todo {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.made + .todo {
+  border-top: 1px solid var(--color-ink);
+}
+
+.fillSm,
+.fillMd {
+  grid-column: span var(--span, 1);
+}
+.fillMd {
+  display: none;
+}
+
+.cell {
+  position: relative;
+  display: flex;
+  min-width: 0;
+  background: var(--color-paper);
+  scroll-margin-top: 3rem;
+}
+
+@media (min-width: 48rem) {
+  .made {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .todo {
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+  }
+  .fillSm {
+    display: none;
+  }
+  .fillMd {
+    display: block;
+  }
+}
+
+/* Picks still to come: the board's bulbs, unlit. */
+.future,
+.fillSm,
+.fillMd {
+  background-color: var(--color-paper-shade);
+  background-image:
+    linear-gradient(to right, var(--color-paper) 3px, transparent 3px),
+    linear-gradient(to bottom, var(--color-paper) 3px, transparent 3px);
+  background-size: 9px 9px;
+}
+
+/* ------------------------------ lg: the full grid ------------------------------ */
+
+.grid {
+  display: block;
+}
+
+.head {
+  display: none;
+}
+
+@media (min-width: 64rem) {
+  .grid,
+  .head {
+    display: grid;
+    grid-template-columns: 3rem repeat(var(--teams, 10), minmax(0, 1fr));
+    gap: 1px;
+    background: var(--color-ink);
+  }
+
+  .head {
+    position: sticky;
+    top: 0;
+    z-index: 30;
+    border-bottom: 2px solid var(--color-ink);
+  }
+
+  .grid {
+    grid-auto-rows: minmax(3rem, auto);
+  }
+
+  .round,
+  .made,
+  .todo {
+    display: contents;
+  }
+
+  .fillSm,
+  .fillMd {
+    display: none;
+  }
+
+  .roundHead {
+    position: static;
+    grid-column: 1;
+    grid-row: var(--r);
+    scroll-margin-top: 5.5rem;
+  }
+
+  .cell {
+    grid-column: var(--c);
+    grid-row: var(--r);
+    scroll-margin-top: 5.5rem;
+  }
+}
+
+/* ------------------------------ pick buttons ------------------------------ */
+
+.pick {
+  position: relative;
+  display: block;
+  width: 100%;
+  min-width: 0;
+  text-align: left;
+  background: var(--color-paper);
+  color: var(--color-ink);
+  cursor: pointer;
+  anchor-name: var(--anchor);
+}
+.pick:focus-visible {
+  z-index: 10;
+  outline-offset: -4px;
+}
+.pick:hover,
+.pick:focus-visible {
+  z-index: 10;
+}
+
+/* The newest pick sits lifted off the board, like the active panel. */
+.latest {
+  z-index: 9;
+  transform: translate(-4px, -4px);
+  box-shadow: var(--shadow-hard);
+}
+
+/* While its roast is open, the pick stays lifted. */
+.pick[data-active] {
+  z-index: 11;
+  transform: translate(-4px, -4px);
+  box-shadow: var(--shadow-hard);
+  background: var(--color-paper-shade);
+}
+
+/* ------------------------------ the roast card (popover) ------------------------------ */
+
+.card {
+  position: fixed;
+  inset: auto 0 calc(3.75rem + env(safe-area-inset-bottom)) 0;
+  width: 100%;
+  max-width: none;
+  max-height: min(78dvh, 40rem);
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  border: 0;
+  border-top: 2px solid var(--color-ink);
+  background: var(--color-paper);
+  color: var(--color-ink);
+  position-anchor: var(--anchor);
+}
+
+.card:popover-open {
+  display: flex;
+  flex-direction: column;
+}
+
+/* A halftone screen over the board while the card is up on a phone. */
+.card::backdrop {
+  background-image: radial-gradient(circle at center, rgb(10 10 10 / 0.85) 1.3px, transparent 1.9px);
+  background-size: 5px 5px;
+}
+
+@media (min-width: 48rem) {
+  .card {
+    inset: auto 0 1.5rem 0;
+    width: min(28rem, calc(100% - 2rem));
+    margin-inline: auto;
+    border: 2px solid var(--color-ink);
+    box-shadow: var(--shadow-hard);
+  }
+}
+
+/* On the full board the card hangs off its pick. */
+@media (min-width: 64rem) {
+  @supports (position-area: block-end) {
+    .card {
+      inset: auto;
+      margin: 8px 0 0 -4px;
+      width: 25rem;
+      /* 100% is the space left on the chosen side of the pick, so the card scrolls, never spills. */
+      max-height: min(36rem, calc(100% - 16px));
+      position-area: block-end span-inline-end;
+      position-try-order: most-block-size;
+      position-try-fallbacks:
+        flip-inline,
+        flip-block,
+        flip-block flip-inline;
+    }
+    .card::backdrop {
+      background: transparent;
+    }
+  }
+}
+
+/* Without the popover API the cards stay hidden instead of spilling into the board. */
+@supports not selector(:popover-open) {
+  .card {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .card:popover-open {
+    animation: card-wipe 180ms steps(6, end) both;
+  }
+  .pick {
+    transition:
+      transform 90ms cubic-bezier(0.16, 1, 0.3, 1),
+      box-shadow 90ms cubic-bezier(0.16, 1, 0.3, 1);
+  }
+}
+
+/* The hard-shadow lift on hover and keyboard focus. */
+@media (hover: hover) {
+  .pick:hover {
+    transform: translate(-4px, -4px);
+    box-shadow: var(--shadow-hard);
+  }
+}
+.pick:focus-visible {
+  transform: translate(-4px, -4px);
+  box-shadow: var(--shadow-hard);
+}
+.pick:active {
+  transform: none;
+  box-shadow: none;
+}
+
+@keyframes card-wipe {
+  from {
+    clip-path: inset(0 0 100% 0);
+  }
+  to {
+    clip-path: inset(0 0 0 0);
+  }
+}

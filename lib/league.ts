@@ -201,7 +201,8 @@ export function unmatchedConfiguredManagers(ctx: LeagueContext) {
 }
 
 /**
- * Standings from Sleeper's roster records: wins (ties count half), then points for.
+ * Standings from Sleeper's roster records: wins (ties count half), then points for, then
+ * points against (fewer ranks higher), then roster id.
  * Regular season only (Sleeper stops counting W/L in the playoffs).
  */
 export function standingsFromRosters(ctx: LeagueContext): StandingRow[] {
@@ -216,7 +217,10 @@ export function standingsFromRosters(ctx: LeagueContext): StandingRow[] {
   }));
   rows.sort(
     (a, b) =>
-      b.wins + b.ties / 2 - (a.wins + a.ties / 2) || b.pointsFor - a.pointsFor || a.team.rosterId - b.team.rosterId,
+      b.wins + b.ties / 2 - (a.wins + a.ties / 2) ||
+      b.pointsFor - a.pointsFor ||
+      a.pointsAgainst - b.pointsAgainst ||
+      a.team.rosterId - b.team.rosterId,
   );
   return rows.map((r, i) => ({ rank: i + 1, ...r }));
 }

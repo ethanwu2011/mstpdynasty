@@ -1,171 +1,367 @@
 /**
  * Models public API. OWNER: models agent (lib/models/**, tests/models*).
  *
- * FOUNDATION STUB: every function returns correctly shaped placeholder data built from the
- * real league context (real team names, fake numbers) with `placeholder: true`. The
- * models agent replaces the bodies; the signatures are the contract in docs/CONTRACTS.md.
+ *   getWinProbabilities  live win probability per matchup (ESPN clocks + league-scored projections)
+ *   runSeasonSim         seeded Monte Carlo of the rest of the season and the playoff bracket
+ *   getPowerRankings     all-play, points per game and projected strength, blended
+ *   getOddsHistory       one odds snapshot per week (from the store; backfilled on demand)
+ *
+ * Signatures follow docs/CONTRACTS.md; the extra trailing options are optional.
+ * Pieces: data.ts (loading), winprob.ts, sim.ts, power.ts (pure math), constants.ts.
  */
-import { listOddsSnapshots } from "@/lib/archive";
-import { getLeagueContext, standingsFromRosters, teamRef } from "@/lib/league";
-import { getMatchups } from "@/lib/sleeper";
+import { listOddsSnapshots, saveOddsSnapshot } from "@/lib/archive";
+import { getLeagueContext, teamRef } from "@/lib/league";
 import type {
   LeagueContext,
   OddsHistory,
+  OddsSnapshot,
   PowerRankings,
+  RosterId,
   SimOptions,
   SimResult,
-  StarterLine,
-  TeamWinProb,
-  WinProb,
+  SimTeamOdds,
+  SleeperMatchup,
   WinProbWeek,
 } from "@/lib/types";
+import { DEFAULT_RUNS, EMPTY_TEAM_MEAN, MEAN_PRIOR_GAMES, PRIOR_SD, SD_PRIOR_GAMES } from "./constants";
+import {
+  type SeasonFrame,
+  type TeamRecord,
+  completedThrough,
+  firstRoundHolders,
+  knownPlayoffResults,
+  lineupStrength,
+  loadMatchupsByWeek,
+  pairMatchups,
+  playerRates,
+  projectionWeeks,
+  range,
+  recordsFromMatchups,
+  roundRobinPairs,
+  safePlayers,
+  safeSchedule,
+  seasonFrame,
+  strengthRosters,
+  teamPoints,
+  uncoveredSlotAverages,
+  weekHasScores,
+} from "./data";
+import { hash32, mean, round, sampleSd } from "./math";
+import { computePower } from "./power";
+import { type SimInput, simulateSeason } from "./sim";
+import { type WinProbOptions, loadWinProbabilities } from "./winprob";
 
-/** Deterministic 0..1 noise so placeholders are stable across renders. */
-function noise(...parts: Array<string | number>): number {
-  let h = 2166136261;
-  for (const ch of parts.join("|")) h = Math.imul(h ^ ch.charCodeAt(0), 16777619);
-  return ((h >>> 0) % 10_000) / 10_000;
+export { VARIANCE_COEF, PRIOR_SD, MEAN_PRIOR_GAMES, SD_PRIOR_GAMES, DEFAULT_RUNS, POWER_WEIGHTS } from "./constants";
+export type { WinProbOptions } from "./winprob";
+
+/* ------------------------------------------------------------------ */
+/* win probability                                                     */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Win probability for every matchup in `week`: live during games (ESPN clocks), projections
+ * before kickoff, exactly 0 / 1 once every starter's game is final. `opts.pregame` forces the
+ * pre-kickoff view for any week (used for backtests).
+ */
+export async function getWinProbabilities(week: number, ctx?: LeagueContext, opts: WinProbOptions = {}): Promise<WinProbWeek> {
+  const c = ctx ?? (await getLeagueContext());
+  return loadWinProbabilities(week, c, opts);
 }
 
-function normalCdf(z: number): number {
-  // Abramowitz-Stegun 7.1.26
-  const t = 1 / (1 + 0.3275911 * Math.abs(z) / Math.SQRT2);
-  const y = 1 - ((((1.061405429 * t - 1.453152027) * t + 1.421413741) * t - 0.284496736) * t + 0.254829592) * t * Math.exp(-(z * z) / 2);
-  return z >= 0 ? (1 + y) / 2 : (1 - y) / 2;
-}
+/* ------------------------------------------------------------------ */
+/* shared: projected strength and records                              */
+/* ------------------------------------------------------------------ */
 
-/** Pairs of roster ids for a week: Sleeper matchups when they exist, else 1v2, 3v4... */
-async function pairings(ctx: LeagueContext, week: number): Promise<Array<[number, number, number]>> {
-  if (week >= 1) {
-    const ms = await getMatchups(ctx.leagueId, week).catch(() => []);
-    const byId = new Map<number, number[]>();
-    for (const m of ms) if (m.matchup_id !== null) byId.set(m.matchup_id, [...(byId.get(m.matchup_id) ?? []), m.roster_id]);
-    const pairs = [...byId.entries()].filter(([, r]) => r.length === 2).map(([id, r]) => [r[0], r[1], id] as [number, number, number]);
-    if (pairs.length) return pairs.sort((a, b) => a[2] - b[2]);
-  }
-  const ids = ctx.rosters.map((r) => r.roster_id);
-  const out: Array<[number, number, number]> = [];
-  for (let i = 0; i + 1 < ids.length; i += 2) out.push([ids[i], ids[i + 1], i / 2 + 1]);
+/** Projected optimal-lineup points per roster for `week` (rosters as of that week when Sleeper has them). */
+async function teamStrengths(
+  ctx: LeagueContext,
+  frame: SeasonFrame,
+  week: number,
+  byWeek: Map<number, SleeperMatchup[]>,
+  playedWeeks: number[],
+): Promise<Map<RosterId, number>> {
+  const [players, rosters, schedule] = await Promise.all([safePlayers(), strengthRosters(ctx, week, byWeek), safeSchedule(ctx)]);
+  const rates = await playerRates(ctx, projectionWeeks(frame, week), schedule);
+  const fallbacks = uncoveredSlotAverages(ctx, byWeek, playedWeeks);
+  const out = new Map<RosterId, number>();
+  for (const r of ctx.rosters) out.set(r.roster_id, lineupStrength(ctx, rosters.get(r.roster_id) ?? [], rates, players, fallbacks));
   return out;
 }
 
-function placeholderTeam(ctx: LeagueContext, rosterId: number, week: number): Omit<TeamWinProb, "winProb"> {
-  const mean = Math.round((105 + 40 * noise(ctx.leagueId, rosterId, week)) * 100) / 100;
-  const starters: StarterLine[] = ctx.starterSlots.map((slot, i) => {
-    const projected = Math.round((6 + 14 * noise(rosterId, week, i)) * 100) / 100;
-    return {
-      playerId: `sample-${rosterId}-${i}`,
-      name: `Sample ${slot} ${i + 1}`,
-      position: slot === "FLEX" ? "WR" : slot,
-      slot,
-      nflTeam: null,
-      actual: 0,
-      projected,
-      fractionRemaining: 1,
-      expected: projected,
-      status: "pre",
-    };
-  });
-  return { team: teamRef(ctx, rosterId), actual: 0, projected: mean, mean, sd: 25, starters };
+interface Season {
+  frame: SeasonFrame;
+  byWeek: Map<number, SleeperMatchup[]>;
+  rosterIds: RosterId[];
 }
 
-/** Win probability for every matchup in `week` (live when games are on, projections before). */
-export async function getWinProbabilities(week: number, ctx?: LeagueContext): Promise<WinProbWeek> {
-  const c = ctx ?? (await getLeagueContext());
-  const matchups: WinProb[] = [];
-  for (const [a, b, matchupId] of await pairings(c, week)) {
-    const home = placeholderTeam(c, a, week);
-    const away = placeholderTeam(c, b, week);
-    const p = normalCdf((home.mean - away.mean) / Math.hypot(home.sd, away.sd));
-    matchups.push({ week, matchupId, home: { ...home, winProb: p }, away: { ...away, winProb: 1 - p }, isFinal: false });
+async function loadSeason(ctx: LeagueContext): Promise<Season> {
+  const frame = seasonFrame(ctx);
+  const byWeek = await loadMatchupsByWeek(ctx, range(frame.startWeek, frame.lastRegularSeasonWeek));
+  return { frame, byWeek, rosterIds: ctx.rosters.map((r) => r.roster_id) };
+}
+
+/** Regular-season weeks through `asOf` that have scores. */
+function playedWeeks(s: Season, asOf: number): number[] {
+  return range(s.frame.startWeek, Math.min(asOf, s.frame.lastRegularSeasonWeek)).filter((w) => weekHasScores(s.byWeek.get(w)));
+}
+
+const clampWeek = (frame: SeasonFrame, w: number) => Math.min(Math.max(w, frame.startWeek), frame.lastRegularSeasonWeek);
+
+/* ------------------------------------------------------------------ */
+/* season simulator                                                    */
+/* ------------------------------------------------------------------ */
+
+export interface TeamParams {
+  mean: number;
+  sd: number;
+  games: number;
+  observedMean: number | null;
+  projected: number;
+}
+
+/**
+ * Weekly score distribution per team:
+ *   mean = w x observed mean + (1 - w) x projected strength (centered on the league's observed
+ *          scoring level once games exist), w = games / (games + MEAN_PRIOR_GAMES)
+ *   sd   = v x observed sd + (1 - v) x PRIOR_SD, v = games / (games + SD_PRIOR_GAMES), 0 below two games
+ */
+export function teamParams(
+  rosterIds: RosterId[],
+  records: Map<RosterId, TeamRecord>,
+  strength: Map<RosterId, number>,
+): Map<RosterId, TeamParams> {
+  const allScores = rosterIds.flatMap((id) => records.get(id)?.scores ?? []);
+  const leagueObs = allScores.length ? mean(allScores) : null;
+  const strengths = rosterIds.map((id) => strength.get(id) ?? 0);
+  const anyStrength = strengths.some((v) => v > 0);
+  const leagueProj = mean(strengths);
+  const out = new Map<RosterId, TeamParams>();
+  for (const id of rosterIds) {
+    const scores = records.get(id)?.scores ?? [];
+    const g = scores.length;
+    const s = strength.get(id) ?? 0;
+    const prior = anyStrength ? (leagueObs !== null ? s + (leagueObs - leagueProj) : s) : (leagueObs ?? EMPTY_TEAM_MEAN);
+    const w = g / (g + MEAN_PRIOR_GAMES);
+    const obsMean = g ? mean(scores) : prior;
+    const v = g >= 2 ? g / (g + SD_PRIOR_GAMES) : 0;
+    out.set(id, {
+      mean: w * obsMean + (1 - w) * prior,
+      sd: v * sampleSd(scores) + (1 - v) * PRIOR_SD,
+      games: g,
+      observedMean: g ? mean(scores) : null,
+      projected: s,
+    });
   }
-  return { week, season: c.season, generatedAt: Date.now(), basis: "projections", matchups, placeholder: true };
+  return out;
 }
 
-/** Monte Carlo season odds (10,000 seeded runs by default). */
+export interface PreparedSim {
+  asOfWeek: number;
+  input: Omit<SimInput, "runs" | "seed">;
+  records: Map<RosterId, TeamRecord>;
+  params: Map<RosterId, TeamParams>;
+}
+
+/** Everything the simulator needs, conditioned on weeks through `fromWeek - 1` (default: last completed week). */
+export async function prepareSeasonSim(ctx: LeagueContext, fromWeek?: number): Promise<PreparedSim> {
+  const season = await loadSeason(ctx);
+  const { frame, byWeek, rosterIds } = season;
+  const asOfWeek = fromWeek !== undefined ? Math.max(0, fromWeek - 1) : await completedThrough(ctx);
+  const played = playedWeeks(season, asOfWeek);
+  const playedSet = new Set(played);
+  const records = recordsFromMatchups(rosterIds, byWeek, played);
+
+  const weeks: Array<Array<[RosterId, RosterId]>> = [];
+  for (const w of range(frame.startWeek, frame.lastRegularSeasonWeek)) {
+    if (playedSet.has(w)) continue;
+    const pairs = pairMatchups(byWeek.get(w) ?? []);
+    if (w <= asOfWeek && !pairs.length) continue; // before the league existed
+    weeks.push(pairs.length ? pairs.map((p) => [p.a.roster_id, p.b.roster_id]) : roundRobinPairs(rosterIds, w - frame.startWeek));
+  }
+
+  const strength = await teamStrengths(ctx, frame, clampWeek(frame, asOfWeek + 1), byWeek, played);
+  const params = teamParams(rosterIds, records, strength);
+  const [known, holders] = await Promise.all([knownPlayoffResults(ctx, frame, asOfWeek), firstRoundHolders(ctx)]);
+
+  return {
+    asOfWeek,
+    records,
+    params,
+    input: {
+      teams: rosterIds.map((id) => {
+        const r = records.get(id)!;
+        const p = params.get(id)!;
+        return { rosterId: id, wins: r.wins, losses: r.losses, ties: r.ties, pointsFor: r.pointsFor, mean: p.mean, sd: p.sd };
+      }),
+      weeks,
+      playoffTeams: frame.playoffTeams,
+      reseed: frame.reseed,
+      known,
+      firstPickHolder: holders,
+    },
+  };
+}
+
+export function defaultSeed(ctx: LeagueContext, asOfWeek: number): number {
+  return hash32(`${ctx.leagueId}:${ctx.season}:${asOfWeek}`);
+}
+
+/** Monte Carlo season odds (10,000 seeded runs by default). Percentages are 0..100. */
 export async function runSeasonSim(opts: SimOptions = {}): Promise<SimResult> {
-  const c = opts.ctx ?? (await getLeagueContext());
-  const standings = standingsFromRosters(c);
-  const n = standings.length || 1;
-  const raw = standings.map((s) => ({ s, w: 0.2 + noise(c.leagueId, "sim", s.team.rosterId) }));
-  const total = raw.reduce((acc, r) => acc + r.w, 0) || 1;
-  const teams = raw.map(({ s, w }) => {
-    const share = w / total;
+  const ctx = opts.ctx ?? (await getLeagueContext());
+  const prep = await prepareSeasonSim(ctx, opts.fromWeek);
+  const runs = Math.max(1, Math.floor(opts.runs ?? DEFAULT_RUNS));
+  const seed = (opts.seed ?? defaultSeed(ctx, prep.asOfWeek)) >>> 0;
+  const counts = simulateSeason({ ...prep.input, runs, seed });
+  const pct = (k: number) => round((k * 100) / runs, 2);
+
+  const teams: SimTeamOdds[] = counts.rosterIds.map((id, i) => {
+    const r = prep.records.get(id)!;
+    const p = prep.params.get(id)!;
     return {
-      team: s.team,
-      wins: s.wins,
-      losses: s.losses,
-      ties: s.ties,
-      pointsFor: s.pointsFor,
-      meanPoints: Math.round((105 + 40 * share * n * 0.5) * 100) / 100,
-      sdPoints: 25,
-      expectedWins: Math.round((4 + 6 * share * n * 0.5) * 10) / 10,
-      playoffPct: Math.round(Math.min(99, 600 * share) * 10) / 10,
-      byePct: Math.round(Math.min(95, 200 * share) * 10) / 10,
-      titlePct: Math.round(100 * share * 10) / 10,
-      lastPlacePct: Math.round((100 / n) * 10) / 10,
-      firstPickPct: Math.round((100 / n) * 10) / 10,
+      team: teamRef(ctx, id),
+      wins: r.wins,
+      losses: r.losses,
+      ties: r.ties,
+      pointsFor: r.pointsFor,
+      meanPoints: round(p.mean),
+      sdPoints: round(p.sd),
+      expectedWins: round(counts.winsSum[i] / runs),
+      playoffPct: pct(counts.playoff[i]),
+      byePct: pct(counts.bye[i]),
+      titlePct: pct(counts.title[i]),
+      lastPlacePct: pct(counts.last[i]),
+      firstPickPct: pct(counts.firstPick[i]),
     };
   });
-  return {
-    season: c.season,
-    asOfWeek: Math.max(0, c.week - 1),
-    runs: opts.runs ?? 10_000,
-    seed: opts.seed ?? 1,
-    generatedAt: Date.now(),
-    teams: teams.sort((a, b) => b.titlePct - a.titlePct),
-    placeholder: true,
-  };
+  teams.sort(
+    (a, b) =>
+      b.titlePct - a.titlePct || b.playoffPct - a.playoffPct || b.expectedWins - a.expectedWins || a.team.rosterId - b.team.rosterId,
+  );
+
+  const result: SimResult = { season: ctx.season, asOfWeek: prep.asOfWeek, runs, seed, generatedAt: Date.now(), teams, placeholder: false };
+  if (opts.persist) {
+    try {
+      await saveOddsSnapshot(ctx.leagueId, ctx.season, toSnapshot(result));
+    } catch {
+      // persisting is best effort; the odds are still returned
+    }
+  }
+  return result;
 }
 
-/** Power rankings: blend of all-play win %, points per game and projected strength. */
-export async function getPowerRankings(ctx?: LeagueContext): Promise<PowerRankings> {
-  const c = ctx ?? (await getLeagueContext());
-  const rows = c.rosters
-    .map((r) => {
-      const x = noise(c.leagueId, "power", r.roster_id);
-      return {
-        rank: 0,
-        previousRank: null,
-        team: teamRef(c, r.roster_id),
-        score: Math.round(x * 1000) / 10,
-        allPlayWinPct: Math.round(x * 100) / 100,
-        allPlayWins: 0,
-        allPlayLosses: 0,
-        pointsPerGame: Math.round((100 + 40 * x) * 100) / 100,
-        projectedStrength: Math.round((110 + 30 * x) * 100) / 100,
-        wins: r.settings.wins ?? 0,
-        losses: r.settings.losses ?? 0,
-        luck: 0,
-      };
-    })
-    .sort((a, b) => b.score - a.score)
-    .map((row, i) => ({ ...row, rank: i + 1 }));
+function toSnapshot(r: SimResult): OddsSnapshot {
   return {
-    season: c.season,
-    asOfWeek: Math.max(0, c.week - 1),
-    formula: "Placeholder: the real formula sentence arrives with the models agent.",
-    rows,
-    placeholder: true,
-  };
-}
-
-/** One odds snapshot per week, oldest first (from the store once runSeasonSim persists them). */
-export async function getOddsHistory(ctx?: LeagueContext): Promise<OddsHistory> {
-  const c = ctx ?? (await getLeagueContext());
-  const stored = await listOddsSnapshots(c.leagueId, c.season).catch(() => []);
-  if (stored.length) return { season: c.season, snapshots: stored, placeholder: false };
-  const weeks = [1, 2, 3, 4];
-  return {
-    season: c.season,
-    snapshots: weeks.map((week) => ({
-      week,
-      generatedAt: Date.now(),
-      teams: c.rosters.map((r) => {
-        const x = noise(c.leagueId, "odds", r.roster_id, week);
-        return { rosterId: r.roster_id, playoffPct: Math.round(x * 1000) / 10, titlePct: Math.round(x * 200) / 10, byePct: Math.round(x * 400) / 10, lastPlacePct: Math.round((1 - x) * 200) / 10, expectedWins: Math.round(x * 140) / 10 };
-      }),
+    week: r.asOfWeek,
+    generatedAt: r.generatedAt,
+    teams: r.teams.map((t) => ({
+      rosterId: t.team.rosterId,
+      playoffPct: t.playoffPct,
+      titlePct: t.titlePct,
+      byePct: t.byePct,
+      lastPlacePct: t.lastPlacePct,
+      expectedWins: t.expectedWins,
     })),
-    placeholder: true,
   };
+}
+
+/* ------------------------------------------------------------------ */
+/* power rankings                                                      */
+/* ------------------------------------------------------------------ */
+
+/** Power rankings through the last completed regular-season week (`opts.asOfWeek` overrides). */
+export async function getPowerRankings(ctx?: LeagueContext, opts: { asOfWeek?: number } = {}): Promise<PowerRankings> {
+  const c = ctx ?? (await getLeagueContext());
+  const season = await loadSeason(c);
+  const { frame, byWeek, rosterIds } = season;
+  const through = Math.min(opts.asOfWeek ?? (await completedThrough(c)), frame.lastRegularSeasonWeek);
+  const played = playedWeeks(season, through);
+  const strength = await teamStrengths(c, frame, clampWeek(frame, through + 1), byWeek, played);
+
+  const calc = (weeks: number[]) =>
+    computePower({
+      rosterIds,
+      weeks: weeks.map((w) => {
+        const scores = new Map<RosterId, number>();
+        for (const { a, b } of pairMatchups(byWeek.get(w) ?? [])) {
+          scores.set(a.roster_id, teamPoints(a));
+          scores.set(b.roster_id, teamPoints(b));
+        }
+        return scores;
+      }),
+      records: recordsFromMatchups(rosterIds, byWeek, weeks),
+      strength,
+    });
+
+  const now = calc(played);
+  const previous = played.length >= 2 ? calc(played.slice(0, -1)) : null;
+  const prevRank = new Map(previous?.rows.map((r, i) => [r.rosterId, i + 1]) ?? []);
+
+  return {
+    season: c.season,
+    asOfWeek: played.length ? played[played.length - 1] : 0,
+    formula: now.formula,
+    rows: now.rows.map((r, i) => ({
+      rank: i + 1,
+      previousRank: prevRank.get(r.rosterId) ?? null,
+      team: teamRef(c, r.rosterId),
+      score: r.score,
+      allPlayWinPct: r.allPlayWinPct,
+      allPlayWins: r.allPlayWins,
+      allPlayLosses: r.allPlayLosses,
+      pointsPerGame: r.pointsPerGame,
+      projectedStrength: r.projectedStrength,
+      wins: r.wins,
+      losses: r.losses,
+      luck: r.luck,
+    })),
+    placeholder: false,
+  };
+}
+
+/* ------------------------------------------------------------------ */
+/* odds history                                                        */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Compute and store odds snapshots for every completed week that has none yet (plus the
+ * preseason snapshot). Jobs call this after a gap or a store reset. Returns the snapshots it wrote.
+ */
+export async function backfillOddsHistory(
+  ctx?: LeagueContext,
+  opts: { runs?: number; force?: boolean } = {},
+): Promise<OddsSnapshot[]> {
+  const c = ctx ?? (await getLeagueContext());
+  const frame = seasonFrame(c);
+  const through = await completedThrough(c);
+  if (through < frame.startWeek) return [];
+  const have = new Set((await listOddsSnapshots(c.leagueId, c.season).catch(() => [])).map((s) => s.week));
+  const written: OddsSnapshot[] = [];
+  for (const asOf of [frame.startWeek - 1, ...range(frame.startWeek, Math.min(through, frame.lastWeek))]) {
+    if (!opts.force && have.has(asOf)) continue;
+    const r = await runSeasonSim({ ctx: c, fromWeek: asOf + 1, runs: opts.runs ?? DEFAULT_RUNS, persist: true });
+    written.push(toSnapshot(r));
+  }
+  return written;
+}
+
+/**
+ * One odds snapshot per week, oldest first. Snapshots are written by `runSeasonSim({ persist: true })`
+ * (the weekly job). `opts.backfill` fills missing completed weeks first; it defaults to on only
+ * for fixture data (local dev), where it costs nothing.
+ */
+export async function getOddsHistory(ctx?: LeagueContext, opts: { backfill?: boolean; runs?: number } = {}): Promise<OddsHistory> {
+  const c = ctx ?? (await getLeagueContext());
+  let through = Number.POSITIVE_INFINITY;
+  if (opts.backfill ?? c.isFixture) {
+    try {
+      through = await completedThrough(c);
+      await backfillOddsHistory(c, { runs: opts.runs });
+    } catch {
+      // history is optional; fall through to whatever is stored
+    }
+  }
+  const stored = await listOddsSnapshots(c.leagueId, c.season).catch(() => [] as OddsSnapshot[]);
+  // Dev week overrides can leave snapshots from "later" weeks in the local store: hide them.
+  return { season: c.season, snapshots: stored.filter((s) => s.week <= through), placeholder: false };
 }

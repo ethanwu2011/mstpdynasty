@@ -1,9 +1,12 @@
 /**
  * Download dev fixtures into fixtures/ (gitignored). Run: npm run fixtures [-- --force]
  *
- * - RT Dynasty (Ethan's other league, full completed 2025 season): league, users, rosters,
- *   matchups 1-17, transactions 1-18, drafts + picks + draft traded picks, traded picks,
- *   brackets.
+ * - The dev fixture league (a completed 2025 season of another league of Ethan's): league,
+ *   users, rosters, matchups 1-17, transactions 1-18, drafts + picks + draft traded picks,
+ *   traded picks, brackets. Which league is NOT committed (the repo is public): set
+ *   FIXTURE_USER_ID (the Sleeper user whose 2025 leagues are searched) and FIXTURE_LEAGUE_NAME
+ *   (the league's name, matched case-insensitively, exact first, then as a prefix) in env, or
+ *   in the untracked fixtures/config.json as { "userId": "...", "leagueName": "..." }.
  * - NFL 2025: stats + projections weeks 1-17, schedule, ESPN scoreboards weeks 1-17.
  * - A scoring-check league: a completed 2025 league of Ethan's with MSTP's starting slots and
  *   MSTP's headline weights (full PPR, +0.5 TE reception bonus, 6-pt pass TD, yardage). Picked
@@ -13,9 +16,9 @@
  * - /players/nfl (full, ~14 MB) and FantasyCalc current values.
  *
  * Files are written at fixtureRelPath(url) so DATA_SOURCE=fixtures replays them exactly.
- * Never publish or email anything about the RT league.
+ * Never publish or email anything about the dev fixture league.
  */
-import { mkdir, writeFile, access } from "node:fs/promises";
+import { mkdir, writeFile, access, readFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { espnScoreboardUrl } from "../lib/espn";
 import { FANTASYCALC_URL } from "../lib/fantasycalc";
@@ -24,7 +27,6 @@ import { sleeperUrl } from "../lib/sleeper";
 
 delete process.env.DATA_SOURCE; // always hit the network here
 
-const ETHAN_USER_ID = "866356317755973633";
 const MSTP_LEAGUE_ID = "1406497799725424640";
 const FIXTURE_SEASON = "2025";
 const MATCHUP_WEEKS = range(1, 17);
@@ -55,7 +57,6 @@ async function save(url: string, always = false): Promise<unknown> {
   const file = `${dir}/${fixtureRelPath(url)}`;
   if (!force && !always && (await exists(file))) {
     skipped++;
-    const { readFile } = await import("node:fs/promises");
     return JSON.parse(await readFile(file, "utf8"));
   }
   const data = await fetchJson(url, { retries: 3, timeoutMs: 90_000 });
@@ -88,18 +89,38 @@ interface LeagueLite {
   scoring_settings: Record<string, number>;
 }
 
+/** Which league to use as the dev fixture: env first, then the untracked fixtures/config.json. */
+async function fixtureLeagueConfig(): Promise<{ userId: string; leagueName: string }> {
+  let file: { userId?: unknown; leagueName?: unknown } = {};
+  try {
+    file = JSON.parse(await readFile(`${dir}/config.json`, "utf8"));
+  } catch {
+    // no config file: env only
+  }
+  const userId = process.env.FIXTURE_USER_ID?.trim() || (typeof file.userId === "string" ? file.userId.trim() : "");
+  const leagueName = process.env.FIXTURE_LEAGUE_NAME?.trim() || (typeof file.leagueName === "string" ? file.leagueName.trim() : "");
+  if (!userId || !leagueName) {
+    throw new Error(
+      `Set FIXTURE_USER_ID and FIXTURE_LEAGUE_NAME (env), or write ${dir}/config.json as {"userId":"<sleeper user id>","leagueName":"<league name>"}. Both stay out of the repo.`,
+    );
+  }
+  return { userId, leagueName };
+}
+
 async function main() {
   console.log(`Writing fixtures to ${dir}${force ? " (force)" : ""}`);
 
-  // 1. Find the RT league.
-  const leagues = (await save(sleeperUrl.userLeagues(ETHAN_USER_ID, FIXTURE_SEASON), true)) as LeagueLite[];
-  const rtCandidates = leagues.filter((l) => /^rt dynasty/i.test(l.name));
+  // 1. Find the dev fixture league.
+  const cfg = await fixtureLeagueConfig();
+  const leagues = (await save(sleeperUrl.userLeagues(cfg.userId, FIXTURE_SEASON), true)) as LeagueLite[];
+  const wanted = cfg.leagueName.toLowerCase();
+  const rtCandidates = leagues.filter((l) => l.name.toLowerCase().startsWith(wanted));
   const rt =
-    rtCandidates.find((l) => /^rt dynasty league$/i.test(l.name)) ??
+    leagues.find((l) => l.name.toLowerCase() === wanted) ??
     rtCandidates.find((l) => l.total_rosters === 10) ??
     rtCandidates[0];
-  if (!rt) throw new Error(`No league named "RT Dynasty..." in ${FIXTURE_SEASON}: ${leagues.map((l) => l.name).join(", ")}`);
-  console.log(`RT league: ${rt.league_id} "${rt.name}" (${rt.season}, ${rt.status}, ${rt.total_rosters} teams)`);
+  if (!rt) throw new Error(`No ${FIXTURE_SEASON} league named like FIXTURE_LEAGUE_NAME: ${leagues.map((l) => l.name).join(", ")}`);
+  console.log(`Dev fixture league: ${rt.league_id} "${rt.name}" (${rt.season}, ${rt.status}, ${rt.total_rosters} teams)`);
 
   // Scoring-check league: same starting slots and headline weights as MSTP.
   const mstpNow = (await save(sleeperUrl.league(MSTP_LEAGUE_ID), true)) as LeagueLite;

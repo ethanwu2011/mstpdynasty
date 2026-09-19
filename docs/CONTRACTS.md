@@ -2,8 +2,9 @@
 
 Read `docs/SITE_SPEC.md` first (the product contract). This file is the code contract: who owns
 which files, the shared modules you consume, and the functions you implement. Types live in
-`lib/types.ts`. Every function listed under "Functions each agent implements" already exists as a STUB that returns
-correctly shaped placeholder data with `placeholder: true`, so the UI can be built right now.
+`lib/types.ts`. Every function listed under "Functions each agent implements" is implemented (integrated
+2026-09-18) and returns `placeholder: false`. `placeholder: true` only ever marked foundation-stub sample
+data; jobs refuse to build or send anything from it, and the UI shows a "sample data" marker if it ever sees it.
 
 ## File ownership
 
@@ -50,7 +51,7 @@ Keep the public signatures below exactly. You may add optional trailing paramete
 ### `lib/league.ts`
 ```ts
 getLeagueContext(opts?: { leagueId?: string }): Promise<LeagueContext>
-standingsFromRosters(ctx): StandingRow[]           // wins (ties half), then points for
+standingsFromRosters(ctx): StandingRow[]           // wins (ties half), then points for, then fewer points against
 teamRef(ctx, rosterId): TeamRef                    // { rosterId, teamName, managerName, managerKey }
 managerFor(ctx, rosterId): Manager
 rosterFor(ctx, rosterId): SleeperRoster | undefined
@@ -136,11 +137,17 @@ saveOddsSnapshot(leagueId, season, snap)  listOddsSnapshots(leagueId, season)
 
 ### Models agent: `lib/models/index.ts`
 ```ts
-getWinProbabilities(week: number, ctx?): Promise<WinProbWeek>
+getWinProbabilities(week: number, ctx?, opts?: { pregame? }): Promise<WinProbWeek>   // pregame forces the pre-kickoff view (backtests)
 runSeasonSim(opts?: SimOptions): Promise<SimResult>      // opts: { runs?, seed?, fromWeek?, persist?, ctx? }
-getPowerRankings(ctx?): Promise<PowerRankings>
-getOddsHistory(ctx?): Promise<OddsHistory>
+getPowerRankings(ctx?, opts?: { asOfWeek? }): Promise<PowerRankings>
+getOddsHistory(ctx?, opts?: { backfill?, runs? }): Promise<OddsHistory>   // backfill defaults on only for fixture data
+backfillOddsHistory(ctx?, opts?: { runs?, force? }): Promise<OddsSnapshot[]>  // computes only weeks with no stored snapshot
 ```
+- In `WinProb`, `home` is the lower roster id of the pair (not an NFL-style home team).
+- `runSeasonSim({ fromWeek: w + 1, persist: true })` stores the snapshot for week `w` (`asOfWeek = fromWeek - 1`).
+  Only jobs persist: The Weekly Roast stores its week and backfills gaps, Draft Grades stores the preseason one.
+- The sim reads `playoff_seed_type` at runtime: MSTP is currently 0 (fixed bracket), so it simulates a fixed
+  bracket until the league switches to reseeding. Median games (`league_average_match`) are not modeled.
 - Win prob per spec: starter mean = actual + projection x fraction remaining; variance =
   (VARIANCE_COEF x projection)^2 x fraction remaining with `VARIANCE_COEF = 0.6` as a named constant;
   P = Phi(diff / sd). `isFinal` games give exactly 0 or 1 (0.5 on a tie). `basis` tells the UI which
@@ -155,20 +162,30 @@ getOddsHistory(ctx?): Promise<OddsHistory>
 ### Roast agent: `lib/facts/index.ts`, `lib/roast/index.ts`
 ```ts
 weeklyFacts(week: number, ctx?): Promise<WeeklyFacts>
-transactionFacts(sinceMs: number, ctx?): Promise<TransactionFacts>
+transactionFacts(sinceMs: number, ctx?, untilMs?): Promise<TransactionFacts>
 draftFacts(ctx?): Promise<DraftFacts>
 tnfFacts(week: number, ctx?): Promise<TnfFacts>
 shameEntries(ctx?): Promise<ShameBoard>
+standingsAsOf(week: number, ctx?): Promise<StandingRow[]>   // regular-season standings at the end of a week
+lastCompletedWeek(ctx): number
 
 isRoastConfigured(): boolean
-roastIssue(kind: IssueKind, facts: IssueFacts, ctx?): Promise<Issue>
-roastItem(kind: RoastItemKind, fact: RoastItemFact, ctx?): Promise<Roast>
+roastIssue(kind: IssueKind, facts: IssueFacts, ctx?, opts?: { now? }): Promise<Issue>
+roastItem(kind: RoastItemKind, fact: RoastItemFact, ctx?, opts?: { now?, draftPicks? }): Promise<Roast>
+ISSUE_TITLES, FACTS_ONLY_NOTE, SYSTEM_PROMPT
 ```
 - Facts are deterministic and unit tested on the RT fixture. `WaiverFact.batchId` groups claims from the
-  same waiver run; `roastItem("waiver", WaiverFact[])` roasts a batch.
+  same waiver run (`w-<processing time>`; each free-agent move is its own `fa-<txid>` batch);
+  `roastItem("waiver", WaiverFact[])` roasts a batch. `LosingBid.reason` says why a competing claim failed.
+- `DraftPickFact.reach = fcRank - pickNo` (positive = reach). For a rookie-only draft `fcRank` is the rank
+  within the rookie class. `secondsOnClock` excludes the draft's daily autopause window (Sleeper stores it as
+  minutes after midnight UTC) and is null unless the tick saw both this pick and the one before.
+- `WeeklyFacts.standings[].previousRank` is the rank one week earlier (null in week 1).
+- Pass `{ draftPicks }` to `roastItem` for a pick when you already have them (the tick does), to skip a
+  `draftFacts()` call per pick.
 - `roastIssue` never throws for LLM reasons: on no key, refusal or API error it returns a facts-only
   issue (`factsOnly: true`, `note: "The roast writer called in sick. Facts only today."`). Status starts as `"draft"`;
-  ops decides sending. `slug` must be URL-safe and unique per league (the stub uses `YYYY-MM-DD-kind`).
+  ops decides sending. `slug` must be URL-safe and unique per league (`YYYY-MM-DD-kind`, the ET date the issue was written, kind with hyphens).
 - `IssueBlock` is plain text (no HTML, no markdown) so web and email render the same content.
 - Issue titles: "The Daily Roast", "Thursday Night Fallout", "The Weekly Roast", "Draft Grades"
   (`ISSUE_TITLES` in `lib/roast`).
@@ -184,10 +201,27 @@ sendIssue(issue: Issue, mode?: NewsletterMode): Promise<SendResult>
 subscribe(input: SubscribeInput): Promise<SubscribeResult>     // { email, managerKey }
 unsubscribe(token: string): Promise<UnsubscribeResult>         // token from the signed link
 ```
-Routes: `/api/cron/daily`, `/api/tick`, `/api/admin/approve`, `/api/unsubscribe`, `/enter`, `/subscribe`,
-`proxy.ts` (Next 16 renamed middleware to proxy). Jobs persist issues and roasts through `lib/archive.ts`
-and write a run log under `keys.jobRun`. Draft pick first-seen timestamps go under
-`keys.snapshot(leagueId, "draft-pick-seen")` so facts can fill `DraftPickFact.pickedAt/secondsOnClock`.
+Routes: `/api/cron/daily`, `/api/tick`, `/api/admin/approve`, `/api/unsubscribe`, `/api/subscribe`,
+`/api/subscribe/confirm`, `/api/enter`, `/enter`, `/subscribe`, `proxy.ts` (Next 16 renamed middleware to
+proxy). Jobs persist issues and roasts through `lib/archive.ts` and write a run log under `keys.jobRun`.
+- Draft pick first-seen timestamps: `keys.snapshot(leagueId, "draft-pick-seen")` as
+  `{ [draftId]: { [pickNo]: epochMs } }`. When several picks land between ticks only the newest gets a time.
+  Read them with `readDraftPickTimes(leagueId, draftId)` from `@/lib/jobs/draft-seen` (import that file
+  directly: `lib/jobs` imports `lib/facts`, so the barrel would make a cycle).
+- The Daily Roast's injuries and lineup alerts are built in `lib/jobs/daily-facts.ts` (facts has no public
+  function for them). Its transactions run from the last Daily Roast up to the job's clock, minus plain
+  cuts (a drop with no add, of a player who is not a notable drop).
+- The tick roasts transactions from the last 7 days and picks of a draft that is live or ended in the last
+  7 days, at most 6 roasts per tick, so a wiped store cannot trigger hundreds of LLM calls.
+- The Weekly Roast pins odds and power rankings to the recapped week (`runSeasonSim({ fromWeek: week + 1,
+  persist: true })`, `getPowerRankings(ctx, { asOfWeek: week })`), then `backfillOddsHistory(ctx)`.
+- Also exported from `lib/jobs`: `listJobRuns`, `planDaily`, `recapWeekFor`, `earlyGamesWeekFor`,
+  `TICK_COOLDOWN_SECONDS`, `MAX_ROASTS_PER_TICK`. `runDaily`/`runTick` take an optional second argument
+  `{ ctx?, schedule? }` / `{ ctx?, ignoreCooldown? }`.
+- Pages that trigger the tick with `after(() => runTick())` run it inside their own time limit: give them
+  a generous `maxDuration`.
+- Vercel Hobby allows one daily cron, so every issue goes out at 12:00 UTC (8 AM EDT, 7 AM EST, and Vercel
+  may fire any time within that hour).
 
 ### UI agent: pages
 Consume only the public functions above plus the shared modules. Render all three states
@@ -215,8 +249,8 @@ by calling `runTick()`; the ops agent owns what it does.
 ## Fixtures and dev leagues
 
 - `npm run fixtures` downloads everything into `fixtures/` (gitignored). `fixtures/manifest.json` has the ids.
-- RT fixture league: `manifest.rt.leagueId` (Sleeper name "RT Dynasty Draft", 2025, complete,
-  10 teams, 2QB, half PPR, 4-pt pass TD, K slot, FAAB $250). Its only draft is a 3-round linear
+- Dev fixture league: `manifest.rt.leagueId` (a completed 2025 season; which league it is stays out
+  of the repo, see `docs/DEV.md`). Read its settings at runtime like any league. Its only draft is a
   rookie draft, not a startup draft.
 - Scoring-check league: `manifest.scoringCheck` (MSTP's slots and headline scoring, TE bonus), used
   only by `tests/scoring.test.ts`.

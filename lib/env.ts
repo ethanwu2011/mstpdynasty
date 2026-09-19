@@ -2,6 +2,7 @@
  * Environment access in one place. Server-only: never import from a client component.
  * Everything here works with no env vars set.
  */
+import "server-only";
 import type { NewsletterMode } from "./types";
 
 /** The real league. LEAGUE_ID overrides it for local dev (e.g. the RT fixture league). */

@@ -40,6 +40,8 @@
     "node_modules",
     "fixtures",
     ".data",
-    ".next"
+    ".next",
+    ".review",
+    "docs/samples"
   ]
 }

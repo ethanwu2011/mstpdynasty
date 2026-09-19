@@ -15,9 +15,9 @@
  *   - Timestamps are epoch milliseconds (`number`) unless the name ends in `Iso`.
  *   - Points are rounded to 2 decimals; percentages are 0..100 (never 0..1) unless the
  *     name ends in `Prob` (0..1).
- *   - Every model / facts / roast result carries `placeholder: boolean`. The foundation
- *     stubs return `placeholder: true` so the UI can show "sample data" until the real
- *     implementation lands.
+ *   - Every model / facts / roast result carries `placeholder: boolean`. The real modules
+ *     always return `false`; `true` only ever meant foundation-stub sample data, and jobs
+ *     refuse to build or send anything from a placeholder.
  *   - Team names, display names and player nicknames come from Sleeper and are
  *     user-controlled: always escape them in HTML and email.
  */
@@ -422,6 +422,8 @@ export interface StandingRow {
   pointsAgainst: number;
   /** "3W", "1L" or "" before any games. */
   streak: string;
+  /** Rank one week earlier (weekly facts fill it); null or absent when there is no earlier week. */
+  previousRank?: number | null;
 }
 
 /* ------------------------------------------------------------------ */
@@ -614,6 +616,8 @@ export interface TradeFact {
 export interface LosingBid {
   team: TeamRef;
   bid: number;
+  /** Why the claim failed (from Sleeper's transaction note): outbid, roster full, or other. */
+  reason?: "outbid" | "roster_full" | "other";
 }
 
 export interface WaiverFact {
@@ -659,7 +663,7 @@ export interface DraftPickFact {
   /** FantasyCalc overall rank at the time the fact was computed. */
   fcRank: number | null;
   fcPositionRank: number | null;
-  /** pickNo - fcRank. Positive = reach, negative = steal. */
+  /** fcRank - pickNo (expected pick minus actual). Positive = reach, negative = steal. */
   reach: number | null;
   verdict: "reach" | "steal" | "fair" | "unranked";
   /** Seconds the pick sat on the clock, when known (Sleeper does not expose it; filled from tick timestamps). */
@@ -730,6 +734,24 @@ export interface TeamWeekFact {
   fraud: boolean;
   zeroStarters: ZeroStarterFact[];
   streak: string;
+  /** The best single bench-for-starter swap, whether or not it would have flipped the result. */
+  benchMistake?: SwapFact | null;
+  /** The starter who scored the most. */
+  topStarter?: StarterPerformance | null;
+  /** The starter furthest below his projection (null without projections). */
+  worstStarter?: StarterPerformance | null;
+  /** The highest-scoring bench player. */
+  boomBench?: StarterPerformance | null;
+}
+
+/** One player's week in a weekly fact. */
+export interface StarterPerformance {
+  playerId: PlayerId;
+  name: string;
+  position: string;
+  points: number;
+  /** Sleeper projection in league scoring, null when there is none. */
+  projected: number | null;
 }
 
 export interface MatchupFact {
@@ -884,6 +906,8 @@ export interface Issue {
   title: string;
   /** One-line subtitle. */
   dek: string;
+  /** Who wrote the dek: "model" (it is also the email subject) or "code" (a fact line). Absent on older issues. */
+  dekSource?: "model" | "code";
   sections: IssueSection[];
   /** true when written without the LLM (not configured, refusal or API error). */
   factsOnly: boolean;
@@ -979,7 +1003,12 @@ export interface SubscribeInput {
 
 export interface SubscribeResult {
   ok: boolean;
-  status: "subscribed" | "already_subscribed" | "invalid_email" | "unknown_manager" | "full" | "not_configured" | "error";
+  /**
+   * "already_subscribed" is kept for compatibility but no longer returned: a confirmed address
+   * gets "subscribed" too, so the form never reveals who is on the list. "try_later": a rate
+   * limit or the pending sign-up cap was hit.
+   */
+  status: "subscribed" | "already_subscribed" | "invalid_email" | "unknown_manager" | "full" | "try_later" | "not_configured" | "error";
   message: string;
 }
 

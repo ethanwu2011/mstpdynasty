@@ -1,0 +1,8 @@
+# Never upload local-only data with a CLI or --prebuilt deploy (the repo is public and these are
+# gitignored too): the dev fixture league, the local store, review scratch and samples, env files.
+fixtures/
+.data/
+.review/
+docs/samples/
+.env*
+!.env.example

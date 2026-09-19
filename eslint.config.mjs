@@ -12,9 +12,11 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
-    // Local data, never linted.
+    // Local data and review scratch, never linted (all gitignored).
     "fixtures/**",
     ".data/**",
+    ".review/**",
+    "docs/samples/**",
   ]),
 ]);
 

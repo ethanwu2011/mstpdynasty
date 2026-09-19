@@ -1,15 +1,388 @@
 @import "tailwindcss";
 
-/* Foundation placeholder tokens. OWNER: UI agent (replace freely). */
-@theme inline {
-  --color-paper: #fbfaf7;
-  --color-ink: #16161a;
-  --color-navy: #003594;
-  --color-gold: #ffb81c;
-  --color-alarm: #c8102e;
+/*
+ * MSTP Dynasty visual system. DESIGN.md is the contract; these are its tokens.
+ * Paper, ink and one scoreboard red. Square corners, 2px ink rules, hard offset
+ * shadows only on things you can press. Pixel faces step in whole font pixels.
+ *
+ * The default Tailwind palette, radii and soft shadows are cleared on purpose so a
+ * page cannot drift off-world by accident: `bg-blue-500`, `rounded-lg` and
+ * `shadow-md` simply do not exist here.
+ */
+
+@theme {
+  --color-*: initial;
+  --color-paper: #f2f0eb;
+  --color-paper-shade: #e4e1d8;
+  --color-ink: #0a0a0a;
+  --color-ink-muted: #4a4945;
+  --color-red: #e5011a;
+  /* Text on red. Paper on red is 4.2:1, so labels on red use white (4.8:1). */
+  --color-on-red: #ffffff;
+
+  --radius-*: initial;
+  --shadow-*: initial;
+  --inset-shadow-*: initial;
+  --drop-shadow-*: initial;
+  --shadow-hard: 4px 4px 0 0 var(--color-ink);
+  --shadow-hard-paper: 4px 4px 0 0 var(--color-paper);
+
+  /*
+   * Jersey 10 draws on a 75-unit pixel in a 1400-unit em, so one font pixel is
+   * 18.667px of font size. These steps keep every glyph pixel a whole CSS pixel
+   * (j5 = 5px pixels, 50px caps). Line height is 16 font pixels.
+   */
+  --text-j1: 1.16667rem;
+  --text-j1--line-height: 0.857143;
+  --text-j2: 2.33333rem;
+  --text-j2--line-height: 0.857143;
+  --text-j3: 3.5rem;
+  --text-j3--line-height: 0.857143;
+  --text-j4: 4.66667rem;
+  --text-j4--line-height: 0.857143;
+  --text-j5: 5.83333rem;
+  --text-j5--line-height: 0.857143;
+
+  /* Doto is a 10-dot em: multiples of 10px keep the dots on the pixel grid. */
+  --text-d20: 1.25rem;
+  --text-d20--line-height: 1;
+  --text-d30: 1.875rem;
+  --text-d30--line-height: 1;
+  --text-d40: 2.5rem;
+  --text-d40--line-height: 1;
+  --text-d60: 3.75rem;
+  --text-d60--line-height: 1;
+  --text-d80: 5rem;
+  --text-d80--line-height: 1;
+  --text-d100: 6.25rem;
+  --text-d100--line-height: 1;
+
+  /* Silkscreen is an 8px grid: 12px is crisp on 2x screens. */
+  --text-label: 0.75rem;
+  --text-label--line-height: 1.2;
+  --text-label--letter-spacing: 0.04em;
+
+  --text-body: 1.0625rem;
+  --text-body--line-height: 1.5;
+  --text-lede: 1.3125rem;
+  --text-lede--line-height: 1.4;
+  --text-data: 0.9375rem;
+  --text-data--line-height: 1.35;
+  --text-fine: 0.8125rem;
+  --text-fine--line-height: 1.35;
+
+  --animate-blink: blink 1.6s steps(1, end) infinite;
 }
 
-body {
+@theme inline {
+  --font-display: var(--font-jersey), var(--font-silkscreen), monospace;
+  --font-label: var(--font-silkscreen), monospace;
+  --font-numeral: var(--font-doto), monospace;
+  --font-sans: var(--font-schibsted), system-ui, sans-serif;
+}
+
+/* ------------------------------------------------------------------ */
+/* Base                                                                */
+/* ------------------------------------------------------------------ */
+
+@layer base {
+  html {
+    background: var(--color-paper);
+    color: var(--color-ink);
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
+  }
+
+  body {
+    background: var(--color-paper);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    font-size: var(--text-body);
+    line-height: var(--text-body--line-height);
+    font-kerning: normal;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  ::selection {
+    background: var(--color-ink);
+    color: var(--color-paper);
+  }
+
+  /* Focus: a hard 2px ink frame, offset like the specimen's registration. On ink it flips to paper. */
+  :focus-visible {
+    outline: 2px solid var(--color-ink);
+    outline-offset: 2px;
+  }
+  .on-ink :focus-visible,
+  .on-ink:focus-visible {
+    outline-color: var(--color-paper);
+  }
+
+  h1,
+  h2,
+  h3,
+  h4 {
+    text-wrap: balance;
+  }
+
+  p {
+    text-wrap: pretty;
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* Type roles                                                          */
+/* ------------------------------------------------------------------ */
+
+/* Jersey 10: headlines, victims, the big score. Caps, never longer than ~12 words. */
+@utility type-display {
+  font-family: var(--font-display);
+  font-weight: 400;
+  text-transform: uppercase;
+  letter-spacing: 0;
+  font-synthesis: none;
+}
+
+/* Silkscreen: header bars, nav, table headers, tags. */
+@utility type-label {
+  font-family: var(--font-label);
+  font-weight: 400;
+  font-size: var(--text-label);
+  line-height: var(--text-label--line-height);
+  letter-spacing: var(--text-label--letter-spacing);
+  text-transform: uppercase;
+  font-synthesis: none;
+}
+
+/* Doto 900: scores, odds, records, clocks. Tabular. */
+@utility type-numeral {
+  font-family: var(--font-numeral);
+  font-weight: 900;
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+  letter-spacing: 0;
+  font-synthesis: none;
+}
+
+/* Doto punctuation as single dots on the 0.1em dot pitch (see components/Numeral.tsx). */
+.numeral-point,
+.numeral-colon {
+  display: inline-block;
+  width: 0.3em;
+  height: 0.7em;
+  background-repeat: no-repeat;
+  background-image: linear-gradient(currentColor, currentColor);
+  background-size: 0.1em 0.1em;
+  background-position: 50% 100%;
+}
+.numeral-colon {
+  background-image:
+    linear-gradient(currentColor, currentColor),
+    linear-gradient(currentColor, currentColor);
+  background-position:
+    50% 33%,
+    50% 83%;
+}
+
+/* Schibsted Grotesk data. Proportional figures on purpose: Schibsted's tabular
+   figures also widen commas and periods ("1 ,800"). Use Doto when digits must align. */
+@utility type-data {
+  font-family: var(--font-sans);
+  font-size: var(--text-data);
+  line-height: var(--text-data--line-height);
+  font-weight: 500;
+}
+
+/* Tabular digits for columns of bare integers only (no commas or decimals). */
+@utility tnum {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Reading measure for roast and issue text. */
+@utility measure {
+  max-width: 68ch;
+}
+
+/* ------------------------------------------------------------------ */
+/* Textures: halftone dots and the 9x9 dot matrix                      */
+/* Colors come from --tex-ink / --tex-ground so any surface can use     */
+/* them (paper on ink in the top bar, ink on paper in panels).          */
+/* The SVG components Dither and DotMatrixFill draw the ramped versions. */
+/* ------------------------------------------------------------------ */
+
+/* Round halftone screen. --tex-dot is the dot radius, --tex-pitch the screen. */
+@utility tex-halftone {
+  --tex-ink: var(--color-ink);
+  --tex-pitch: 6px;
+  --tex-dot: 1.4px;
+  background-image: radial-gradient(
+    circle at center,
+    var(--tex-ink) var(--tex-dot),
+    transparent calc(var(--tex-dot) + 0.6px)
+  );
+  background-size: var(--tex-pitch) var(--tex-pitch);
+}
+
+/*
+ * 9x9 dot matrix: square dots on a 9px cell, the grid the board is drawn on.
+ * Two gradients leave square lit cells between ground-colored gaps.
+ */
+@utility tex-matrix {
+  --tex-ink: var(--color-ink);
+  --tex-ground: var(--color-paper);
+  --tex-pitch: 9px;
+  --tex-gap: 3px;
+  background-color: var(--tex-ink);
+  background-image:
+    linear-gradient(to right, var(--tex-ground) var(--tex-gap), transparent var(--tex-gap)),
+    linear-gradient(to bottom, var(--tex-ground) var(--tex-gap), transparent var(--tex-gap));
+  background-size: var(--tex-pitch) var(--tex-pitch);
+}
+
+/* Fades any texture toward one edge, for halftone ramps on bars. */
+@utility tex-fade-right {
+  mask-image: linear-gradient(to right, transparent, var(--color-ink) 85%);
+}
+@utility tex-fade-left {
+  mask-image: linear-gradient(to left, transparent, var(--color-ink) 85%);
+}
+
+/* ------------------------------------------------------------------ */
+/* Motion: the board powering on, the slow live blink.                  */
+/* Everything is visible by default; motion only runs when allowed.     */
+/* ------------------------------------------------------------------ */
+
+@keyframes blink {
+  0%,
+  60% {
+    opacity: 1;
+  }
+  61%,
+  100% {
+    opacity: 0;
+  }
+}
+
+@keyframes board-wipe {
+  from {
+    clip-path: inset(0 100% 0 0);
+  }
+  to {
+    clip-path: inset(0 0 0 0);
+  }
+}
+
+/* A dot goes dark for a beat, then relights: staggered, it reads as the board refreshing. */
+@keyframes dot-refresh {
+  from {
+    opacity: 0.12;
+  }
+  to {
+    opacity: 0.12;
+  }
+}
+
+@keyframes dm-scan {
+  0%,
+  100% {
+    opacity: 0.14;
+  }
+  8%,
+  55% {
+    opacity: 1;
+  }
+}
+
+/*
+ * Content is visible by default. The one-time load motion only runs when the page was
+ * visible at first paint (the root layout sets data-motion="on" before paint), so a
+ * background tab, a prerender or a screenshot bot always gets the finished page.
+ */
+@media (prefers-reduced-motion: no-preference) {
+  .live-blink {
+    animation: var(--animate-blink);
+  }
+
+  /* The headline lights up left to right in pixel steps, like a message board. */
+  [data-motion="on"] .board-wipe {
+    animation: board-wipe 560ms steps(14, end) both;
+  }
+
+  /* Win-probability dots refresh in order, left to right, after the headline. */
+  [data-motion="on"] .dot-light {
+    animation: dot-refresh 160ms linear none;
+    animation-delay: calc(480ms + var(--i, 0) * 24ms);
+  }
+
+  .dm-scan {
+    animation: dm-scan 2.4s steps(1, end) infinite;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* Pressable: hard offset shadow on hover and focus, flush on press.    */
+/* ------------------------------------------------------------------ */
+
+@utility pressable {
+  transition:
+    transform 90ms cubic-bezier(0.16, 1, 0.3, 1),
+    box-shadow 90ms cubic-bezier(0.16, 1, 0.3, 1);
+  &:hover,
+  &:focus-visible {
+    transform: translate(-4px, -4px);
+    box-shadow: var(--pressable-shadow, var(--shadow-hard));
+  }
+  &:active {
+    transform: translate(0, 0);
+    box-shadow: none;
+  }
+}
+
+/* Links set in text: thick square underline that inverts on hover. */
+@utility link-ink {
+  text-decoration-line: underline;
+  text-decoration-thickness: 2px;
+  text-underline-offset: 3px;
+  &:hover {
+    background: var(--color-ink);
+    color: var(--color-paper);
+    text-decoration-color: var(--color-ink);
+  }
+}
+
+@utility no-scrollbar {
+  scrollbar-width: none;
+  &::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+/* Skip link. */
+.skip-link {
+  position: absolute;
+  left: 8px;
+  top: -64px;
+  z-index: 60;
   background: var(--color-paper);
   color: var(--color-ink);
+  border: 2px solid var(--color-ink);
+  padding: 10px 16px;
+  font-family: var(--font-label);
+  font-size: var(--text-label);
+  text-transform: uppercase;
+}
+.skip-link:focus {
+  top: 8px;
 }

@@ -10,6 +10,10 @@
  * Values must be JSON-serializable. Keys are plain strings; see `keys` below for the
  * shared naming convention. All keys are namespaced with STORE_PREFIX (default "mstp:"),
  * and list() returns keys WITHOUT that prefix.
+ *
+ * Server-only, but without `import "server-only"`: scripts/fetch-fixtures.ts reaches this file
+ * through lib/sleeper under plain tsx, where that marker package does not resolve. The modules
+ * that use the store for secrets (lib/env, lib/email, lib/roast, lib/jobs) carry the marker.
  */
 import { Redis } from "@upstash/redis";
 
@@ -30,6 +34,11 @@ export interface Store {
   /** Acquire `key` for ttlSeconds. Returns false if someone else holds it (acts as a cooldown). */
   lock(key: string, ttlSeconds: number): Promise<boolean>;
   unlock(key: string): Promise<void>;
+  /**
+   * Atomically add 1 to the counter at `key` and return the new value. The first increment
+   * starts a ttlSeconds window; later ones never extend it (rate-limit buckets).
+   */
+  incr(key: string, ttlSeconds: number): Promise<number>;
 }
 
 const PREFIX = () => process.env.STORE_PREFIX ?? "mstp:";
@@ -73,6 +82,11 @@ function upstashStore(creds: { url: string; token: string }): Store {
     },
     async unlock(key: string) {
       await redis.del(p + key);
+    },
+    async incr(key: string, ttlSeconds: number) {
+      const n = await redis.incr(p + key);
+      if (n === 1) await redis.expire(p + key, Math.max(1, Math.ceil(ttlSeconds)));
+      return n;
     },
   };
 }
@@ -118,6 +132,12 @@ function memoryStore(): Store {
     },
     async unlock(key: string) {
       map.delete(key);
+    },
+    async incr(key: string, ttlSeconds: number) {
+      const e = live(key);
+      const n = (typeof e?.v === "number" ? e.v : 0) + 1;
+      map.set(key, { v: n, exp: e ? e.exp : Date.now() + ttlSeconds * 1000 });
+      return n;
     },
   };
 }
@@ -214,6 +234,13 @@ function fileStore(): Store {
     async unlock(key: string) {
       await (await fs()).rm(fileFor(key), { force: true });
     },
+    // Local dev only: read-modify-write, not atomic across processes.
+    async incr(key: string, ttlSeconds: number) {
+      const e = await readEntry(key);
+      const n = (typeof e?.v === "number" ? e.v : 0) + 1;
+      await writeEntry(key, { v: n, exp: e ? e.exp : Date.now() + ttlSeconds * 1000 });
+      return n;
+    },
   };
 }
 
@@ -255,6 +282,7 @@ export const del = (key: string) => getStore().del(key);
 export const list = (prefix: string) => getStore().list(prefix);
 export const lock = (key: string, ttlSeconds: number) => getStore().lock(key, ttlSeconds);
 export const unlock = (key: string) => getStore().unlock(key);
+export const incr = (key: string, ttlSeconds: number) => getStore().incr(key, ttlSeconds);
 
 /**
  * Shared key convention. League-scoped data always starts with `league:<leagueId>:` so a
@@ -293,4 +321,6 @@ export const keys = {
   roastNotes: () => "roast-notes",
   /** Single-use tokens (approve links). */
   token: (leagueId: string, id: string) => `league:${leagueId}:token:${id}`,
+  /** Rate-limit counters (store.incr), e.g. rate("gate-fail:ip:1.2.3.4"). Global, not per league. */
+  rate: (name: string) => `global:rate:${name}`,
 };

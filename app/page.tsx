@@ -1,52 +1,42 @@
-/**
- * Foundation proof page: shows the data layer works. OWNER: UI agent (replace entirely).
+/*
+ * DIRECTION CONTRACT (home, from DESIGN.md)
+ * THESIS: The stadium message board for ten friends. The roast flashes in giant pixel type
+ *   and the numbers underneath prove it. Refuses the dark neon fantasy dashboard and the cream
+ *   editorial newspaper.
+ * OWN-WORLD: Newsprint paper, true black ink, one scoreboard red. Black header bars with
+ *   reversed Silkscreen caps, ruled panels touching on 2px ink rules, square corners, hard
+ *   offset shadows only on pressables, dithered dot-matrix fields as the only ornament.
+ * STORY: See who got roasted and the stat that earned it, then the scores and odds, then
+ *   screenshot it into the group chat.
+ * FIRST VIEWPORT: Black top bar (MSTP DYNASTY, week or draft status, texture block). Left 8
+ *   columns: the latest roast, victim and stat in Jersey 10, grotesk roast, receipt, red square
+ *   and time. Right 4: the scoreboard (pre-draft: draft order; draft: on the clock). Phones stack
+ *   roast then scoreboard; the primary action (Subscribe) sits in the nav.
+ * FORM: Emigre bitmap specimen fused with stadium message boards. Roast-first broadside.
+ *   Seed fd65bdc4.
  */
 import { getLeagueContext } from "@/lib/league";
-import { formatEt } from "@/lib/time";
+import { pagePhase, type SearchParams } from "./_lib/phase";
+import { fireTick } from "./_lib/tick";
+import { HomeDrafting, HomeInSeason, HomeOffseason, HomePreDraft } from "./_home/views";
 
-export const revalidate = 60;
-
-export default async function Home() {
+export default async function Home({ searchParams }: { searchParams: SearchParams }) {
   const ctx = await getLeagueContext();
-  const draftStart = ctx.draft?.start_time
-    ? formatEt(ctx.draft.start_time, { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZoneName: "short" })
-    : "not scheduled";
+  const phase = await pagePhase(ctx, searchParams);
+  await fireTick();
 
   return (
-    <main className="mx-auto max-w-2xl px-4 py-10 font-mono text-sm">
-      <h1 className="text-lg font-bold">{ctx.league.name}</h1>
-      <dl className="mt-4 grid grid-cols-[8rem_1fr] gap-y-1">
-        <dt>League</dt>
-        <dd>{ctx.leagueId}{ctx.isDevLeague ? " (dev league)" : ""}{ctx.isFixture ? " (fixtures)" : ""}</dd>
-        <dt>Season</dt>
-        <dd>{ctx.season}</dd>
-        <dt>Phase</dt>
-        <dd>{ctx.phase}</dd>
-        <dt>Week</dt>
-        <dd>{ctx.week} (NFL week {ctx.state.week})</dd>
-        <dt>Draft</dt>
-        <dd>{ctx.draft ? `${ctx.draft.status}, ${ctx.draft.settings.rounds} rounds, starts ${draftStart}` : "none"}</dd>
-      </dl>
-      <table className="mt-6 w-full border-collapse text-left">
-        <thead>
-          <tr className="border-b border-current">
-            <th className="py-1 pr-2">#</th>
-            <th className="py-1 pr-2">Manager</th>
-            <th className="py-1 pr-2">Sleeper</th>
-            <th className="py-1">Team</th>
-          </tr>
-        </thead>
-        <tbody>
-          {ctx.managers.map((m) => (
-            <tr key={m.rosterId} className="border-b border-black/10">
-              <td className="py-1 pr-2 tabular-nums">{m.rosterId}</td>
-              <td className="py-1 pr-2">{m.name}{m.isCommissioner ? " (commish)" : ""}</td>
-              <td className="py-1 pr-2">{m.username ?? "vacant"}</td>
-              <td className="py-1">{m.teamName}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </main>
+    <>
+      <h1 className="sr-only">MSTP Dynasty: the latest roast and the league right now</h1>
+      {phase === "pre_draft" ? (
+        <HomePreDraft ctx={ctx} />
+      ) : phase === "drafting" ? (
+        <HomeDrafting ctx={ctx} />
+      ) : phase === "in_season" ? (
+        <HomeInSeason ctx={ctx} />
+      ) : (
+        <HomeOffseason ctx={ctx} />
+      )}
+    </>
   );
 }
