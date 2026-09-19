@@ -265,6 +265,31 @@ async function sendToSubscribers(issue: Issue, transport: EmailTransport): Promi
   }
 }
 
+/**
+ * A test copy of an issue to ONE address: COMMISSIONER_EMAIL, or else the first LEAGUE_EMAILS entry.
+ * Never sends to the league list, never marks the issue sent. Used by /api/admin/send-test.
+ */
+export async function sendTestCopy(issue: Issue): Promise<SendResult> {
+  const transport = getTransport();
+  if (!transport) return notConfigured("RESEND_API_KEY is not set.");
+  const to = normalizeEmail(process.env.COMMISSIONER_EMAIL ?? "") ?? leagueEmails()[0] ?? null;
+  if (!to) return notConfigured("No COMMISSIONER_EMAIL or LEAGUE_EMAILS set.");
+  let result: SendResult;
+  try {
+    const unsub = unsubscribeLink(issue.leagueId, to);
+    if (!unsub) throw new Error("Could not sign the unsubscribe link (ADMIN_SECRET).");
+    const email = renderIssueEmail(issue, { unsubscribeUrl: unsub, webUrl: null });
+    const { ids } = await transport.send([{ to, ...email, subject: `[Test] ${email.subject}`, headers: unsubscribeHeaders(unsub) }], {
+      idempotencyKey: `test/${issue.leagueId}/${issue.slug}/${Date.now()}`,
+    });
+    result = { status: "sent", recipients: 1, messageIds: ids };
+  } catch (err) {
+    result = { status: "error", recipients: 0, messageIds: [], error: errText(err) };
+  }
+  await recordEmailStatus(result);
+  return result;
+}
+
 /* ----------------------------- approving ---------------------------- */
 
 export type ApproveStatus =
