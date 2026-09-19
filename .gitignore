@@ -24,3 +24,4 @@ docs/samples/
 npm-debug.log*
 .vercel
 coverage/
+.impeccable/
