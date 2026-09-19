@@ -121,7 +121,8 @@ export const SLUR_TERMS: BannedTerm[] = [
  * league's pick clock (clockLimitHours) is a real setting and stays legal ("four hours per pick").
  */
 export const CLOCK_CLAIMS: RegExp[] = [
-  /\b(?:took|takes|taking|spent|spends|sat|sits|sitting|burned|burnt|burns|wasted|wastes|needed|needs|used|uses|killed|ran)\b[^.!?]{0,40}?\b(?:hours?|minutes?|mins?|seconds?|secs?)\b/i,
+  // A duration needs a quantity in front of the unit, so "the second round" or "a second receiver" never counts.
+  /\b(?:took|takes|taking|spent|spends|sat|sits|sitting|burned|burnt|burns|wasted|wastes|needed|needs|used|uses|killed|ran)\b[^.!?]{0,40}?\b(?:\d[\d.,]*|an?|one|two|three|four|five|six|seven|eight|nine|ten|twelve|twenty|thirty|forty|fifty|few|several|many|all|half\s+an?)\s+(?:hours?|minutes?|mins?|seconds?|secs?)\b(?!\s+(?:round|rounder|pick|overall|place|receiver|running|quarterback|tight|string|team|option|year|straight))/i,
   /\b(?:hours?|minutes?|mins?|seconds?|secs?|all\s+(?:day|night))\s+(?:on|off)\s+the\s+clock\b/i,
   /\bon\s+the\s+clock\s+for\s+(?:\S+\s+){0,3}?(?:hours?|minutes?|seconds?|days?)\b/i,
 ];

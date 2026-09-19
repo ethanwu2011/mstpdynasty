@@ -593,7 +593,8 @@ export class AllowedNumbers {
 
 const NUM_WORD = `\\d+|${[...UNIT_WORDS, ...TEN_WORDS, ...ORDINAL_WORDS].join("|")}`;
 const STREAK_RES = [
-  new RegExp(`\\b(${NUM_WORD})(?:\\s+|-)(?:game\\s+)?(?:straight|consecutive)\\b`, "gi"),
+  // "fifth straight receiver off the board" is a position run, not a win or loss streak.
+  new RegExp(`\\b(${NUM_WORD})(?:\\s+|-)(?:game\\s+)?(?:straight|consecutive)\\b(?!\\s+(?:receivers?|wrs?|running\\s+backs?|rbs?|quarterbacks?|qbs?|tight\\s+ends?|tes?|picks?|selections?|players?|rookies?|reaches|steals|times?\\s+(?:a|the)\\s+(?:receiver|running|quarterback|tight)))`, "gi"),
   new RegExp(`\\b(${NUM_WORD})\\s+(?:(?:losses|wins|games|weeks|ls|ws|l's|w's)\\s+)?in\\s+a\\s+row\\b`, "gi"),
   new RegExp(`\\b(${NUM_WORD})[-\\s]game\\s+(?:losing\\s+|winning\\s+)?(?:streak|skid|slide)\\b`, "gi"),
   new RegExp(`\\b(?:losing|winning)\\s+(?:streak|skid)\\s+(?:of|to|at)\\s+(${NUM_WORD})\\b`, "gi"),
