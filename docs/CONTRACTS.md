@@ -63,6 +63,9 @@ Keep the public signatures below exactly. You may add optional trailing paramete
 getLeagueContext(opts?: { leagueId?: string }): Promise<LeagueContext>
 standingsFromRosters(ctx): StandingRow[]           // wins (ties half), then points for, then fewer points against
 teamRef(ctx, rosterId): TeamRef                    // { rosterId, teamName, managerName, managerKey }
+// teamName is the manager's first name when the team has no custom Sleeper name. Pages print the
+// team-name line only through teamSubtitle(teamName, managerName) (lib/names.ts, <TeamSub>), which
+// is null when the two are the same: never "Carlos / Carlos", never a Sleeper username.
 managerFor(ctx, rosterId): Manager
 rosterFor(ctx, rosterId): SleeperRoster | undefined
 rosterIdForUser(ctx, userId): number | null
@@ -204,7 +207,11 @@ ISSUE_TITLES, FACTS_ONLY_NOTE, SYSTEM_PROMPT
   same waiver run (`w-<processing time>`; each free-agent move is its own `fa-<txid>` batch);
   `roastItem("waiver", WaiverFact[])` roasts a batch. `LosingBid.reason` says why a competing claim failed.
 - `DraftPickFact.reach = fcRank - pickNo` (positive = reach). For a rookie-only draft `fcRank` is the rank
-  within the rookie class. There is no time on the clock: `pickedAt` is when the tick first noticed the pick,
+  within the rookie class. `fcRank`, `fcPositionRank`, `reach` and `verdict` come from the ranks frozen when
+  the tick first saw the pick (`keys.snapshot(leagueId, "draft-pick-ranks")`, `{ [draftId]: { [pickNo]:
+  { fcRank, fcPositionRank } } }`, written by `freezeDraftPickRanks` in `lib/jobs/draft-seen.ts` from the
+  pick's stored write-up when it has one), so the card heading, receipt, board chip, home strip and the
+  write-up state one rank; a pick not frozen yet reads today's snapshot. There is no time on the clock: `pickedAt` is when the tick first noticed the pick,
   not when it was made, so it never becomes a pick-clock duration. `DraftFacts.resumesAt` is "8 AM ET"
   (`config/draft.ts`, set by the commissioner) while the draft is paused, never Sleeper's autopause window.
 - `WeeklyFacts.standings[].previousRank` is the rank one week earlier (null in week 1).
@@ -337,7 +344,10 @@ tradeRows(TradeHindsight[])  shameRows(ShameEntry[])  draftRows(picks, draftCont
   once. A row that has a line is rewritten when its facts hash changes, at most once per
   `SURFACE_MAX_AGE_MS` (a day; draft odds every 30 minutes while the draft is live; a final week's
   matchups at once). Pick rows hash only who took whom (`hashKey`), so a pick's line is written once even
-  though its live FantasyCalc rank moves. A row whose line fails the checks waits `ROW_RETRY_AFTER_MS`
+  though its live FantasyCalc rank moves. The jobs pass `voice: ROAST_VOICE`, folded into every row hash,
+  so a new voice makes every stored line due again at that pace, pick lines included. One cuck chair per
+  table (`CUCK_CHAIR_PER_TABLE`): the allowance is shared by every batch of a refresh and counts the
+  lines already stored on the table. A row whose line fails the checks waits `ROW_RETRY_AFTER_MS`
   (30 min) and is given up on after `MAX_ROW_ATTEMPTS` (3) until its facts change; an API outage backs
   off the same way but never counts toward giving up. The store record keeps, per row, the hash of the
   facts its current line was written from (kept until a new line replaces it, so facts that change and
@@ -450,7 +460,9 @@ MAX_TEST_SENDS_PER_HOUR = 10, MAX_RECIPIENTS = 30
 
 ### Issue rename, sender, and the writer's voice
 - `IssueKind = "daily" | "thursday_fallout" | "weekly_recap" | "draft_grades"` (was `daily_roast`,
-  `weekly_roast`; `LegacyIssueKind` names the old ones and `lib/archive` upgrades them on read).
+  `weekly_roast`; `LegacyIssueKind` names the old ones and `lib/archive` upgrades them on read). A job
+  whose old key is done (`daily_roast:DATE`, `weekly_roast:S:W`, see `legacyJobKey`) is skipped, so a
+  deploy on a day the old cron already ran never builds and sends that issue a second time.
 - Titles: "The Daily", "Thursday Night Fallout", "Week N Recap" (`issueTitle("weekly_recap", 5)` =
   "Week 5 Recap"), "Draft Grades". Slugs: `2026-09-19-daily`, `2026-09-29-weekly-recap`.
 - Email from `MSTP Dynasty` (`DEFAULT_EMAIL_FROM`, override with `EMAIL_FROM`), no byline: the meta line
@@ -462,7 +474,9 @@ MAX_TEST_SENDS_PER_HOUR = 10, MAX_RECIPIENTS = 30
   `postcheck.ts`, `banned.ts`, `items.ts`, `index.ts` and `memory.ts` are the live voice; the stat-table
   lines (`surfaces.ts`, `surface-rows.ts`, `lib/jobs/lines.ts`) go through the same prompt and the same
   post-check. The post-check drops any sentence with an `ANNOUNCE_TERMS` word unless FACTS or LORE uses
-  it, any slur always, and a second cuck chair in one issue (`CUCK_CHAIR_PER_ISSUE`, the persona's rule).
+  it, any slur always, and a second cuck chair in one issue (`CUCK_CHAIR_PER_ISSUE`, the persona's rule;
+  only a FACTS team or player name with the word in it is exempt, never LORE). It also drops "cooked" and
+  the passive "got burned" (`SELF_LABEL_TERMS`, rule 9), a post-check-only list the prompt does not print.
 - `ROAST_VOICE` in `lib/jobs/tick.ts` is bumped whenever the voice changes, so every stored item is
   written again in the current voice.
 

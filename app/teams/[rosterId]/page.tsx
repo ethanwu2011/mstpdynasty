@@ -15,6 +15,7 @@ import { listRoasts } from "@/lib/archive";
 import { getFantasyCalc } from "@/lib/fantasycalc";
 import { draftFacts, shameEntries } from "@/lib/facts";
 import { getLeagueContext, managerFor, rosterFor, standingsFromRosters } from "@/lib/league";
+import { managerAndTeam } from "@/lib/names";
 import { surfaceKeys } from "@/lib/roast";
 import { getDraftTradedPicks, getPlayers, rosterPointsFor, rosterPotentialPoints } from "@/lib/sleeper";
 import type { LeagueContext, PlayersMap, SeasonPhase } from "@/lib/types";
@@ -51,7 +52,7 @@ export async function generateMetadata({ params }: { params: Params }): Promise<
     const ctx = await getLeagueContext();
     if (id === null || !rosterFor(ctx, id)) return { title: "No such team" };
     const m = managerFor(ctx, id);
-    return { title: `${m.name}, ${m.teamName}`, description: `${m.name}'s roster, dynasty value and rap sheet in MSTP Dynasty.` };
+    return { title: managerAndTeam(m.name, m.teamName), description: `${m.name}'s roster, dynasty value and rap sheet in MSTP Dynasty.` };
   } catch {
     return { title: "Team" };
   }
@@ -179,7 +180,7 @@ export default async function TeamPage({ params, searchParams }: { params: Param
   return (
     <Board>
       <h1 className="sr-only">
-        {manager.name}: {manager.teamName}
+        {managerAndTeam(manager.name, manager.teamName, ": ")}
       </h1>
 
       <TeamLead manager={manager} kicker={kicker} stats={stats} note={note} line={teamLines[String(id)] ?? null} />

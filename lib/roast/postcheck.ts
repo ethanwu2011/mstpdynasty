@@ -27,7 +27,20 @@
  *   Profanity is allowed. Callers decide what a flagged sentence means (issues and items
  *   reject the whole slot).
  */
-import { ANNOUNCE_TERMS, BANNED_FILLER, BANNED_SHAPES, BOX_SCORE_TERMS, CAPS_ALLOWED, CLOCK_CLAIMS, COUNTED_STATS, SLUR_TERMS, STAT_WORDS, THEME_TERMS, type BannedTerm } from "./banned";
+import {
+  ANNOUNCE_TERMS,
+  BANNED_FILLER,
+  BANNED_SHAPES,
+  BOX_SCORE_TERMS,
+  CAPS_ALLOWED,
+  CLOCK_CLAIMS,
+  COUNTED_STATS,
+  SELF_LABEL_TERMS,
+  SLUR_TERMS,
+  STAT_WORDS,
+  THEME_TERMS,
+  type BannedTerm,
+} from "./banned";
 import { noLongDashes } from "./format";
 
 /* ------------------------------------------------------------------ */
@@ -758,9 +771,15 @@ export function clockTimesIn(text: string): Array<{ text: string; norm: string }
 const hits = (terms: BannedTerm[], text: string, exempt?: string) =>
   terms.filter((t) => t.re.test(text) && (exempt === undefined || !t.re.test(exempt))).map((t) => t.label);
 
-/** Theme words and joke-announcing words (unless FACTS/LORE uses them), slurs and banned filler. */
+/** Theme words, joke-announcing words and "cooked"/"got burned" (unless FACTS/LORE uses them), slurs and banned filler. */
 export function bannedWordsIn(text: string, exempt = ""): string[] {
-  return [...hits(THEME_TERMS, text, exempt), ...hits(ANNOUNCE_TERMS, text, exempt), ...new Set(hits(SLUR_TERMS, text)), ...hits(BANNED_FILLER, text)];
+  return [
+    ...hits(THEME_TERMS, text, exempt),
+    ...hits(ANNOUNCE_TERMS, text, exempt),
+    ...hits(SELF_LABEL_TERMS, text, exempt),
+    ...new Set(hits(SLUR_TERMS, text)),
+    ...hits(BANNED_FILLER, text),
+  ];
 }
 
 /** Claims about how long a manager took to pick: FACTS has no pick times. */
@@ -870,8 +889,9 @@ export interface CheckOptions {
   caps?: { left: number };
   /**
    * The cuck chair allowance (the persona: at most once per issue). Shared across an issue's
-   * slots in reading order like `caps`; without one, a single text gets one. Not counted when
-   * FACTS or LORE itself uses the word (a team really named that).
+   * slots in reading order like `caps`; without one, a single text gets one. A team or player
+   * in FACTS whose own name has the word is exempt: saying that name is not the joke. LORE
+   * mentioning it exempts nothing.
    */
   cuck?: { left: number };
 }
@@ -881,6 +901,20 @@ export const CAPS_RANT_WORDS = 10;
 
 /** The cuck chair, in any form ("cuck", "cucked", "cuckold"), never "cuckoo". */
 export const CUCK_RE = /\bcuck(?!oo)/i;
+
+/**
+ * Whether `text` brings out the cuck chair, not counting a FACTS name (a team or player) that
+ * really has the word in it.
+ */
+export function cuckChairIn(text: string, names: readonly string[] = []): boolean {
+  if (!CUCK_RE.test(text)) return false;
+  let t = text;
+  for (const n of names) {
+    if (!n.trim() || !CUCK_RE.test(n)) continue;
+    t = t.replace(new RegExp(n.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "gi"), " ");
+  }
+  return CUCK_RE.test(t);
+}
 
 /** Flag every sentence that fails a check; `text` holds only the ones that passed. */
 export function checkText(text: string, allowed: AllowedNumbers, exempt = "", opts: CheckOptions = {}): CheckedText {
@@ -894,7 +928,7 @@ export function checkText(text: string, allowed: AllowedNumbers, exempt = "", op
   let lastDropped = false;
   let capsUsed = 0;
   let cuckUsed = 0;
-  const cuck = CUCK_RE.test(wordsExempt) ? null : (opts.cuck ?? { left: 1 });
+  const cuck = opts.cuck ?? { left: 1 };
   for (const p of paragraphs) {
     const keep: string[] = [];
     for (const s of splitSentences(p.replace(/\n/g, " "), allowed.names)) {
@@ -910,8 +944,8 @@ export function checkText(text: string, allowed: AllowedNumbers, exempt = "", op
         ...clockClaimsIn(s),
         ...shapesIn(s).map((x) => `the shape "${x}"`),
       ];
-      const cuckHere = Boolean(cuck && CUCK_RE.test(s));
-      if (cuckHere && cuck && cuck.left <= 0) other.push("the cuck chair a second time (once per issue at most)");
+      const cuckHere = cuckChairIn(s, allowed.names);
+      if (cuckHere && cuck.left <= 0) other.push("the cuck chair a second time (once per issue at most)");
       let shout = shoutingIn(s, wordsExempt);
       const clean = !unknownNumbers.length && !bannedWords.length && !other.length;
       if (shout.length && clean && opts.caps && opts.caps.left > 0 && s.split(/\s+/).filter(Boolean).length <= CAPS_RANT_WORDS && allowed.namesSomeone(s)) {
@@ -924,7 +958,7 @@ export function checkText(text: string, allowed: AllowedNumbers, exempt = "", op
       if (lastDropped) dropped.push({ sentence: s, unknownNumbers, bannedWords, problems });
       else {
         keep.push(s);
-        if (cuckHere && cuck) {
+        if (cuckHere) {
           cuck.left--;
           cuckUsed++;
         }

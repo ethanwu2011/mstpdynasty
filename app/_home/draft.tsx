@@ -10,6 +10,7 @@ import { Receipt, RoastBlock, type RoastBlockData } from "@/components/RoastBloc
 import { lineOf, RowLine } from "@/components/RowLine";
 import { LiveSquare, SampleMark, Tag } from "@/components/Tag";
 import { managerFor } from "@/lib/league";
+import { teamSubtitle } from "@/lib/names";
 import type { DraftFacts, DraftPickFact, LeagueContext, Roast, SurfaceLineMap } from "@/lib/types";
 import { clockLength, etStamp, ordinal, pickLabel } from "../_lib/format";
 import { draftOrder, pickAt, slotPicks } from "../_lib/draft";
@@ -107,7 +108,7 @@ export function DraftOrderPanel({ ctx, span = 4 }: { ctx: LeagueContext; span?: 
                 <Numeral value={slot} pad={2} size="d30" label={`Slot ${slot}`} />
                 <div className="min-w-0">
                   <p className="m-0 truncate font-bold leading-tight">{m.name}</p>
-                  <p className="m-0 truncate text-fine text-ink-muted">{m.username ?? m.teamName}</p>
+                  {teamSubtitle(m.teamName, m.name) ? <p className="m-0 truncate text-fine text-ink-muted">{teamSubtitle(m.teamName, m.name)}</p> : null}
                 </div>
                 <p className="type-data m-0 flex gap-x-2.5 text-fine text-ink-muted" aria-label={`First picks ${picks.map((p) => p.label).join(", ")}`}>
                   {picks.map((p) => (
@@ -216,13 +217,13 @@ export function OnTheClockPanel({ ctx, facts, span = 4 }: { ctx: LeagueContext; 
             <div className="flex min-w-0 flex-col gap-2">
               <span className="type-label text-ink-muted">Pick {next.label}</span>
               <span className="type-display truncate text-j3">{next.manager}</span>
-              <span className="truncate text-fine text-ink-muted">{next.team}</span>
+              {teamSubtitle(next.team, next.manager) ? <span className="truncate text-fine text-ink-muted">{teamSubtitle(next.team, next.manager)}</span> : null}
             </div>
             <Numeral value={next.label} size="d60" label={`Pick ${next.label}`} />
           </div>
 
           {resumes ? (
-            <p className="type-label m-0 flex items-center gap-2">
+            <p className="m-0 flex items-center gap-2 text-row font-semibold">
               <LiveSquare size={10} />
               Draft paused. Picks resume at {resumes}.
             </p>
@@ -345,9 +346,17 @@ export function BoardStrip({ facts, lines, count = 10 }: { facts: DraftFacts | n
                     {[p.player.position, p.player.nflTeam].filter(Boolean).join(", ")}
                   </span>
                 </p>
-                <p className="m-0 truncate text-data text-ink-muted sm:mt-auto md:text-fine">
-                  {p.team.managerName}
-                  {p.fcRank ? ` · FC ${ordinal(p.fcRank)}` : ""}
+                {/* Wraps instead of clipping: the rank is the number that matters here. */}
+                <p className="m-0 flex flex-wrap gap-x-1.5 text-data text-ink-muted sm:mt-auto sm:flex-col md:text-fine">
+                  <span className="min-w-0 break-words">{p.team.managerName}</span>
+                  {p.fcRank ? (
+                    <>
+                      <span aria-hidden className="sm:hidden">
+                        ·
+                      </span>
+                      <span className="whitespace-nowrap">FC {ordinal(p.fcRank)}</span>
+                    </>
+                  ) : null}
                 </p>
                 {quip ? <RowLine text={quip} className="sm:text-fine" /> : null}
               </li>

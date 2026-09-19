@@ -24,7 +24,7 @@ function classes({ variant = "secondary", size = "md", selected = false, onInk =
   return cx(
     "type-label pressable inline-flex items-center justify-center gap-2 border-2 border-ink whitespace-nowrap no-underline",
     "disabled:pointer-events-none disabled:border-ink-muted disabled:bg-paper-shade disabled:text-ink-muted",
-    size === "md" ? "min-h-12 px-5 py-3" : "min-h-9 px-3 py-2",
+    size === "md" ? "min-h-12 px-5 py-3" : "min-h-11 px-3 py-2",
     variant === "primary" ? "bg-red text-on-red" : selected ? "bg-ink text-paper" : "bg-paper text-ink",
     onInk && "[--pressable-shadow:var(--shadow-hard-paper)]",
     className,

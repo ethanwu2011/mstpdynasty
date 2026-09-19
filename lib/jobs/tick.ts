@@ -15,11 +15,12 @@
  */
 import { listRoasts, roastIds, saveRoast } from "@/lib/archive";
 import { draftFacts, transactionFacts } from "@/lib/facts";
+import { withFrozenRank } from "@/lib/facts/draft";
 import { isRoastConfigured, roastItem } from "@/lib/roast";
 import { getDraftPicks } from "@/lib/sleeper";
 import * as store from "@/lib/store";
 import type { DraftPickFact, JobOutcome, LeagueContext, RoastItemFact, RoastItemKind, RoastSource, WaiverFact } from "@/lib/types";
-import { recordDraftPickTimes } from "./draft-seen";
+import { freezeDraftPickRanks, recordDraftPickTimes } from "./draft-seen";
 import { DAY_MS } from "./schedule";
 
 export const TICK_COOLDOWN_SECONDS = 120;
@@ -162,8 +163,11 @@ export async function tickOutcomes(ctx: LeagueContext, now: number): Promise<Job
       const df = await draftFacts(ctx);
       if (df.placeholder) notes.roast_picks = { job: "roast_picks", status: "skipped", detail: "Facts are still placeholder data." };
       else {
-        draftPicks = df.picks;
-        for (const p of [...df.picks].sort((a, b) => b.pickNo - a.pickNo)) {
+        // Freeze each new pick's FantasyCalc ranks before anything is written about it, so the
+        // write-up, its card and the board all state the same rank from then on.
+        const frozen = await freezeDraftPickRanks(l, df.draftId, df.picks).catch(() => null);
+        draftPicks = frozen ? df.picks.map((p) => withFrozenRank(p, frozen.get(p.pickNo))) : df.picks;
+        for (const p of [...draftPicks].sort((a, b) => b.pickNo - a.pickNo)) {
           candidates.push({ group: "roast_picks", kind: "draft_pick", id: roastIds.pick(p.draftId, p.pickNo), fact: p });
         }
       }

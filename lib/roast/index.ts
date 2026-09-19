@@ -55,6 +55,7 @@ export { draftContext, issueMemory } from "./memory";
 export { buildRoastRequest, hasRoastClient, MAX_WRITER_CALLS_PER_DAY, ROAST_MODEL, setRoastClient, sharedStoreMissing } from "./llm";
 export {
   checkLine,
+  CUCK_CHAIR_PER_TABLE,
   getStoredSurfaceLines,
   getSurfaceLines,
   linesMessage,
@@ -69,6 +70,7 @@ export {
   surfaceFactsHash,
   surfaceKeys,
   surfaceLines,
+  voicedHash,
   type RefreshOptions,
   type RefreshResult,
 } from "./surfaces";

@@ -3,6 +3,7 @@ import { cx } from "@/components/cx";
 import { Numeral } from "@/components/Numeral";
 import { lineOf, RowLine } from "@/components/RowLine";
 import { LiveSquare, Tag } from "@/components/Tag";
+import { TeamSub } from "@/components/TeamSub";
 import type { PowerRow, RosterId, StandingRow, SurfaceLineMap } from "@/lib/types";
 import { fmtPts, record } from "../../_lib/format";
 
@@ -114,7 +115,7 @@ export function StandingsTable({ rows, power, played, playoffTeams, byes, champi
                         {champ ? <Tag>Champion</Tag> : null}
                         {inBye && !championId ? <Tag tone="outline">Bye spot</Tag> : null}
                       </span>
-                      <span className="max-w-[12rem] truncate text-fine font-normal text-ink-muted">{r.team.teamName}</span>
+                      <TeamSub team={r.team.teamName} manager={r.team.managerName} className="max-w-[12rem] whitespace-normal text-fine font-normal text-ink-muted [overflow-wrap:anywhere]" />
                     </span>
                   </span>
                 </th>

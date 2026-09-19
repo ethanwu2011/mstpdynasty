@@ -70,6 +70,17 @@ export const ANNOUNCE_TERMS: BannedTerm[] = [
 ];
 
 /**
+ * Calling a manager cooked or burned (the persona's rule 9, which says it in words). Checked by
+ * the post-check only and never listed in the prompt, so the pinned system prompt does not
+ * change. Dropped unless FACTS or LORE uses the same words. "Burned his first on a kicker"
+ * (spent a pick) stays legal: only the passive "got burned" labels the manager.
+ */
+export const SELF_LABEL_TERMS: BannedTerm[] = [
+  term("cooked"),
+  term("burned", "(?:got|gets|get|getting|was|were|is|are|been|be|being)\\s+(?:(?:so|absolutely|completely|badly|thoroughly)\\s+)?(?:burned|burnt)"),
+];
+
+/**
  * Slurs and slur-adjacent insults. Never allowed, whatever FACTS or LORE says, and never
  * printed in the prompt (the persona states the rule in words). Logged as "slur" only.
  * Covers group slurs and sexual orientation used as an insult; crude insults about a

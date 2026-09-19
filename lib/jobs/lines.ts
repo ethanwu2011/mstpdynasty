@@ -42,6 +42,7 @@ import {
 import { getDraftPicks, getPlayers, playerInfo } from "@/lib/sleeper";
 import * as store from "@/lib/store";
 import type { FantasyCalcSnapshot, JobOutcome, LeagueContext, PlayersMap, RoastSurface, StandingRow, SurfaceRow } from "@/lib/types";
+import { ROAST_VOICE } from "./tick";
 
 /** The tick sweeps the tables at most this often. */
 export const TABLE_SWEEP_SECONDS = 3600;
@@ -279,6 +280,8 @@ export async function refreshLines(ctx: LeagueContext, opts: RefreshLinesOptions
         deadline: opts.deadline,
         maxRows: MAX_LINE_ROWS_PER_RUN,
         claim,
+        // A new voice makes every stored line due again, pick lines included.
+        voice: ROAST_VOICE,
         ...built.opts,
       });
       return { part: r.status === "fresh" ? null : describe(job.surface, r, null), wrote: r.written ?? 0, error: false };

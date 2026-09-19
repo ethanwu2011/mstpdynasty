@@ -10,6 +10,7 @@ import { Numeral } from "@/components/Numeral";
 import { Panel, type PanelSpan } from "@/components/Panel";
 import { lineOf, RowLine } from "@/components/RowLine";
 import { LiveSquare } from "@/components/Tag";
+import { TeamSub } from "@/components/TeamSub";
 import type { SurfaceLineMap, TeamRef } from "@/lib/types";
 
 export interface OddsRow {
@@ -43,6 +44,40 @@ export function pctText(v: number): string {
   if (v >= 100) return "100";
   if (v > 99.9) return ">99.9";
   return v.toFixed(1);
+}
+
+/** The odds as shown: to one decimal, so two teams that read the same tie on the page too. */
+const shown = (v: number) => Math.round((Number.isFinite(v) ? v : 0) * 10);
+
+/**
+ * The one order every odds table uses: title odds as shown, then playoff odds as shown, then the
+ * unrounded numbers, then first name. The key under each table says so.
+ */
+export function oddsOrder(a: { titlePct: number; playoffPct: number; team: TeamRef }, b: { titlePct: number; playoffPct: number; team: TeamRef }): number {
+  return (
+    shown(b.titlePct) - shown(a.titlePct) ||
+    shown(b.playoffPct) - shown(a.playoffPct) ||
+    b.titlePct - a.titlePct ||
+    b.playoffPct - a.playoffPct ||
+    a.team.managerName.localeCompare(b.team.managerName)
+  );
+}
+
+export const ODDS_ORDER_NOTE = "Ranked by title odds, then playoff odds.";
+
+/** The visible key under an odds table: the order, and what the red square means. */
+export function OddsKey({ last, className }: { last: boolean; className?: string }) {
+  return (
+    <p className={cx("m-0 flex flex-wrap items-center gap-x-4 gap-y-1 text-data text-ink-muted", className)}>
+      <span>{ODDS_ORDER_NOTE}</span>
+      {last ? (
+        <span className="inline-flex items-center gap-2">
+          <LiveSquare size={10} />
+          Likeliest to finish last
+        </span>
+      ) : null}
+    </p>
+  );
 }
 
 export interface OddsBoardProps {
@@ -81,7 +116,8 @@ function Head({ className }: { className?: string }) {
   );
 }
 
-export function OddsBoard({ rows, lines, label, labelRight, note, more, live, span = 12, mdSpan = 12, id }: OddsBoardProps) {
+export function OddsBoard({ rows: given, lines, label, labelRight, note, more, live, span = 12, mdSpan = 12, id }: OddsBoardProps) {
+  const rows = [...given].sort(oddsOrder);
   const leader = rows.reduce<OddsRow | null>((w, r) => (!w || r.titlePct > w.titlePct ? r : w), null);
   const doomed = rows.reduce<OddsRow | null>((w, r) => ((r.lastPlacePct ?? 0) > (w?.lastPlacePct ?? 0) ? r : w), null);
   // Full width on a wide screen: two columns of five, each with its own header, so the numbers
@@ -109,7 +145,7 @@ export function OddsBoard({ rows, lines, label, labelRight, note, more, live, sp
               ) : null}
               <span className={cx("truncate text-body leading-tight group-hover:underline", lead ? "font-extrabold" : "font-bold")}>{r.team.managerName}</span>
             </span>
-            <span className="text-data leading-snug text-ink-muted">{r.detail ?? r.team.teamName}</span>
+            {r.detail ? <span className="text-data leading-snug text-ink-muted">{r.detail}</span> : <TeamSub team={r.team.teamName} manager={r.team.managerName} className="text-data leading-snug text-ink-muted" />}
           </Link>
         </span>
         <span role="cell" className="text-right">
@@ -141,8 +177,9 @@ export function OddsBoard({ rows, lines, label, labelRight, note, more, live, sp
           </div>
         ))}
       </div>
+      <OddsKey last={Boolean(doomed && (doomed.lastPlacePct ?? 0) > 0)} className="border-t-2 border-ink px-4 py-3 md:px-6" />
       {more ? (
-        <p className="m-0 mt-auto border-t-2 border-ink px-4 py-1 md:px-6">
+        <p className="m-0 mt-auto border-t border-ink px-4 py-1 md:px-6">
           <Link href={more.href} className="type-label link-ink inline-flex min-h-11 items-center px-0.5">
             {more.label}
           </Link>

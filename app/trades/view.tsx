@@ -15,6 +15,7 @@ import { Receipt, RoastBlock, type RoastBlockData } from "@/components/RoastBloc
 import { lineOf } from "@/components/RowLine";
 import { LiveSquare, SampleMark, Tag } from "@/components/Tag";
 import { Button } from "@/components/Button";
+import { TeamSub } from "@/components/TeamSub";
 import { formatEt } from "@/lib/time";
 import type {
   LetterGrade,
@@ -179,7 +180,7 @@ function SideColumn({ side, hs, tone }: { side: TradeSide; hs: TradeHindsightSid
           <p className="m-0 flex items-center gap-2">
             <span className="truncate text-lede font-bold leading-tight">{side.team.managerName}</span>
           </p>
-          <p className="m-0 truncate text-fine text-ink-muted">{side.team.teamName}</p>
+          <TeamSub as="p" team={side.team.teamName} manager={side.team.managerName} className="m-0 truncate text-fine text-ink-muted" />
           <p className="m-0 mt-2">
             {tone === "lost" ? (
               <Tag tone="alarm">Losing it</Tag>
@@ -453,7 +454,7 @@ function BalancePanel({
             cell: (r) => (
               <span className="flex min-w-0 flex-col">
                 <span className="font-bold">{r.name}</span>
-                <span className="block max-w-[11rem] truncate text-fine font-normal text-ink-muted">{r.teamName}</span>
+                <TeamSub team={r.teamName} manager={r.name} className="block max-w-[11rem] truncate text-fine font-normal text-ink-muted" />
               </span>
             ),
           },

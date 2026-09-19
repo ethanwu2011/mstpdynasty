@@ -9,6 +9,7 @@ import { Panel, type PanelSpan } from "@/components/Panel";
 import { lineOf, RowLine } from "@/components/RowLine";
 import { LiveSquare, SampleMark, Tag } from "@/components/Tag";
 import { cx } from "@/components/cx";
+import { TeamSub } from "@/components/TeamSub";
 import type { RosterId, StandingRow, SurfaceLineMap, TeamWeekFact, WeeklyFacts, WinProbWeek } from "@/lib/types";
 import { fmtPts, record } from "../_lib/format";
 
@@ -163,7 +164,7 @@ export function StandingsStrip({
                   <span className="truncate">{r.team.managerName}</span>
                   <span className="sm:hidden">{mark}</span>
                 </p>
-                <p className="m-0 truncate text-fine text-ink-muted">{r.team.teamName}</p>
+                <TeamSub as="p" team={r.team.teamName} manager={r.team.managerName} className="m-0 truncate text-fine text-ink-muted" />
               </div>
               <div className="flex flex-col items-end gap-1 sm:mt-auto sm:items-start">
                 <Numeral value={record(r.wins, r.losses, r.ties)} size="d20" label={`Record ${record(r.wins, r.losses, r.ties)}`} />
@@ -202,7 +203,7 @@ export function FinalStandings({
           <div className="flex flex-col gap-2">
             <span className="type-label text-ink-muted">Champion</span>
             <span className="type-display text-j3">{champ.team.managerName}</span>
-            <span className="text-fine text-ink-muted">{champ.team.teamName}</span>
+            <TeamSub team={champ.team.teamName} manager={champ.team.managerName} className="text-fine text-ink-muted" />
           </div>
         ) : null}
         <ol className="m-0 list-none border-t-2 border-ink p-0">

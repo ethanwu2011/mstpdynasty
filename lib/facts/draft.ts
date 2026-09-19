@@ -148,6 +148,47 @@ export function resumesAtFor(status: SleeperDraft["status"], settings?: SleeperD
   return null;
 }
 
+/**
+ * A pick's FantasyCalc ranks as first seen. FantasyCalc moves every day, so a rank read from
+ * today's snapshot would disagree with a write-up made on the day of the pick (the card's
+ * heading saying "reached 8 spots" over a paragraph that says 7). The tick freezes each pick's
+ * ranks once (lib/jobs/draft-seen.ts, from the pick's stored write-up when it has one), and every
+ * reader builds reach and the verdict from the frozen ranks.
+ *
+ * Store key: keys.snapshot(leagueId, "draft-pick-ranks")
+ * Value:     { [draftId]: { [pickNo]: { fcRank, fcPositionRank } } }
+ */
+export const DRAFT_PICK_RANKS = "draft-pick-ranks";
+
+export interface FrozenPickRank {
+  fcRank: number | null;
+  fcPositionRank: number | null;
+}
+
+const rankOrNull = (v: unknown): number | null => (typeof v === "number" && Number.isFinite(v) && v > 0 ? v : null);
+
+/** One draft's frozen ranks from the stored value (anything malformed is ignored). */
+export function parsePickRanks(raw: unknown, draftId: string): Map<number, FrozenPickRank> {
+  const out = new Map<number, FrozenPickRank>();
+  if (!raw || typeof raw !== "object") return out;
+  const src = (raw as Record<string, unknown>)[draftId];
+  if (!src || typeof src !== "object") return out;
+  for (const [k, v] of Object.entries(src as Record<string, unknown>)) {
+    const n = Number(k);
+    if (!Number.isInteger(n) || n < 1 || !v || typeof v !== "object") continue;
+    const r = v as Record<string, unknown>;
+    out.set(n, { fcRank: rankOrNull(r.fcRank), fcPositionRank: rankOrNull(r.fcPositionRank) });
+  }
+  return out;
+}
+
+/** The pick with frozen ranks in place of today's, and its reach and verdict rebuilt from them. */
+export function withFrozenRank(p: DraftPickFact, frozen: FrozenPickRank | undefined): DraftPickFact {
+  if (!frozen) return p;
+  const reach = frozen.fcRank === null ? null : frozen.fcRank - p.pickNo;
+  return { ...p, fcRank: frozen.fcRank, fcPositionRank: frozen.fcPositionRank, reach, verdict: verdictFor(p.pickNo, reach) };
+}
+
 export interface DraftEnv {
   ctx: LeagueContext;
   draft: SleeperDraft;
@@ -156,6 +197,8 @@ export interface DraftEnv {
   players: PlayersMap;
   snap: FantasyCalcSnapshot | null;
   seen: Map<number, number>;
+  /** Ranks frozen when the pick was first seen (a pick without one uses today's snapshot). */
+  ranks?: Map<number, FrozenPickRank>;
 }
 
 /**
@@ -194,7 +237,7 @@ export function buildDraftPicks(env: DraftEnv): DraftPickFact[] {
     const fc = snap?.bySleeperId[p.player_id] ?? null;
     const fcRank = rookie ? (rookie.get(p.player_id) ?? null) : (fc?.overallRank ?? null);
     const reach = fcRank === null ? null : fcRank - p.pick_no;
-    return {
+    const fact: DraftPickFact = {
       kind: "draft_pick",
       draftId: draft.draft_id,
       pickNo: p.pick_no,
@@ -209,6 +252,7 @@ export function buildDraftPicks(env: DraftEnv): DraftPickFact[] {
       pickedAt: env.seen.get(p.pick_no) ?? null,
       positionRun: runLengths[i],
     };
+    return withFrozenRank(fact, env.ranks?.get(p.pick_no));
   });
 }
 
@@ -253,14 +297,24 @@ export async function computeDraftFacts(loader: FactsLoader): Promise<DraftFacts
       placeholder: false,
     };
   }
-  const [rawPicks, traded, players, snap, seenRaw] = await Promise.all([
+  const [rawPicks, traded, players, snap, seenRaw, ranksRaw] = await Promise.all([
     getDraftPicks(draft.draft_id).catch(() => [] as SleeperDraftPick[]),
     getDraftTradedPicks(draft.draft_id).catch(() => [] as SleeperTradedPick[]),
     loader.players(),
     loader.fantasyCalc(),
     store.get<unknown>(store.keys.snapshot(ctx.leagueId, "draft-pick-seen")).catch(() => null),
+    store.get<unknown>(store.keys.snapshot(ctx.leagueId, DRAFT_PICK_RANKS)).catch(() => null),
   ]);
-  const env: DraftEnv = { ctx, draft, picks: rawPicks, traded, players, snap, seen: parsePickSeen(seenRaw, draft.draft_id) };
+  const env: DraftEnv = {
+    ctx,
+    draft,
+    picks: rawPicks,
+    traded,
+    players,
+    snap,
+    seen: parsePickSeen(seenRaw, draft.draft_id),
+    ranks: parsePickRanks(ranksRaw, draft.draft_id),
+  };
   const picks = buildDraftPicks(env);
   const teams = draft.settings.teams || ctx.rosters.length;
   const totalPicks = (draft.settings.rounds || 0) * teams;

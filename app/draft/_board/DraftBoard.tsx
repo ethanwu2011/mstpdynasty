@@ -9,6 +9,7 @@ import { PixelArrow } from "@/components/Button";
 import { cx } from "@/components/cx";
 import { lineOf, RowLine } from "@/components/RowLine";
 import { LiveSquare, Tag } from "@/components/Tag";
+import { TeamSub } from "@/components/TeamSub";
 import type { DraftPickFact, SurfaceLineMap } from "@/lib/types";
 import { fmtInt } from "../../_lib/format";
 import { cardData, type PickCardData } from "./card";
@@ -62,7 +63,7 @@ function TeamHead({ columns }: { columns: BoardColumn[] }) {
           >
             <span className="type-label text-paper-shade group-hover:text-ink-muted">Slot {c.slot}</span>
             <span className="type-label truncate text-row leading-tight">{c.manager}</span>
-            <span className="truncate text-fine text-paper-shade group-hover:text-ink-muted">{c.teamName}</span>
+            <TeamSub team={c.teamName} manager={c.manager} className="truncate text-fine text-paper-shade group-hover:text-ink-muted" />
           </Link>
         ) : (
           <div key={c.slot} className="flex min-w-0 flex-col gap-1 bg-ink px-2 pb-2 pt-2.5 text-paper">

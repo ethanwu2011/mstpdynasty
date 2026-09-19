@@ -242,6 +242,35 @@ describe.skipIf(!hasFixtures())("roastIssue", () => {
     expect(text).not.toContain("123.45");
   });
 
+  it("the cuck chair once per issue: a second slot loses it, and a failed slot gives it back", async () => {
+    const [m1, m2] = weekly.matchups;
+    const line = (m: (typeof weekly.matchups)[number]) => `${m.home.team.managerName} and ${m.away.team.managerName} were separated by ${m.margin}. Nobody looked good.`;
+    const withCuck = (m: (typeof weekly.matchups)[number], extra = "") =>
+      `${m.home.team.managerName} and ${m.away.team.managerName} were separated by ${m.margin}. One of them watched from the cuck chair.${extra} Nobody looked good.`;
+    const count = (t: string) => (t.match(/cuck chair/gi) ?? []).length;
+
+    // Both slots bring it out: the first keeps it, the second keeps the rest without it.
+    const both = goodReply().replace(line(m1), withCuck(m1)).replace(line(m2), withCuck(m2));
+    const { client, calls } = fakeClient([{ text: both }]);
+    setRoastClient(client);
+    const issue = await roastIssue("weekly_recap", facts, ctx, { now: NOW });
+    expect(calls).toHaveLength(2);
+    expect(String(calls[1].messages[0].content)).toContain("the cuck chair a second time");
+    const text = allText(issue);
+    expect(count(text)).toBe(1);
+    expect(text).toContain(withCuck(m1));
+    expect(text).toContain(line(m2));
+
+    // The first slot fails for another reason: its allowance goes back, and the second slot keeps it.
+    const firstFails = goodReply().replace(line(m1), withCuck(m1, " It was 123.45 of pain.")).replace(line(m2), withCuck(m2));
+    const { client: c2 } = fakeClient([{ text: firstFails }]);
+    setRoastClient(c2);
+    const again = allText(await roastIssue("weekly_recap", facts, ctx, { now: NOW }));
+    expect(count(again)).toBe(1);
+    expect(again).toContain(withCuck(m2));
+    expect(again).not.toContain("123.45");
+  });
+
   it("stores what the writer used, and shows the next issue PREVIOUS after LORE", async () => {
     const reply = goodReply().replace(/@@allusion\n[^\n]*/, "@@allusion\nThe Vasa sinking off Stockholm, 1628");
     const { client } = fakeClient([{ text: reply }]);

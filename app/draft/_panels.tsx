@@ -11,6 +11,7 @@ import { Panel, type PanelSpan } from "@/components/Panel";
 import { Receipt, RoastBlock, type RoastBlockData } from "@/components/RoastBlock";
 import { lineOf, RowLine } from "@/components/RowLine";
 import { LiveSquare, SampleMark } from "@/components/Tag";
+import { TeamSub } from "@/components/TeamSub";
 import { resumesAtFor } from "@/lib/facts/draft";
 import type { DraftGrade, DraftPickFact, Issue, LeagueContext, SleeperDraft, SurfaceLineMap } from "@/lib/types";
 import { clockLength, etStamp, fmtInt, ordinal, pickLabel } from "../_lib/format";
@@ -254,7 +255,7 @@ export function ClockPanel({ board, draft, stage, placeholder, span = 4 }: { boa
           </div>
 
           {stage === "paused" ? (
-            <p className="type-label m-0 flex items-center gap-2">
+            <p className="m-0 flex items-center gap-2 text-row font-semibold">
               <LiveSquare size={10} />
               {resumes ? `Draft paused. Picks resume at ${resumes}.` : "Draft paused."}
             </p>
@@ -344,7 +345,7 @@ export function BestDraftPanel({ grades, span = 4 }: { grades: DraftGrade[]; spa
         <div className="flex items-end justify-between gap-4">
           <div className="flex min-w-0 flex-col gap-2">
             <span className="type-display truncate text-j3">{best.team.managerName}</span>
-            <span className="truncate text-fine text-ink-muted">{best.team.teamName}</span>
+            <TeamSub team={best.team.teamName} manager={best.team.managerName} className="truncate text-fine text-ink-muted" />
           </div>
           <span className="type-display text-j5 leading-none" aria-label={`Grade ${best.grade}`}>
             {best.grade}
@@ -401,7 +402,7 @@ export function GradesTable({ grades, placeholder }: { grades: DraftGrade[]; pla
             cell: (g) => (
               <Link href={`/teams/${g.team.rosterId}`} className="flex flex-col no-underline hover:underline">
                 <span className="font-bold">{g.team.managerName}</span>
-                <span className="text-fine font-normal text-ink-muted">{g.team.teamName}</span>
+                <TeamSub team={g.team.teamName} manager={g.team.managerName} className="text-fine font-normal text-ink-muted" />
               </Link>
             ),
           },

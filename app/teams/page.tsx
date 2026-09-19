@@ -8,13 +8,17 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { DataTable, type DataColumn } from "@/components/DataTable";
 import { Board, Panel } from "@/components/Panel";
+import { lineOf } from "@/components/RowLine";
+import { TeamSub } from "@/components/TeamSub";
 import { getFantasyCalc } from "@/lib/fantasycalc";
 import { draftFacts } from "@/lib/facts";
 import { getLeagueContext, standingsFromRosters } from "@/lib/league";
 import { draftOdds } from "@/lib/models";
+import { surfaceKeys } from "@/lib/roast";
 import { getPlayers } from "@/lib/sleeper";
 import type { PlayersMap, StandingRow } from "@/lib/types";
 import { fmtInt, fmtPts, ordinal, record } from "../_lib/format";
+import { surfaceLinesFor } from "../_lib/lines";
 import { pctText } from "../_lib/odds-board";
 import { pagePhase, safe, type SearchParams } from "../_lib/phase";
 import { draftOrder } from "../_lib/draft";
@@ -31,11 +35,13 @@ export default async function TeamsPage({ searchParams }: { searchParams: Search
   const standings = standingsFromRosters(ctx);
   const anyPlayers = ctx.rosters.some((r) => r.players.length > 0);
   const drafting = !anyPlayers && phase === "drafting";
-  const [players, fc, facts, odds] = await Promise.all([
+  const [players, fc, facts, odds, lines] = await Promise.all([
     anyPlayers ? safe(getPlayers(), {} as PlayersMap, "players") : Promise.resolve({} as PlayersMap),
     anyPlayers ? safe(getFantasyCalc(), null, "fantasycalc") : Promise.resolve(null),
     drafting ? safe(draftFacts(ctx), null, "draft facts") : Promise.resolve(null),
     drafting ? safe(draftOdds(ctx), null, "draft odds") : Promise.resolve(null),
+    // The team one-liners (the same lines the team pages lead with); absent rows have none.
+    surfaceLinesFor(ctx, "team", surfaceKeys.team(ctx.season)),
   ]);
 
   // Dynasty value: the roster's, or while drafting the sum of the players picked so far.
@@ -58,7 +64,7 @@ export default async function TeamsPage({ searchParams }: { searchParams: Search
       cell: (s) => (
         <Link href={`/teams/${s.team.rosterId}`} className="flex min-h-11 max-w-[8.5rem] flex-col justify-center no-underline hover:underline sm:max-w-[11rem]">
           <span className="font-bold">{s.team.managerName}</span>
-          <span className="truncate text-fine font-normal text-ink-muted">{s.team.teamName}</span>
+          <TeamSub team={s.team.teamName} manager={s.team.managerName} className="break-words text-fine font-normal text-ink-muted" />
         </Link>
       ),
     },
@@ -128,6 +134,7 @@ export default async function TeamsPage({ searchParams }: { searchParams: Search
           rows={rows}
           rowKey={(s) => String(s.team.rosterId)}
           mark={(_, i) => (played ? (i === 0 ? "leader" : i === rows.length - 1 ? "last" : null) : null)}
+          line={(s) => lineOf(lines, s.team.rosterId)}
           minWidth={320}
           className={draftNumbers ? "border-t-2 border-ink" : undefined}
           columns={columns}

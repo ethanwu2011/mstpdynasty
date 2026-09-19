@@ -16,6 +16,8 @@ import { Board, Panel } from "@/components/Panel";
 import { RoastBlock, type RoastBlockData } from "@/components/RoastBlock";
 import { lineOf, RowLine } from "@/components/RowLine";
 import { LiveSquare, SampleMark } from "@/components/Tag";
+import { TeamSub } from "@/components/TeamSub";
+import { teamSubtitle } from "@/lib/names";
 import type { SeasonPhase, ShameBoard, ShameEntry, ShameKind, SurfaceLineMap } from "@/lib/types";
 import { ordinal } from "../_lib/format";
 import { amountText, damageText, entryHref, groupByKind, KIND_ORDER, KINDS, shortHeadline } from "./kinds";
@@ -170,7 +172,7 @@ function cleanBlock(m: ShameManager, season: string): RoastBlockData {
     receipt: [
       { label: "Entries", value: 0 },
       { label: "Records held", value: 0 },
-      { label: "Team", value: m.teamName },
+      ...(teamSubtitle(m.teamName, m.name) ? [{ label: "Team", value: m.teamName }] : []),
     ],
     href: shameHref({ who: m.key }, ""),
   };
@@ -246,7 +248,7 @@ function RapSheets({ rows, who, placeholder, empty }: { rows: Tally[]; who: stri
                   {t.count ? (
                     <TallyDots n={t.count} inverted={selected} />
                   ) : (
-                    <span className={cx("truncate text-fine", selected ? "text-paper-shade" : "text-ink-muted")}>{t.manager.teamName}</span>
+                    <TeamSub team={t.manager.teamName} manager={t.manager.name} className={cx("truncate text-fine", selected ? "text-paper-shade" : "text-ink-muted")} />
                   )}
                 </span>
                 <Numeral value={t.count} size="d30" tone={selected ? "paper" : t.count ? "ink" : "muted"} label={`${t.count} entries`} />
@@ -312,7 +314,7 @@ function RecordRow({ kind, list, rows }: { kind: ShameKind; list: ShameEntry[] |
     holder = (
       <>
         <span className="block truncate font-bold">{top.team.managerName}</span>
-        <span className="block truncate text-fine text-ink-muted">{top.team.teamName}</span>
+        <TeamSub team={top.team.teamName} manager={top.team.managerName} className="block truncate text-fine text-ink-muted" />
       </>
     );
     what = (
@@ -354,7 +356,7 @@ function RecordRow({ kind, list, rows }: { kind: ShameKind; list: ShameEntry[] |
           <p className="type-label m-0 flex items-center gap-2">
             {top && meta.ranked ? <LiveSquare size={8} /> : null}
             {list?.length ? (
-              <Link href={shameHref({ kind })} className="underline decoration-2 underline-offset-[3px] hover:bg-ink hover:text-paper">
+              <Link href={shameHref({ kind })} className="hit-area underline decoration-2 underline-offset-[3px] hover:bg-ink hover:text-paper">
                 {meta.title}
               </Link>
             ) : (
@@ -441,7 +443,7 @@ function LedgerGroup({
                   </span>
                 ) : null}
                 <span className="shrink-0 font-bold">{e.team.managerName}</span>
-                <span className="truncate text-fine text-ink-muted">{e.team.teamName}</span>
+                <TeamSub team={e.team.teamName} manager={e.team.managerName} className="truncate text-fine text-ink-muted" />
                 <span className="ml-auto shrink-0 text-fine text-ink-muted">{e.week ? `Wk ${e.week}` : "Draft"}</span>
               </p>
               {meta.ranked ? <p className="m-0 text-body font-bold">{damageText(e)}</p> : null}
@@ -485,9 +487,7 @@ function LedgerGroup({
                 ) : null}
                 <span className="flex min-w-0 flex-col">
                   <span className="font-bold">{e.team.managerName}</span>
-                  <span className="block max-w-[8.5rem] truncate text-fine font-normal text-ink-muted md:max-w-[13rem]">
-                    {e.team.teamName}
-                  </span>
+                  <TeamSub team={e.team.teamName} manager={e.team.managerName} className="block max-w-[8.5rem] truncate text-fine font-normal text-ink-muted md:max-w-[13rem]" />
                 </span>
               </span>
             ),

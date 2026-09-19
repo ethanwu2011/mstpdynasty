@@ -90,7 +90,9 @@ export async function computeDraftOdds(ctx: LeagueContext | undefined, opts: Dra
       hit.runs === runs &&
       Date.now() - hit.result.generatedAt < DRAFT_ODDS_CACHE_SECONDS * 1000
     ) {
-      return hit.result;
+      // Names come from today's league context, never the cached copy (a result cached before a
+      // naming change would otherwise print the old team names until it expires).
+      return { ...hit.result, teams: hit.result.teams.map((t) => ({ ...t, team: teamRef(c, t.team.rosterId) })) };
     }
   }
 

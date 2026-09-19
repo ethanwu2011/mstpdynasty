@@ -327,10 +327,10 @@ export default async function OddsPage({ searchParams }: { searchParams: SearchP
         <div className="flex flex-col gap-4 px-4 pb-5 pt-6 md:flex-row md:items-center md:justify-between md:px-6">
           <p className="m-0 max-w-[52ch] text-data">
             {drafted
-              ? "One board per team, one column per week, 5% per dot. Pre is the drafted-roster odds; the week columns light up as the weeks are played."
+              ? `One board per team, one column per week, 5% per dot, ranked by the latest ${METRICS[metric].long}. Pre is the drafted-roster odds; the week columns light up as the weeks are played.`
               : noTeams
                 ? "One board per team, one column per week, 5% per dot. Nothing is lit until the first pick."
-                : "One board per team, one column per week, 5% per dot. The big number is the latest run. Unlit columns are weeks still to come."}
+                : `One board per team, one column per week, 5% per dot, ranked by the latest ${METRICS[metric].long}. The big number is the latest run. Unlit columns are weeks still to come.`}
           </p>
           {noTeams && !drafted ? null : <MetricSwitch metric={metric} hrefFor={hrefFor} />}
         </div>

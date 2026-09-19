@@ -75,7 +75,7 @@ export async function standingsAsOf(week: number, ctx?: LeagueContext): Promise<
 }
 
 /** Bump when the WeeklyFacts shape or logic changes, so cached final weeks are recomputed. */
-const WEEKLY_CACHE_VERSION = 2;
+const WEEKLY_CACHE_VERSION = 3; // 3: team refs name a team with no custom name by first name
 const WEEKLY_CACHE_TTL = 24 * 3600;
 
 /**

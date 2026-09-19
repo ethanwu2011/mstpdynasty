@@ -7,6 +7,7 @@ import Link from "next/link";
 import type { CSSProperties } from "react";
 import { cx } from "@/components/cx";
 import { Numeral } from "@/components/Numeral";
+import { TeamSub } from "@/components/TeamSub";
 import type { RosterId } from "@/lib/types";
 
 export type OddsMetric = "playoff" | "title" | "last";
@@ -99,7 +100,7 @@ function Tile({ s, weeks, preWeek, metric, rank }: { s: OddsSeries; weeks: numbe
           ) : null}
           <span className="truncate font-bold leading-tight">{s.name}</span>
         </span>
-        <span className="truncate text-fine text-ink-muted">{s.teamName}</span>
+        <TeamSub team={s.teamName} manager={s.name} className="truncate text-fine text-ink-muted" />
       </div>
       {latest === null ? null : (
         <div className="flex items-baseline justify-between gap-2">
@@ -153,7 +154,7 @@ export function MetricSwitch({ metric, hrefFor }: { metric: OddsMetric; hrefFor:
             scroll={false}
             aria-current={on ? "true" : undefined}
             className={cx(
-              "type-label pressable inline-flex min-h-9 items-center border-2 border-ink px-3 py-2 no-underline",
+              "type-label pressable inline-flex min-h-11 items-center border-2 border-ink px-3 py-2 no-underline",
               on ? "bg-ink text-paper" : "bg-paper text-ink",
             )}
           >
@@ -169,7 +170,8 @@ export function OddsChart({ series, weeks, preWeek, metric }: OddsChartProps) {
   const sorted = [...series].sort((a, b) => {
     const la = [...a.values.entries()].sort((x, y) => x[0] - y[0]).at(-1)?.[1] ?? -1;
     const lb = [...b.values.entries()].sort((x, y) => x[0] - y[0]).at(-1)?.[1] ?? -1;
-    return lb - la || a.name.localeCompare(b.name);
+    // As shown (one decimal) first, so two boards that read the same are ordered by name.
+    return Math.round(lb * 10) - Math.round(la * 10) || lb - la || a.name.localeCompare(b.name);
   });
   const n = sorted.length;
   const cols = n <= 6 ? Math.max(1, n) : n % 5 === 0 ? 5 : n % 6 === 0 ? 6 : n % 4 === 0 ? 4 : 5;

@@ -32,7 +32,7 @@ import * as store from "@/lib/store";
 import type { LeagueContext, RoastSurface, RoastUsage, StoredSurfaceLines, SurfaceLineMap, SurfaceRow, SurfaceRowFailure } from "@/lib/types";
 import { addUsage, callRoastModel, hasRoastClient, type RoastRequestOptions } from "./llm";
 import { loadRoastNotes, notesFor } from "./notes";
-import { AllowedNumbers, checkText, describeDrops, parseSlots, type Dropped } from "./postcheck";
+import { AllowedNumbers, checkText, cuckChairIn, describeDrops, parseSlots, type Dropped } from "./postcheck";
 
 export const SURFACES: readonly RoastSurface[] = ["standings", "odds", "power", "matchups", "team", "trades", "shame", "draft"];
 
@@ -75,6 +75,13 @@ export const SURFACE_MAX_AGE_MS: Record<RoastSurface, number> = {
   trades: DAY_MS,
   draft: DAY_MS,
 };
+
+/**
+ * Cuck-chair lines per table (the persona's once-per-issue rule, applied to a table): one
+ * allowance shared by every batch and every refresh of a surface key, counting the lines
+ * already stored on it.
+ */
+export const CUCK_CHAIR_PER_TABLE = 1;
 
 /** Rows per model call (the draft surface can hold 340 rows): small enough to finish well inside LINES_REQUEST. */
 export const MAX_ROWS_PER_CALL = 25;
@@ -260,10 +267,15 @@ export interface LineCheck {
   dropped: Dropped[];
 }
 
-/** The checks one line must pass (numbers and words as everywhere, plus one sentence, short, named). */
-export function checkLine(raw: string | undefined, row: SurfaceRow, allowed: AllowedNumbers, exempt: string): LineCheck {
+/**
+ * The checks one line must pass (numbers and words as everywhere, plus one sentence, short, named).
+ * `cuck` is the table's cuck-chair allowance (CUCK_CHAIR_PER_TABLE), shared by every line on it;
+ * a line that fails gives back what it took.
+ */
+export function checkLine(raw: string | undefined, row: SurfaceRow, allowed: AllowedNumbers, exempt: string, cuck: { left: number } = { left: CUCK_CHAIR_PER_TABLE }): LineCheck {
   if (!raw || !raw.trim()) return { line: null, reasons: ["the line was missing"], dropped: [] };
-  const checked = checkText(raw.replace(/\s*\n+\s*/g, " "), allowed, exempt);
+  const before = cuck.left;
+  const checked = checkText(raw.replace(/\s*\n+\s*/g, " "), allowed, exempt, { cuck });
   const reasons = describeDrops(checked.dropped);
   if (checked.sentences !== 1) reasons.push(`it ran ${checked.sentences} sentences; a line is one`);
   const text = checked.text.replace(/!/g, ".").trim();
@@ -271,6 +283,7 @@ export function checkLine(raw: string | undefined, row: SurfaceRow, allowed: All
   if (text.length > MAX_LINE_CHARS) reasons.push("it was too long");
   if (text && row.managers.length && !namesAny(text, row.managers)) reasons.push(`it never names ${row.managers.join(" or ")}`);
   if (!reasons.length && text) return { line: text, reasons: [], dropped: [] };
+  cuck.left = before;
   return { line: null, reasons: reasons.length ? reasons : ["nothing survived the checks"], dropped: checked.dropped };
 }
 
@@ -290,6 +303,8 @@ interface WriteResult {
 export interface WriteOptions extends LinesPromptOptions {
   /** Do not start another call after this time (epoch ms). */
   deadline?: number;
+  /** The table's cuck-chair allowance, shared by every batch (default CUCK_CHAIR_PER_TABLE for the whole call). */
+  cuck?: { left: number };
 }
 
 function retryNote(problems: Array<{ slot: string; reasons: string[] }>): string {
@@ -301,7 +316,7 @@ function retryNote(problems: Array<{ slot: string; reasons: string[] }>): string
 }
 
 /** One batch (at most MAX_ROWS_PER_CALL rows): a call, the checks, one retry for the rows that failed. */
-async function writeChunk(surface: RoastSurface, rows: SurfaceRow[], notes: Record<string, string>, opts: WriteOptions): Promise<WriteResult> {
+async function writeChunk(surface: RoastSurface, rows: SurfaceRow[], notes: Record<string, string>, opts: WriteOptions, cuck: { left: number }): Promise<WriteResult> {
   const lore = notesFor(
     notes,
     rows.flatMap((r) => r.managers),
@@ -330,7 +345,7 @@ async function writeChunk(surface: RoastSurface, rows: SurfaceRow[], notes: Reco
     const problems: Array<{ slot: string; reasons: string[] }> = [];
     const still: Slotted[] = [];
     for (const p of pending) {
-      const c = checkLine(reply.get(p.slot), p.row, allowed, exempt);
+      const c = checkLine(reply.get(p.slot), p.row, allowed, exempt, cuck);
       if (c.line) out.lines[p.row.id] = c.line;
       else {
         for (const d of c.dropped) console.warn(`[lines] ${surface} ${p.slot}: failed sentence (${describeDrops([d]).join("; ")}): ${d.sentence}`);
@@ -349,13 +364,14 @@ async function writeChunk(surface: RoastSurface, rows: SurfaceRow[], notes: Reco
 async function writeLines(surface: RoastSurface, rows: SurfaceRow[], opts: WriteOptions = {}): Promise<WriteResult> {
   const notes = await loadRoastNotes().catch(() => ({}));
   const out: WriteResult = { lines: {}, failed: [], unavailable: [], skipped: [], model: null, usage: null };
+  const cuck = opts.cuck ?? { left: CUCK_CHAIR_PER_TABLE };
   for (let i = 0; i < rows.length; i += MAX_ROWS_PER_CALL) {
     const chunk = rows.slice(i, i + MAX_ROWS_PER_CALL);
     if (opts.deadline !== undefined && Date.now() > opts.deadline) {
       out.skipped.push(...chunk.map((r) => r.id));
       continue;
     }
-    const r = await writeChunk(surface, chunk, notes, opts);
+    const r = await writeChunk(surface, chunk, notes, opts, cuck);
     Object.assign(out.lines, r.lines);
     out.failed.push(...r.failed);
     out.unavailable.push(...r.unavailable);
@@ -433,6 +449,17 @@ export interface RefreshOptions extends LinesPromptOptions {
    * re-read after the claim, so two runs never write the same rows.
    */
   claim?: () => Promise<(() => Promise<void>) | null>;
+  /**
+   * The writer's voice version (ROAST_VOICE in lib/jobs/tick.ts). Folded into every row's hash,
+   * so a new voice makes every stored line due again (at the surface's usual pace), pick rows
+   * included.
+   */
+  voice?: number;
+}
+
+/** A row's hash under a voice version (unchanged when no voice is given). */
+export function voicedHash(hash: string, voice: number | undefined): string {
+  return voice === undefined ? hash : `${hash}.v${voice}`;
 }
 
 /**
@@ -452,7 +479,7 @@ export async function refreshSurfaceLines(
   const prevHashes = stored?.rowHashes ?? {};
   const prevAt = stored?.rowAt ?? {};
   const prevFailures = stored?.failures ?? {};
-  const hashes = Object.fromEntries(rows.map((r) => [r.id, rowHash(r)]));
+  const hashes = Object.fromEntries(rows.map((r) => [r.id, voicedHash(rowHash(r), opts.voice)]));
   const kept: SurfaceLineMap = Object.fromEntries(rows.map((r) => [r.id, previous[r.id] ?? null]));
   const maxAge = opts.maxAgeMs ?? SURFACE_MAX_AGE_MS[surface];
 
@@ -481,9 +508,16 @@ export async function refreshSurfaceLines(
   }
 
   const ask = opts.maxRows !== undefined ? due.slice(0, Math.max(0, opts.maxRows)) : due;
+  // One cuck chair per table: a line already on it (even one about to be rewritten) uses it up.
+  const names = lineSources(rows, {}).allowed.names;
+  const onTable = Object.values(kept).filter((l) => typeof l === "string" && cuckChairIn(l, names)).length;
   let written: WriteResult;
   try {
-    written = await writeLines(surface, ask, { context: opts.context, deadline: opts.deadline });
+    written = await writeLines(surface, ask, {
+      context: opts.context,
+      deadline: opts.deadline,
+      cuck: { left: Math.max(0, CUCK_CHAIR_PER_TABLE - onTable) },
+    });
   } catch {
     return { status: "skipped", lines: kept, asked: ask.length, pending: due.length };
   }

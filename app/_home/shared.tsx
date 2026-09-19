@@ -8,6 +8,7 @@ import { Panel, type PanelSpan } from "@/components/Panel";
 import { RoastBlock, type RoastBlockData } from "@/components/RoastBlock";
 import { lineOf } from "@/components/RowLine";
 import { SampleMark, Tag } from "@/components/Tag";
+import { TeamSub } from "@/components/TeamSub";
 import { issueTitle } from "@/lib/roast";
 import type { Issue, ShameBoard, ShameEntry, ShameKind, SurfaceLineMap } from "@/lib/types";
 import { etStamp, fmtInt, fmtPts } from "../_lib/format";
@@ -201,7 +202,7 @@ export function ShamePanel({
               cell: (e) => (
                 <span className="flex flex-col">
                   <span className="font-bold">{e.team.managerName}</span>
-                  <span className="text-fine font-normal text-ink-muted">{e.team.teamName}</span>
+                  <TeamSub team={e.team.teamName} manager={e.team.managerName} className="text-fine font-normal text-ink-muted" />
                 </span>
               ),
             },

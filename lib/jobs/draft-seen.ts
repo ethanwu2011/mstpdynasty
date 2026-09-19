@@ -11,8 +11,10 @@
  * the tick time. When several picks landed between ticks, only the latest one gets a time and
  * the others stay unknown: better null than a made-up time.
  */
+import { getRoast, roastIds } from "@/lib/archive";
+import { DRAFT_PICK_RANKS, parsePickRanks, type FrozenPickRank } from "@/lib/facts/draft";
 import * as store from "@/lib/store";
-import type { SleeperDraft, SleeperDraftPick } from "@/lib/types";
+import type { DraftPickFact, SleeperDraft, SleeperDraftPick } from "@/lib/types";
 
 export const DRAFT_PICK_SEEN = "draft-pick-seen";
 
@@ -67,4 +69,47 @@ async function recordLocked(leagueId: string, draft: SleeperDraft, picks: Sleepe
   all[draft.draft_id] = { ...known, [String(latest)]: at };
   await store.set(seenKey(leagueId), all, { ttlSeconds: 400 * 24 * 3600 });
   return latest;
+}
+
+/* ------------------------------------------------------------------ */
+/* frozen FantasyCalc ranks                                            */
+/* ------------------------------------------------------------------ */
+
+export type DraftPickRanks = Record<string, Record<string, FrozenPickRank>>;
+
+const ranksKey = (leagueId: string) => store.keys.snapshot(leagueId, DRAFT_PICK_RANKS);
+
+/** The ranks a pick's stored write-up was written from, when it has one for this same player. */
+function writtenRanks(fact: unknown, p: DraftPickFact): FrozenPickRank | null {
+  if (!fact || typeof fact !== "object" || Array.isArray(fact)) return null;
+  const f = fact as Partial<DraftPickFact>;
+  if (f.kind !== "draft_pick" || f.pickNo !== p.pickNo || f.player?.playerId !== p.player.playerId) return null;
+  return { fcRank: f.fcRank ?? null, fcPositionRank: f.fcPositionRank ?? null };
+}
+
+/**
+ * Freeze the FantasyCalc ranks of every pick that has none yet: the ranks its stored write-up
+ * states when it has one (so the card's heading, receipt and chips agree with the words), else
+ * the ranks in `picks` (today's snapshot, which is the day the tick first sees a new pick).
+ * A frozen rank is never changed. Returns the draft's frozen ranks after the write.
+ */
+export async function freezeDraftPickRanks(leagueId: string, draftId: string, picks: DraftPickFact[]): Promise<Map<number, FrozenPickRank>> {
+  const current = parsePickRanks(await store.get<DraftPickRanks>(ranksKey(leagueId)).catch(() => null), draftId);
+  if (picks.every((p) => current.has(p.pickNo))) return current;
+  const lockKey = store.keys.lock(leagueId, `${DRAFT_PICK_RANKS}:write`);
+  if (!(await store.lock(lockKey, 30).catch(() => false))) return current;
+  try {
+    const all = (await store.get<DraftPickRanks>(ranksKey(leagueId))) ?? {};
+    const known: Record<string, FrozenPickRank> = { ...(all[draftId] ?? {}) };
+    const missing = picks.filter((p) => !known[String(p.pickNo)]);
+    const written = await Promise.all(missing.map((p) => getRoast(leagueId, roastIds.pick(draftId, p.pickNo)).catch(() => null)));
+    missing.forEach((p, i) => {
+      known[String(p.pickNo)] = writtenRanks(written[i]?.facts, p) ?? { fcRank: p.fcRank, fcPositionRank: p.fcPositionRank };
+    });
+    all[draftId] = known;
+    await store.set(ranksKey(leagueId), all, { ttlSeconds: 400 * 24 * 3600 });
+    return parsePickRanks(all, draftId);
+  } finally {
+    await store.unlock(lockKey).catch(() => undefined);
+  }
 }

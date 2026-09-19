@@ -9,6 +9,7 @@ import { Panel, type PanelSpan } from "@/components/Panel";
 import { RoastBlock } from "@/components/RoastBlock";
 import { lineOf, RowLine } from "@/components/RowLine";
 import { LiveSquare, SampleMark, Tag } from "@/components/Tag";
+import { teamSubtitle } from "@/lib/names";
 import type { DraftGrade, LeagueContext, Manager, Roast, ShameEntry, ShameKind, StandingRow, SurfaceLineMap } from "@/lib/types";
 import { fmtInt, fmtPts, ordinal, record } from "../../_lib/format";
 import { roastToBlock } from "../../_lib/roast-view";
@@ -40,13 +41,14 @@ export function TeamLead({
   /** The team's one-liner (the team surface), when there is one. */
   line?: string | null;
 }) {
+  const sub = teamSubtitle(manager.teamName, manager.name);
   return (
-    <Panel label="The team" labelRight={manager.username ? <span className="text-paper-shade">@{manager.username}</span> : null} span={8} id="team">
+    <Panel label="The team" span={8} id="team">
       <div className="flex flex-1 flex-col gap-6 md:gap-7">
         {kicker ? <div className="flex flex-wrap items-center gap-2">{kicker}</div> : null}
         <p className="type-display m-0 break-words [text-wrap:balance]">
           <span className="board-wipe block text-j4 xl:text-j5">{manager.name}</span>
-          <span className={cx("board-wipe mt-2 block", manager.teamName.length > 18 ? "text-j2" : "text-j2 md:text-j3")}>{manager.teamName}</span>
+          {sub ? <span className={cx("board-wipe mt-2 block", sub.length > 18 ? "text-j2" : "text-j2 md:text-j3")}>{sub}</span> : null}
         </p>
         <RowLine text={line} size="lede" />
         {note ? <div className="measure text-body md:text-lede">{note}</div> : null}
@@ -651,7 +653,9 @@ export function TeamsStrip({ ctx, current, order, standings }: { ctx: LeagueCont
                   )}
                 >
                   <span className="type-label truncate text-row leading-tight">{m?.name ?? `Roster ${id}`}</span>
-                  <span className={cx("truncate text-fine", here ? "text-paper-shade" : "text-ink-muted")}>{m?.teamName ?? ""}</span>
+                  {m && teamSubtitle(m.teamName, m.name) ? (
+                    <span className={cx("truncate text-fine", here ? "text-paper-shade" : "text-ink-muted")}>{teamSubtitle(m.teamName, m.name)}</span>
+                  ) : null}
                   {played && s ? <span className="type-label mt-1">{record(s.wins, s.losses, s.ties)}</span> : null}
                 </Link>
               </li>

@@ -6,6 +6,7 @@ import { Panel } from "@/components/Panel";
 import { RowLine } from "@/components/RowLine";
 import { LiveSquare, Tag } from "@/components/Tag";
 import { WinDots } from "@/components/WinDots";
+import { TeamSub } from "@/components/TeamSub";
 import type { MatchupFact, StarterLine, TeamWeekFact, TeamWinProb, WinProb, WinProbWeek, ZeroStarterFact } from "@/lib/types";
 import { fmtPts, pct } from "../../_lib/format";
 
@@ -76,7 +77,7 @@ function Side({
           {fact?.robbed ? <Tag tone="outline" title="Lost with a top-3 score">Robbed</Tag> : null}
           {fact?.fraud ? <Tag tone="outline" title="Won with a bottom-3 score">Fraud</Tag> : null}
         </p>
-        <p className="m-0 max-w-full truncate text-fine text-ink-muted">{side.team.teamName}</p>
+        <TeamSub as="p" team={side.team.teamName} manager={side.team.managerName} className="m-0 max-w-full truncate text-fine text-ink-muted" />
       </div>
       <div className="row-span-2 self-center md:self-auto">
         <Numeral

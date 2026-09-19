@@ -5,6 +5,7 @@ import { Numeral } from "./Numeral";
 import { RowLine } from "./RowLine";
 import { Tag } from "./Tag";
 import { WinDots } from "./WinDots";
+import { teamSubtitle } from "@/lib/names";
 
 export type MatchupStatus = "pre" | "live" | "final";
 
@@ -41,7 +42,7 @@ export function matchupFromWinProb(wp: WinProb, basis: WinProbWeek["basis"]): Pi
   const status: MatchupStatus = wp.isFinal || basis === "final" ? "final" : basis === "live" ? "live" : "pre";
   const side = (t: WinProb["home"]): MatchupSide => ({
     name: t.team.managerName,
-    detail: t.team.teamName,
+    detail: teamSubtitle(t.team.teamName, t.team.managerName) ?? undefined,
     score: status === "pre" ? null : t.actual,
     projected: status === "final" ? null : t.mean,
     winProb: t.winProb,

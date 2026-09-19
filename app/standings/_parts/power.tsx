@@ -3,6 +3,7 @@ import { DataTable } from "@/components/DataTable";
 import { DotBar } from "@/components/DotBar";
 import { Numeral } from "@/components/Numeral";
 import { lineOf } from "@/components/RowLine";
+import { TeamSub } from "@/components/TeamSub";
 import type { DraftOdds, PowerRankings, PowerRow, SurfaceLineMap } from "@/lib/types";
 import { fmtPts, record } from "../../_lib/format";
 import { pctText } from "../../_lib/odds-board";
@@ -39,7 +40,7 @@ export function PowerTable({ power, games, lines }: { power: PowerRankings; game
               </span>
               <span className="flex min-w-0 flex-col">
                 <span className="text-body leading-tight">{r.team.managerName}</span>
-                <span className="max-w-[12rem] truncate text-fine font-normal text-ink-muted">{r.team.teamName}</span>
+                <TeamSub team={r.team.teamName} manager={r.team.managerName} className="max-w-[12rem] whitespace-normal text-fine font-normal text-ink-muted [overflow-wrap:anywhere]" />
               </span>
             </span>
           ),
@@ -97,7 +98,7 @@ export function DraftPowerTable({ odds, lines }: { odds: DraftOdds; lines?: Surf
               </span>
               <span className="flex min-w-0 flex-col">
                 <span className="text-body leading-tight">{r.team.managerName}</span>
-                <span className="max-w-[7rem] truncate text-fine font-normal text-ink-muted sm:max-w-[10rem]">{r.team.teamName}</span>
+                <TeamSub team={r.team.teamName} manager={r.team.managerName} className="max-w-[12rem] whitespace-normal text-fine font-normal text-ink-muted [overflow-wrap:anywhere]" />
               </span>
             </span>
           ),

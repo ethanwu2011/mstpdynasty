@@ -2,8 +2,9 @@
 import { DataTable, type DataColumn } from "@/components/DataTable";
 import { DotBar } from "@/components/DotBar";
 import { lineOf } from "@/components/RowLine";
+import { TeamSub } from "@/components/TeamSub";
 import type { SurfaceLineMap, TeamRef } from "@/lib/types";
-import { pctText } from "../../_lib/odds-board";
+import { oddsOrder, OddsKey, pctText } from "../../_lib/odds-board";
 
 export { pctText };
 
@@ -28,7 +29,8 @@ function Pct({ v, strong = false }: { v: number; strong?: boolean }) {
   return <span className={strong ? "font-bold" : undefined}>{pctText(v)}</span>;
 }
 
-export function OddsTable({ rows, runs, lines }: { rows: OddsTableRow[]; runs: number; lines?: SurfaceLineMap }) {
+export function OddsTable({ rows: given, runs, lines }: { rows: OddsTableRow[]; runs: number; lines?: SurfaceLineMap }) {
+  const rows = [...given].sort(oddsOrder);
   const worst = rows.reduce<OddsTableRow | null>((w, t) => (!w || t.lastPlacePct > w.lastPlacePct ? t : w), null);
   const leader = rows.reduce<OddsTableRow | null>((w, t) => (!w || t.titlePct > w.titlePct ? t : w), null);
   const inSeason = rows.some((r) => r.record !== undefined);
@@ -43,7 +45,7 @@ export function OddsTable({ rows, runs, lines }: { rows: OddsTableRow[]; runs: n
             {t === worst && t.lastPlacePct > 0 ? <span className="sr-only">Most likely to finish last: </span> : null}
             {t.team.managerName}
           </span>
-          <span className="max-w-[9rem] truncate text-fine font-normal text-ink-muted md:max-w-[12rem]">{t.team.teamName}</span>
+          <TeamSub team={t.team.teamName} manager={t.team.managerName} className="max-w-[9rem] whitespace-normal text-fine font-normal text-ink-muted [overflow-wrap:anywhere] md:max-w-[12rem]" />
         </span>
       ),
     },
@@ -107,8 +109,9 @@ export function OddsTable({ rows, runs, lines }: { rows: OddsTableRow[]; runs: n
     });
   }
   return (
+    <>
     <DataTable
-      caption={`Season odds from ${runs.toLocaleString("en-US")} simulated seasons`}
+      caption={`Season odds from ${runs.toLocaleString("en-US")} simulated seasons, ranked by title odds, then playoff odds`}
       rows={rows}
       rowKey={(t) => String(t.team.rosterId)}
       mark={(t) => (t === leader && t.titlePct > 0 ? "leader" : t === worst && t.lastPlacePct > 0 ? "alarm" : null)}
@@ -116,5 +119,7 @@ export function OddsTable({ rows, runs, lines }: { rows: OddsTableRow[]; runs: n
       minWidth={0}
       columns={columns}
     />
+    <OddsKey last={Boolean(worst && worst.lastPlacePct > 0)} className="border-t-2 border-ink px-4 py-3 md:px-6" />
+    </>
   );
 }

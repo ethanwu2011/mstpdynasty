@@ -20,6 +20,7 @@ import {
   setRoastClient,
   surfaceKeys,
   surfaceLines,
+  voicedHash,
 } from "@/lib/roast";
 import type { RoastClient } from "@/lib/roast/llm";
 import * as store from "@/lib/store";
@@ -86,7 +87,91 @@ const fakeClient: RoastClient = {
   },
 };
 
+/** A writer that answers every call with `text` (and counts the calls). */
+function replyClient(text: string): { client: RoastClient; calls: () => number } {
+  let n = 0;
+  const client: RoastClient = {
+    beta: {
+      messages: {
+        create: async () => {
+          n++;
+          return {
+            id: `msg_${n}`,
+            type: "message",
+            role: "assistant",
+            model: "claude-opus-5",
+            stop_reason: "end_turn",
+            stop_details: null,
+            usage: { input_tokens: 10, output_tokens: 5, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 },
+            content: [{ type: "text", text, citations: null }],
+          } as never;
+        },
+      },
+    },
+  };
+  return { client, calls: () => n };
+}
+
+const named: SurfaceRow[] = [
+  { id: "1", managers: ["Rory"], facts: { manager: "Rory", pointsFor: 401.2 } },
+  { id: "2", managers: ["Theo"], facts: { manager: "Theo", pointsFor: 288.9 } },
+];
+const CUCK_BOTH = "@@r1\nRory scored 401.2 and still watched from the cuck chair.\n@@r2\nTheo scored 288.9 from the cuck chair.";
+
 describe("surface lines", () => {
+  it("one cuck chair per table: the second line that brings it out fails", async () => {
+    setRoastClient(replyClient(CUCK_BOTH).client);
+    const lines = await surfaceLines("standings", named);
+    expect(lines["1"]).toBe("Rory scored 401.2 and still watched from the cuck chair.");
+    expect(lines["2"]).toBeNull();
+  });
+
+  it("a cuck chair already stored on the table uses up its allowance", async () => {
+    const ctx = fakeCtx();
+    const key = surfaceKeys.standings("2026", 4);
+    const record: StoredSurfaceLines = {
+      surface: "standings",
+      key,
+      factsHash: "x",
+      rowHashes: { "1": rowHash(named[0]) },
+      generatedAt: 1_000,
+      model: "claude-opus-5",
+      usage: null,
+      lines: { "1": "Rory has lived in the cuck chair since the draft." },
+    };
+    await store.set(store.keys.surfaceLines(ctx.leagueId, "standings", key), record);
+    setRoastClient(replyClient("@@r1\nTheo scored 288.9 from the cuck chair.").client);
+    const res = await refreshSurfaceLines("standings", key, named, ctx, { now: 2_000 });
+    expect(res).toMatchObject({ asked: 1, written: 0, failed: 1 });
+    expect(res.lines["2"]).toBeNull();
+  });
+
+  it("a new voice makes every stored line due again, pick rows included", async () => {
+    const ctx = fakeCtx();
+    const key = surfaceKeys.draft("d1");
+    const pick: SurfaceRow = { id: "7", managers: ["Rory"], facts: { manager: "Rory", pick: "1.07", fcRank: 40 }, hashKey: "1:p7" };
+    const record: StoredSurfaceLines = {
+      surface: "draft",
+      key,
+      factsHash: "x",
+      rowHashes: { "7": voicedHash(rowHash(pick), 4) },
+      rowAt: { "7": 1_000 },
+      generatedAt: 1_000,
+      model: "claude-opus-5",
+      usage: null,
+      lines: { "7": "Rory took him at 1.07." },
+    };
+    await store.set(store.keys.surfaceLines(ctx.leagueId, "draft", key), record);
+    const w = replyClient("@@r1\nRory spent 1.07 on a player nobody else wanted.");
+    setRoastClient(w.client);
+    const day = 25 * 3600_000;
+    expect((await refreshSurfaceLines("draft", key, [pick], ctx, { now: 1_000 + day, voice: 4 })).status).toBe("fresh");
+    const next = await refreshSurfaceLines("draft", key, [pick], ctx, { now: 1_000 + day, voice: 5 });
+    expect(next).toMatchObject({ status: "written", written: 1 });
+    expect(next.lines["7"]).toBe("Rory spent 1.07 on a player nobody else wanted.");
+    expect(w.calls()).toBe(1);
+  });
+
   it("keys are plain strings per surface", () => {
     expect(surfaceKeys.standings("2026", 5)).toBe("2026:w5");
     expect(surfaceKeys.odds("2026", 0)).toBe("2026:w0");

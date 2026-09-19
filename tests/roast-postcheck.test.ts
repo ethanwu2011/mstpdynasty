@@ -6,6 +6,7 @@ import {
   boxScoreIn,
   checkText,
   clockClaimsIn,
+  cuckChairIn,
   describeDrops,
   limitExclamations,
   numbersIn,
@@ -315,6 +316,54 @@ describe("safety and tone", () => {
     expect(bannedWordsIn("Time to roast Theo.")).toEqual(["roast"]);
     expect(bannedWordsIn("A savage reach, no offense.")).toEqual(["savage", "no offense"]);
     expect(bannedWordsIn("Pot Roast lost again.", '{"team":"Pot Roast"}')).toEqual([]);
+  });
+});
+
+describe("the cuck chair: once per issue", () => {
+  const FACTS_CC = JSON.stringify({ a: { manager: "Rory", points: 97.14 }, b: { manager: "Theo", points: 88.2 } });
+  const allowed = new AllowedNumbers([FACTS_CC]);
+
+  it("lets the first one through and drops a second, sharing one allowance across texts", () => {
+    const cuck = { left: 1 };
+    const first = checkText("Rory watched Theo take his guy from the cuck chair.", allowed, "", { cuck });
+    expect(first.dropped).toHaveLength(0);
+    expect(first.cuckUsed).toBe(1);
+    expect(cuck.left).toBe(0);
+    const second = checkText("Theo pulled up a cuck chair of his own. Rory still lost.", allowed, "", { cuck });
+    expect(second.text).toBe("Rory still lost.");
+    expect(describeDrops(second.dropped).join(" ")).toContain("the cuck chair a second time");
+    expect(second.cuckUsed).toBe(0);
+  });
+
+  it("a lone text gets one, and a second in the same text is dropped", () => {
+    const out = checkText("Rory took the cuck chair. Theo got cucked too.", allowed);
+    expect(out.text).toBe("Rory took the cuck chair.");
+  });
+
+  it("LORE that mentions it exempts nothing; only a FACTS name that has the word does", () => {
+    const lore = JSON.stringify({ Rory: "Lives in the cuck chair." });
+    const withLore = new AllowedNumbers([FACTS_CC, lore]);
+    const cuck = { left: 1 };
+    checkText("Rory is back in the cuck chair.", withLore, "", { cuck });
+    expect(checkText("Theo joins him in the cuck chair.", withLore, "", { cuck }).dropped).toHaveLength(1);
+
+    const named = new AllowedNumbers([JSON.stringify({ a: { manager: "Rory", team: "Cuckoo Cuck Club", points: 97.14 } })]);
+    const left = { left: 0 };
+    // Naming the team is not the joke, even with the allowance spent...
+    expect(checkText("Cuckoo Cuck Club scored 97.14 for Rory.", named, "", { cuck: left }).dropped).toHaveLength(0);
+    // ...but the joke itself still counts.
+    expect(checkText("Rory, of Cuckoo Cuck Club, sat in the cuck chair.", named, "", { cuck: left }).dropped).toHaveLength(1);
+    expect(cuckChairIn("Cuckoo Cuck Club won.", ["Cuckoo Cuck Club"])).toBe(false);
+    expect(cuckChairIn("The cuckoo clock struck.")).toBe(false);
+  });
+});
+
+describe("never call a manager cooked or burned", () => {
+  it("drops it, but spending a pick is still burning it", () => {
+    expect(bannedWordsIn("Rory got cooked.")).toEqual(["cooked"]);
+    expect(bannedWordsIn("Theo was absolutely burnt by the pick before his.")).toEqual(["burned"]);
+    expect(bannedWordsIn("Theo burned his first on a kicker.")).toEqual([]);
+    expect(bannedWordsIn("Chef Rory cooked again.", '{"team":"Chef Rory cooked"}')).toEqual([]);
   });
 });
 

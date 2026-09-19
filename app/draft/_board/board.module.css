@@ -237,26 +237,56 @@
   }
 }
 
-/* On the full board the card hangs off its pick. */
+/*
+ * On the full board the card hangs off its pick: below it, then above it, then beside it, the
+ * first place where the whole card (and its 4px hard shadow, held in the margins) fits inside
+ * the viewport. Below and above it never scrolls inside itself; beside the pick it may only
+ * when the window is shorter than the card.
+ */
 @media (min-width: 64rem) {
   @supports (position-area: block-end) {
     .card {
       inset: auto;
-      margin: 8px 0 0 -4px;
+      /* The -4px lines the card up with the lifted pick; the right and bottom margins hold the shadow. */
+      margin: 8px 8px 8px -4px;
       width: 25rem;
-      /* 100% is the space left on the chosen side of the pick, so the card scrolls, never spills. */
-      max-height: min(36rem, calc(100% - 16px));
+      max-height: 36rem;
       position-area: block-end span-inline-end;
-      position-try-order: most-block-size;
-      position-try-fallbacks:
-        flip-inline,
-        flip-block,
-        flip-block flip-inline;
+      position-try-fallbacks: --card-below-left, --card-above-right, --card-above-left, --card-beside-right, --card-beside-left;
     }
     .card::backdrop {
       background: transparent;
     }
   }
+}
+
+@position-try --card-below-left {
+  position-area: block-end span-inline-start;
+  margin: 8px 4px 8px 8px;
+}
+
+@position-try --card-above-right {
+  position-area: block-start span-inline-end;
+  margin: 8px 8px 12px -4px;
+}
+
+@position-try --card-above-left {
+  position-area: block-start span-inline-start;
+  margin: 8px 4px 12px 8px;
+}
+
+@position-try --card-beside-right {
+  position-area: inline-end span-all;
+  align-self: center;
+  margin: 8px 8px 8px 12px;
+  max-height: calc(100% - 16px);
+}
+
+@position-try --card-beside-left {
+  position-area: inline-start span-all;
+  align-self: center;
+  margin: 8px 16px 8px 8px;
+  max-height: calc(100% - 16px);
 }
 
 /* Without the popover API the cards stay hidden instead of spilling into the board. */
