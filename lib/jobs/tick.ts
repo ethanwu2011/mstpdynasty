@@ -13,13 +13,13 @@
  * Transactions older than TICK_LOOKBACK_MS and drafts that ended longer ago than that are
  * never roasted (so a wiped store cannot trigger hundreds of LLM calls).
  */
-import { listRoasts, roastIds, saveRoast } from "@/lib/archive";
+import { getRoast, listRoasts, roastIds, saveRoast } from "@/lib/archive";
 import { draftFacts, transactionFacts } from "@/lib/facts";
 import { withFrozenRank } from "@/lib/facts/draft";
 import { isRoastConfigured, roastItem } from "@/lib/roast";
 import { getDraftPicks } from "@/lib/sleeper";
 import * as store from "@/lib/store";
-import type { DraftPickFact, JobOutcome, LeagueContext, RoastItemFact, RoastItemKind, RoastSource, WaiverFact } from "@/lib/types";
+import type { DraftPickFact, JobOutcome, LeagueContext, Roast, RoastItemFact, RoastItemKind, RoastSource, WaiverFact } from "@/lib/types";
 import { freezeDraftPickRanks, recordDraftPickTimes } from "./draft-seen";
 import { DAY_MS } from "./schedule";
 
@@ -229,4 +229,61 @@ export async function tickOutcomes(ctx: LeagueContext, now: number): Promise<Job
     outcomes.push({ job: group, status, detail: parts.join(" ") || `No new ${many}.` });
   }
   return outcomes;
+}
+
+
+/**
+ * Write one draft pick's line right now, for a page someone is looking at. It uses the same
+ * per-item claim and the same index as the tick, so a pick is never written twice, and it obeys
+ * the same retry rules (no endless retries on a pick the checks keep rejecting). If another
+ * writer holds the claim it waits for that write, up to `budgetMs`. Never throws.
+ */
+export async function ensurePickRoast(
+  ctx: LeagueContext,
+  pick: DraftPickFact,
+  picks: DraftPickFact[],
+  budgetMs = 25_000,
+): Promise<Roast | null> {
+  const l = ctx.leagueId;
+  const id = roastIds.pick(pick.draftId, pick.pickNo);
+  const existing = await getRoast(l, id).catch(() => null);
+  try {
+    const writer = isRoastConfigured();
+    if (!writer || existing?.source === "llm") return existing;
+    const index = await loadIndex(l);
+    const deadline = Date.now() + budgetMs;
+    if (wants(index, id, Date.now(), writer)) {
+      const claim = store.keys.lock(l, `roast:${id}`);
+      if (await store.lock(claim, ROAST_CLAIM_SECONDS).catch(() => false)) {
+        const now = Date.now();
+        try {
+          const frozen = await freezeDraftPickRanks(l, pick.draftId, picks).catch(() => null);
+          const draftPicks = frozen ? picks.map((p) => withFrozenRank(p, frozen.get(p.pickNo))) : picks;
+          const fact = draftPicks.find((p) => p.pickNo === pick.pickNo) ?? pick;
+          const r = await roastItem("draft_pick", fact, ctx, { now, draftPicks });
+          if (r.source === "placeholder") return existing;
+          const saved: Roast = { ...r, id };
+          await saveRoast(saved);
+          const latest = (await store.get<RoastIndex>(indexKey(l)).catch(() => null)) ?? index;
+          const prevN = latest[id]?.n ?? 0;
+          await store.set(indexKey(l), {
+            ...latest,
+            [id]: { s: r.source, t: now, w: writer, n: r.source !== "llm" ? prevN + 1 : prevN, v: ROAST_VOICE },
+          });
+          return saved;
+        } finally {
+          await store.unlock(claim).catch(() => {});
+        }
+      }
+    }
+    // Someone else is writing it (the tick or another viewer): wait for their result.
+    while (Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 1500));
+      const got = await getRoast(l, id).catch(() => null);
+      if (got?.source === "llm") return got;
+    }
+    return (await getRoast(l, id).catch(() => null)) ?? existing;
+  } catch {
+    return existing;
+  }
 }

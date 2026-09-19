@@ -1,15 +1,17 @@
 /** The home page for each league phase. Data comes only through the contract functions. */
+import { Suspense } from "react";
 import { AutoRefresh } from "@/components/AutoRefresh";
 import { DotMatrixFill } from "@/components/DotMatrixFill";
 import { Board, Panel } from "@/components/Panel";
 import { lineOf } from "@/components/RowLine";
 import { listIssues, listRoasts } from "@/lib/archive";
 import { draftFacts, lastCompletedWeek, shameEntries, weeklyFacts } from "@/lib/facts";
+import { ensurePickRoast } from "@/lib/jobs";
 import { standingsFromRosters } from "@/lib/league";
 import { draftOdds, draftOddsBasis, getWinProbabilities, runSeasonSim } from "@/lib/models";
 import { surfaceKeys } from "@/lib/roast";
 import { getWinnersBracket } from "@/lib/sleeper";
-import type { LeagueContext, Roast, SurfaceLineMap } from "@/lib/types";
+import type { DraftPickFact, LeagueContext, Roast, SurfaceLineMap } from "@/lib/types";
 import { record } from "../_lib/format";
 import { surfaceLinesFor } from "../_lib/lines";
 import { DRAFT_ODDS_NOTE, OddsBoard, StartedToday } from "../_lib/odds-board";
@@ -33,6 +35,42 @@ function leadLine(roast: Roast | undefined, maps: { draft?: SurfaceLineMap; trad
   if (f.kind === "draft_pick") return lineOf(maps.draft, f.pickNo);
   if (f.kind === "trade") return lineOf(maps.trades, f.transactionId);
   return null;
+}
+
+/**
+ * The newest pick's lead, written on the spot if nobody has written it yet. The page streams:
+ * the facts-only card shows at once and the written line replaces it when it lands.
+ */
+async function LivePickLead({
+  ctx,
+  pick,
+  picks,
+  pickLines,
+  placeholder,
+}: {
+  ctx: LeagueContext;
+  pick: DraftPickFact;
+  picks: DraftPickFact[];
+  pickLines: SurfaceLineMap;
+  placeholder?: boolean;
+}) {
+  const r = await ensurePickRoast(ctx, pick, picks);
+  const data = r ? roastToBlock(r) : pickFallback(pick, placeholder);
+  const line = r ? leadLine(r, { draft: pickLines }) : lineOf(pickLines, pick.pickNo);
+  return <LeadPanel data={data} line={line} emptyLabel="Pick 1.01" empty={<EmptyLead line="The draft is open and nobody has picked." />} />;
+}
+
+/** Picks with no stat-table line yet borrow the first sentence of their written post. */
+function withWrittenLines(lines: SurfaceLineMap, roasts: Roast[]): SurfaceLineMap {
+  const out: SurfaceLineMap = { ...lines };
+  for (const r of roasts) {
+    if (r.source !== "llm") continue;
+    const n = pickNoOf(r);
+    if (!n || out[String(n)]) continue;
+    const first = r.text.match(/^[\s\S]*?[.!?](?=\s|$)/)?.[0] ?? r.text;
+    out[String(n)] = first.trim();
+  }
+  return out;
 }
 
 function pickNoOf(r: Roast): number {
@@ -102,14 +140,24 @@ export async function HomeDrafting({ ctx }: { ctx: LeagueContext }) {
   return (
     <Board>
       <AutoRefresh enabled={live} seconds={30} />
-      <LeadPanel
-        data={lead}
-        line={line}
-        emptyLabel="Pick 1.01"
-        empty={<EmptyLead line="The draft is open and nobody has picked." />}
-      />
+      {latestPick && facts && leadRoast?.source !== "llm" ? (
+        <Suspense
+          fallback={
+            <LeadPanel data={lead} line={line} emptyLabel="Pick 1.01" empty={<EmptyLead line="The draft is open and nobody has picked." />} />
+          }
+        >
+          <LivePickLead ctx={ctx} pick={latestPick} picks={facts.picks} pickLines={pickLines} placeholder={facts.placeholder} />
+        </Suspense>
+      ) : (
+        <LeadPanel
+          data={lead}
+          line={line}
+          emptyLabel="Pick 1.01"
+          empty={<EmptyLead line="The draft is open and nobody has picked." />}
+        />
+      )}
       <OnTheClockPanel ctx={ctx} facts={facts} span={4} />
-      <BoardStrip facts={facts} lines={pickLines} />
+      <BoardStrip facts={facts} lines={withWrittenLines(pickLines, byPick)} />
       {oddsReady && odds ? (
         <OddsBoard
           label={<StartedToday />}

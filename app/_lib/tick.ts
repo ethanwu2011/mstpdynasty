@@ -2,7 +2,8 @@ import { headers } from "next/headers";
 import { after } from "next/server";
 import { siteUrl } from "@/lib/env";
 
-const TIMEOUT_MS = 10_000;
+// A tick that writes lines takes 15-60 seconds; aborting sooner can cut it off mid-write.
+const TIMEOUT_MS = 55_000;
 
 /**
  * Fire /api/tick after the response is sent (Next `after()`), so page visits trigger the

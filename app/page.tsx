@@ -20,6 +20,9 @@ import { pagePhase, type SearchParams } from "./_lib/phase";
 import { fireTick } from "./_lib/tick";
 import { HomeDrafting, HomeInSeason, HomeOffseason, HomePreDraft } from "./_home/views";
 
+/** Room for the newest pick to be written while the page streams (and for the tick in after()). */
+export const maxDuration = 60;
+
 export default async function Home({ searchParams }: { searchParams: SearchParams }) {
   const ctx = await getLeagueContext();
   const phase = await pagePhase(ctx, searchParams);

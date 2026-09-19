@@ -31,6 +31,9 @@ import { buildBoard, type BoardModel, type BoardStage } from "./_board/model";
 import { EarlierRoastsPanel } from "../_home/draft";
 import { BestDraftPanel, ClockPanel, GradesLead, GradesPending, GradesTable, LatestPickPanel, OrderPanel, PreDraftLead } from "./_panels";
 
+/** Room for the newest pick to be written while the page streams (and for the tick in after()). */
+export const maxDuration = 60;
+
 export const metadata: Metadata = {
   title: "Draft board",
   description: "The MSTP Dynasty startup draft, pick by pick: FantasyCalc rank, reach or steal, and the playoff and title odds the rosters leave behind.",

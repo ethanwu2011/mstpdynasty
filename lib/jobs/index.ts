@@ -40,7 +40,7 @@ import { TICK_COOLDOWN_SECONDS, TICK_RUN_LOCK_SECONDS, tickOutcomes } from "./ti
 export { listJobRuns } from "./log";
 export { readDraftPickTimes, DRAFT_PICK_SEEN } from "./draft-seen";
 export { planDaily, recapWeekFor, earlyGamesWeekFor } from "./schedule";
-export { MAX_ROASTS_PER_TICK, TICK_COOLDOWN_SECONDS } from "./tick";
+export { MAX_ROASTS_PER_TICK, TICK_COOLDOWN_SECONDS, ensurePickRoast } from "./tick";
 export { sendTestEmail } from "./test-email";
 export { refreshLines, tickLines, TABLE_SWEEP_SECONDS, DRAFT_ODDS_LINES_MAX_AGE_MS } from "./lines";
 
