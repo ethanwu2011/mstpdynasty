@@ -10,11 +10,13 @@ build/
 next-env.d.ts
 *.tsbuildinfo
 
-# env and local data (never commit)
+# env and local data (never commit; the repo is public)
 .env*
 !.env.example
 .data/
 fixtures/
+.review/
+docs/samples/
 
 # misc
 .DS_Store

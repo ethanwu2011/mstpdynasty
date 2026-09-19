@@ -2,6 +2,14 @@
 
 Single source of truth for the site and the roast agent. Every agent reads this first.
 
+## DECISIONS FROM ETHAN (2026-09-18 20:10 ET), override anything below
+- NO MED THEME AT ALL. No "Attending", no hospital/chart/rounds/M&M/autopsy language anywhere: not in the persona, issue names, page labels, or design. Straight fantasy roasting.
+- Persona: an unnamed, merciless fantasy football columnist (sports-radio / roast-comic energy). Byline "The Roast". Email from "The Roast <roast@mstpdynasty.com>".
+- Issue names: "The Daily Roast" (daily 8 AM ET, only when there is material), "Thursday Night Fallout" (Friday, in season), "The Weekly Roast" (Tuesday full recap), "Draft Grades" (once, after the startup draft).
+- Home page in season: the LATEST ROAST leads, live scores and win odds come right after it.
+- Audience: the 10 managers, equally on phones during games and on laptops reading during the week. Both layouts are first-class.
+- Visual direction is being decided separately (PRODUCT.md / DESIGN.md at the repo root, written with the impeccable skill). If DESIGN.md exists, it overrides the "Design direction" section below.
+
 ## What it is
 A live tracker and roast machine for the MSTP Dynasty fantasy league (10 MD/PhD students, Sleeper dynasty league). Commissioner: Ethan. The point is humor: brutal, specific roasts of fantasy decisions, built on real stats. Secondary point: genuinely good live data and models (win probability, season odds), because good numbers make roasts land.
 
@@ -81,6 +89,10 @@ Resend. One clean, text-first HTML email per issue (single column, readable seri
 
 ## Design direction
 A hospital chart crossed with a sports tabloid. Paper-white background (#FBFAF7-ish), near-black ink, Pitt navy #003594 as the one accent (the league's Drive files use it), gold #FFB81C only for the champion / leader, one alarm red for shame. Tabular monospace numerals for scores. A readable serif for newsletter body text, a plain grotesk (not Inter) for UI. Dense tables over cards. Labels like a patient census where it is funny (standings as "Census", team pages with "Prognosis"), but never let the theme hurt readability. Mobile works at 375 px. Use the `impeccable` skill for design craft and run its anti-pattern / AI-slop checks.
+
+## Public repo rules (repo is PUBLIC at github.com/ethanwu2011/mstpdynasty)
+- Never commit secrets, fixtures/, .data/, .review/, or anything generated from the RT league. docs/samples/ must be gitignored.
+- Roast lore must NOT live in the repo. config/roast-notes.ts only holds empty defaults. Real lore is read at runtime from env ROAST_NOTES (JSON object: manager first name -> text) and/or the store key "roast-notes"; env wins. Document this in .env.example and docs/DEV.md.
 
 ## Security
 No secrets in client bundles. Cron and admin routes verify secrets with constant-time compare. Approve and unsubscribe links are HMAC signed. Rate-limit /api/tick with the KV lock. Escape all user-provided text (team names come from Sleeper and are user-controlled) in HTML and email. Subscribe endpoint validates email and caps subscribers at 30.

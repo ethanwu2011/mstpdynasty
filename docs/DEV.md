@@ -1,0 +1,121 @@
+# Developing mstpdynasty.com
+
+Next.js 16 (App Router) + React 19 + TypeScript + Tailwind v4. Node 22. Vitest for tests.
+Specs: `docs/SITE_SPEC.md` (product), `docs/CONTRACTS.md` (code contracts and file ownership).
+
+## Run it
+
+```sh
+npm install
+npm run fixtures     # once: downloads test/dev data into fixtures/ (about 85 MB, gitignored)
+npm run dev          # http://localhost:3000, live Sleeper data for MSTP Dynasty
+```
+
+Checks (all must pass before handing off):
+
+```sh
+npm run typecheck    # tsc --noEmit
+npm test             # vitest run (offline: replays fixtures/)
+npm run lint
+npm run build        # next build (fetches live Sleeper data for prerendering)
+```
+
+Be kind to the machine: one heavy process at a time (a build or a dev server), and stop dev
+servers when done.
+
+## Dev modes
+
+| Want | Command |
+|---|---|
+| Real league, live data | `npm run dev` |
+| Completed RT season, offline | `npm run dev:rt` (reads the RT id from `fixtures/manifest.json`) |
+| RT season as if it were week 9 | `LEAGUE_WEEK_OVERRIDE=9 npm run dev:rt` |
+| Another port | `npm run dev:rt -- -p 3200` |
+
+`LEAGUE_ID` other than MSTP makes `ctx.isDevLeague` true: nothing is ever emailed or published
+about it. Never publish anything about the RT league.
+
+## Public repo
+
+The GitHub repo is public. Never commit secrets, `fixtures/`, `.data/`, `.review/`, `docs/samples/`
+(all gitignored), or anything generated from the RT league (sample issues, roasts, screenshots).
+Keep league ids other than MSTP's out of committed files: read them from `fixtures/manifest.json`.
+
+## Roast lore
+
+Per-manager running jokes never live in the repo. `config/roast-notes.ts` ships empty defaults.
+Real lore is read at runtime from env `ROAST_NOTES` (JSON object: manager first name -> text,
+parsed by `roastNotesFromEnv()` in `lib/env.ts`) and/or the store key `roast-notes`
+(`keys.roastNotes()` in `lib/store.ts`). Env wins.
+
+```sh
+ROAST_NOTES='{"Ethan":"drafted a kicker in a league with no kickers","Peter":"..."}'
+```
+
+## Fixtures
+
+`scripts/fetch-fixtures.ts` (`npm run fixtures`, add `-- --force` to refetch everything) writes each
+response to `fixtures/<host>/<url path>@<sorted query>.json`, the same path `lib/http.ts` reads in
+fixture mode, so `DATA_SOURCE=fixtures` replays the exact API responses. Contents:
+
+- RT Dynasty (2025, complete; found via Ethan's 2025 leagues): league, users, rosters, matchups
+  weeks 1-17, transactions weeks 1-18, drafts + picks + draft traded picks, traded picks, brackets.
+- NFL 2025: stats and projections weeks 1-17, schedule, ESPN scoreboards weeks 1-17.
+- Scoring-check league (picked automatically: a completed 2025 league of Ethan's with MSTP's slots
+  and headline scoring, including the TE bonus): league, users, rosters, matchups 1-17. Used only
+  by `tests/scoring.test.ts`.
+- MSTP Dynasty current objects (league, users, rosters, draft, picks, traded picks, current week
+  matchups and transactions), NFL state, 2026 schedule and current-week stats/projections, ESPN
+  current scoreboard. These are refetched on every run.
+- `/players/nfl` (full, 14 MB, fetched once unless `--force`) and FantasyCalc current values.
+- `fixtures/manifest.json`: ids and weeks (read it via `tests/helpers/fixtures.ts`).
+
+## Storage
+
+`lib/store.ts` uses Upstash Redis when `KV_REST_API_URL` + `KV_REST_API_TOKEN` (or the `UPSTASH_*`
+pair) are set; otherwise JSON files in `.data/` (gitignored). Tests use an in-memory store. Delete
+`.data/` to reset local state. On Vercel without KV the file store falls back to `/tmp`, which is
+per-instance and temporary: configure KV before relying on issues, roasts or subscribers there.
+
+## Caching
+
+- Small Sleeper payloads use the Next data cache with per-endpoint `revalidate` (`REVALIDATE` in
+  `lib/sleeper.ts`: rosters and matchups 60 s, draft picks 30 s, league 120 s, schedule 6 h...).
+- Weekly stats, projections and `/players/nfl` exceed the 2 MB Next cache limit, so they are fetched
+  uncached, trimmed, and cached in memory plus the store (`TRIMMED_TTL`). Players refresh at most
+  once per 24 h.
+- FantasyCalc is cached per Eastern date, with one snapshot kept per day for historical trade grades.
+
+## Environment variables
+
+All optional. See `.env.example` for the full list with comments. With none set the site renders,
+models run, and roast/email features report "not configured yet".
+
+| Variable | Purpose |
+|---|---|
+| `LEAGUE_ID` | League override for dev (default MSTP 1406497799725424640) |
+| `LEAGUE_WEEK_OVERRIDE` | Dev: force in-season at week N |
+| `DATA_SOURCE`, `FIXTURES_DIR` | `fixtures` replays `fixtures/` instead of the network |
+| `ANTHROPIC_API_KEY` | The Roast (roasts, newsletters) |
+| `ROAST_NOTES` | Roast lore JSON (manager first name -> text); never commit it |
+| `RESEND_API_KEY`, `EMAIL_FROM`, `COMMISSIONER_EMAIL` | Email |
+| `NEWSLETTER_MODE` | `review` (default) or `auto` |
+| `SITE_PASSWORD` | Gate the whole site behind `/enter` |
+| `CRON_SECRET` | Bearer token for `/api/cron/daily` |
+| `ADMIN_SECRET` | HMAC key for approve and unsubscribe links |
+| `SITE_URL` | Public base URL for links in emails |
+| `KV_REST_API_URL`, `KV_REST_API_TOKEN` or `UPSTASH_REDIS_REST_URL`, `UPSTASH_REDIS_REST_TOKEN` | KV store |
+| `STORE_BACKEND`, `STORE_PREFIX`, `DATA_DIR` | Store overrides (`upstash`, `file`, `memory`; key prefix; file dir) |
+| `IMAGE_PROVIDER`, `OPENAI_API_KEY`, `GEMINI_API_KEY` | Loser of the Week images (phase 2, default `none`) |
+
+## Layout
+
+```
+app/                 pages (UI agent), app/api (ops agent)
+components/          UI components (UI agent)
+config/managers.ts   the ten managers (first name <-> Sleeper username)
+lib/                 shared data layer (frozen) + agent folders: models/, facts/, roast/, jobs/, email/
+scripts/             fetch-fixtures.ts
+tests/               vitest; tests/helpers/fixtures.ts for fixture access
+docs/                SITE_SPEC.md, CONTRACTS.md, DEV.md
+```

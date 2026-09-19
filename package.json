@@ -7,6 +7,7 @@
   },
   "scripts": {
     "dev": "next dev",
+    "dev:rt": "DATA_SOURCE=fixtures LEAGUE_ID=$(node -p \"require('./fixtures/manifest.json').rt.leagueId\") next dev",
     "build": "next build",
     "start": "next start",
     "lint": "eslint",

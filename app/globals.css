@@ -1,0 +1,15 @@
+@import "tailwindcss";
+
+/* Foundation placeholder tokens. OWNER: UI agent (replace freely). */
+@theme inline {
+  --color-paper: #fbfaf7;
+  --color-ink: #16161a;
+  --color-navy: #003594;
+  --color-gold: #ffb81c;
+  --color-alarm: #c8102e;
+}
+
+body {
+  background: var(--color-paper);
+  color: var(--color-ink);
+}
