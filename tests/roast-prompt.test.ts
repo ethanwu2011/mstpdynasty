@@ -10,7 +10,7 @@ import { buildRoastRequest, ROAST_MAX_TOKENS, ROAST_MODEL } from "@/lib/roast/ll
 import { userMessage } from "@/lib/roast";
 import { planItem } from "@/lib/roast/items";
 import { AllowedNumbers, checkText, parseSlots } from "@/lib/roast/postcheck";
-import { ANNOUNCE_TERMS, BANNED_FILLER, BANNED_SHAPES } from "@/lib/roast/banned";
+import { ANNOUNCE_TERMS, BANNED_FILLER, BANNED_SHAPES, STAT_WORDS, THEME_TERMS } from "@/lib/roast/banned";
 import { MANAGERS } from "@/config/managers";
 import { MSTP_LEAGUE_ID } from "@/lib/env";
 import { draftFacts, tnfFacts, transactionFacts, weeklyFacts } from "@/lib/facts";
@@ -22,7 +22,7 @@ import type { DailyRoastFacts, PowerRankings, SimResult, TradeFact } from "@/lib
 import { hasFixtures, loadManifest, rtLeagueId } from "./helpers/fixtures";
 import { ref } from "./facts-synthetic";
 
-const PROMPT_SHA256 = "5347559afaa5822e088e153479f736e0d5b3523f2445b273bf48da655b072948";
+const PROMPT_SHA256 = "9c57d4b322cba899f871d79798e45b0eada1b618c17b4f40dce391dcd9450d02";
 
 const trade = (id: string, net: number): TradeFact => ({
   kind: "trade",
@@ -70,7 +70,7 @@ describe("the system prompt", () => {
     const re = /FACTS:\n(\{.*\})\nLORE:\n(\{.*\})\nReply:\n([\s\S]*?)(?=\n\nExample \d|\n?$)/g;
     const examples = [...SYSTEM_PROMPT.matchAll(re)];
     expect(examples.map((e) => [...parseSlots(e[3]).keys()])).toEqual([
-      ["dek", "cold-open", "d-5", "d-2", "d-3", "d-10", "d-4", "d-8", "closer"],
+      ["dek", "cold-open", "allusion", "d-2", "d-10", "d-5", "d-4", "d-3", "d-8", "closer"],
       ["m-3"],
       ["dek"],
       ["roast"],
@@ -89,7 +89,13 @@ describe("the system prompt", () => {
         expect(text).not.toMatch(/\bnot\b[^.]*,\s*(?:it|that|he)\s+(?:is|was)\b/i);
         if (id === "roast") expect(checked.sentences).toBeLessThanOrEqual(3);
         if (id === "dek") expect(text.split(/\s+/).length).toBeLessThanOrEqual(14);
-        if (id === "cold-open") expect(checked.sentences).toBeLessThanOrEqual(7);
+        if (id === "cold-open") {
+          // Two paragraphs, the history coming back inside the proof (the approved Daily's shape).
+          expect(checked.sentences).toBeGreaterThanOrEqual(6);
+          expect(checked.sentences).toBeLessThanOrEqual(12);
+          expect(text.split(/\n{2,}/)).toHaveLength(2);
+          expect(text).toMatch(/at least had .* as an excuse/);
+        }
       }
     }
   });
@@ -100,6 +106,19 @@ describe("the system prompt", () => {
 
   it("lists the same banned words and shapes the post-check enforces", () => {
     for (const t of [...BANNED_FILLER, ...BANNED_SHAPES, ...ANNOUNCE_TERMS]) expect(SYSTEM_PROMPT).toContain(t.label);
+  });
+
+  it("lists every stat word and theme word the post-check uses, so no slot dies on a word the writer never saw", () => {
+    const rule1 = SYSTEM_PROMPT.slice(SYSTEM_PROMPT.indexOf("\n1. League numbers are exact."), SYSTEM_PROMPT.indexOf("\n2. History"));
+    for (const w of STAT_WORDS) expect(rule1).toContain(w.label);
+    const rule6 = SYSTEM_PROMPT.slice(SYSTEM_PROMPT.indexOf("\n6. No medical"), SYSTEM_PROMPT.indexOf("\n7. Names."));
+    for (const t of THEME_TERMS) expect(rule6).toContain(t.label);
+  });
+
+  it("never bans a history by name, and reads PREVIOUS instead", () => {
+    expect(SYSTEM_PROMPT).not.toMatch(/Napoleon/);
+    expect(SYSTEM_PROMPT).toContain("PREVIOUS allusions");
+    expect(SYSTEM_PROMPT).toContain("Example lines are shapes.");
   });
 });
 

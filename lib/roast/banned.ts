@@ -193,7 +193,9 @@ export const THEME_TERMS: BannedTerm[] = [
   term("white coat"),
   term("pager"),
   term("intern", "interns?"),
-  term("resident", "residents?|residency"),
+  // Not plain "resident": "the residents fled the city" is history, not the theme.
+  term("residency"),
+  term("chief resident"),
   term("med school"),
   term("medical school"),
   term("med student"),
@@ -246,6 +248,77 @@ export const BOX_SCORE_TERMS: BannedTerm[] = [
 
 /** "<number> catches" style counts (only with a number in front: "targets" alone is a verb). */
 export const COUNTED_STATS = ["catches", "carries", "targets", "snaps", "touches", "completions"];
+
+/**
+ * Words that make a nearby number a league stat (postcheck.ts `isLeagueStat`). The prompt lists
+ * every label, so the writer can see each word that turns a history number into a checked one.
+ * "straight", "minutes" and "place" are left out on purpose: streaks and pick times have their
+ * own checks, digit ordinals ("10th place") are stats anyway, and "took place in 1854" is history.
+ */
+export const STAT_WORDS: Array<{ label: string; source: string }> = [
+  { label: "points", source: "points?" },
+  { label: "pts", source: "pts" },
+  { label: "score", source: "scor(?:e|es|ed|ing)" },
+  { label: "put up", source: "put\\s+up" },
+  { label: "posted", source: "posted" },
+  { label: "projected", source: "projected" },
+  { label: "projection", source: "projections?" },
+  { label: "optimal", source: "optimal" },
+  { label: "bench", source: "bench(?:ed)?" },
+  { label: "pick", source: "picks?" },
+  { label: "picked", source: "picked" },
+  { label: "spot", source: "spots?" },
+  { label: "reach", source: "reach(?:ed|es)?" },
+  { label: "steal", source: "steals?" },
+  { label: "rank", source: "rank(?:s|ed|ing)?" },
+  { label: "overall", source: "overall" },
+  { label: "round", source: "rounds?" },
+  { label: "record", source: "record" },
+  { label: "win", source: "wins?" },
+  { label: "loss", source: "loss(?:es)?" },
+  { label: "lost by", source: "lost\\s+by" },
+  { label: "won by", source: "won\\s+by" },
+  { label: "game", source: "games?" },
+  { label: "streak", source: "streak" },
+  { label: "in a row", source: "in\\s+a\\s+row" },
+  { label: "week", source: "weeks?" },
+  { label: "season", source: "seasons?" },
+  { label: "all-play", source: "all-play" },
+  { label: "FAAB", source: "faab" },
+  { label: "dollars", source: "dollars?" },
+  { label: "bucks", source: "bucks?" },
+  { label: "bid", source: "bids?" },
+  { label: "paid", source: "paid" },
+  { label: "pay", source: "pays?" },
+  { label: "overpay", source: "overpa\\w*" },
+  { label: "spent", source: "spent" },
+  { label: "cost", source: "costs?" },
+  { label: "worth", source: "worth" },
+  { label: "value", source: "value[sd]?" },
+  { label: "FantasyCalc", source: "fantasycalc" },
+  { label: "net", source: "net" },
+  { label: "grade", source: "grade" },
+  { label: "age", source: "age[sd]?" },
+  { label: "year-old", source: "year-olds?" },
+  { label: "years old", source: "years?\\s+old" },
+  { label: "QB", source: "qbs?" },
+  { label: "RB", source: "rbs?" },
+  { label: "WR", source: "wrs?" },
+  { label: "TE", source: "tes?" },
+  { label: "FLEX", source: "flex" },
+  { label: "quarterback", source: "quarterbacks?" },
+  { label: "running back", source: "running\\s+backs?" },
+  { label: "receiver", source: "receivers?" },
+  { label: "wideout", source: "wideouts?" },
+  { label: "tight end", source: "tight\\s+ends?" },
+  { label: "percent", source: "percent" },
+  { label: "odds", source: "odds" },
+  { label: "playoffs", source: "playoffs?" },
+  { label: "title", source: "title" },
+  { label: "margin", source: "margin" },
+  { label: "hours", source: "hours?" },
+  { label: "clock", source: "clock" },
+];
 
 /** All-caps words (3+ letters) that are ordinary league shorthand, not shouting. */
 export const CAPS_ALLOWED = new Set(["FAAB", "PPR", "NFL", "TNF", "MNF", "SNF", "ADP", "IDP", "FLEX", "IR"]);

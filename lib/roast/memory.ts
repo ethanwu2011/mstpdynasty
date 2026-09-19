@@ -7,9 +7,11 @@
  */
 import { listOddsSnapshots } from "@/lib/archive";
 import { draftFacts, loserOfTheWeekCounts, shameEntries } from "@/lib/facts";
+import { rosterForPick } from "@/lib/facts/draft";
+import { getDraftTradedPicks } from "@/lib/sleeper";
 import { getFantasyCalc } from "@/lib/fantasycalc";
 import { getWinProbabilities } from "@/lib/models";
-import type { DraftPickFact, FantasyCalcValue, IssueFacts, LeagueContext, ShameEntry } from "@/lib/types";
+import type { DraftPickFact, FantasyCalcValue, IssueFacts, LeagueContext, ShameEntry, SleeperTradedPick } from "@/lib/types";
 import { pickLabel, r1 } from "./format";
 import { EMPTY_MEMORY, starterCounts, type DraftContext, type PayloadMemory } from "./memory-shape";
 
@@ -136,6 +138,14 @@ export async function issueMemory(facts: IssueFacts, ctx: LeagueContext): Promis
       roundsLeft: Math.max(0, df.rounds - o.round + 1),
       ...(df.resumesAt ? { resumesAt: df.resumesAt } : {}),
     };
+    // Each manager's own picks still to make, following traded picks (so "30 picks left" is his).
+    const traded = await safe("traded picks", () => getDraftTradedPicks(d.draft_id), [] as SleeperTradedPick[]);
+    const left: Record<number, number> = {};
+    for (let n = o.pickNo; n <= df.rounds * teams; n++) {
+      const rid = rosterForPick(d, n, traded);
+      if (rid !== null) left[rid] = (left[rid] ?? 0) + 1;
+    }
+    mem.picksLeft = left;
   }
   return mem;
 }

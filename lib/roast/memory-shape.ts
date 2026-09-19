@@ -34,6 +34,8 @@ export interface PayloadMemory {
    * long anyone has been on the clock: the site does not know when a pick was made.
    */
   onTheClock: { manager: string; team: string; pick: string; roundsLeft: number; resumesAt?: string } | null;
+  /** The Daily while the draft is live: rosterId -> his own picks still to make (traded picks followed). */
+  picksLeft?: Record<number, number>;
   /** The commissioner's first name, so the writer knows who never gets spared. */
   commissioner: string | null;
   /** Starting lineup slots per position ({ QB: 2, TE: 1, FLEX: 3 }), for draft issues. */

@@ -261,7 +261,8 @@ by calling `runTick()`; the ops agent owns what it does.
 - `DraftFacts { draftId, status, startTime, rounds, teams, picks: DraftPickFact[], onTheClock, positionRuns, grades, placeholder }`.
 - `TnfFacts { week, games, players: TnfPlayerFact[], teams, placeholder }`.
 - `ShameBoard { entries: ShameEntry[], placeholder }`.
-- `Issue { id, slug, kind, leagueId, season, week, date, title, dek, dekSource?, sections: IssueSection[], factsOnly, note, status, createdAt, sentAt, recipientCount, model, usage, imageUrl, placeholder }`.
+- `Issue { id, slug, kind, leagueId, season, week, date, title, dek, dekSource?, sections: IssueSection[], factsOnly, note, status, createdAt, sentAt, recipientCount, model, usage, imageUrl, placeholder, writerNotes? }`.
+  `writerNotes { allusion, closer, lines }` is never rendered: it tells later issues which history, closer and short lines not to reuse.
   `dekSource: "model"` means the dek is also the email subject; a `"code"` dek gets "Title, week N:" in front.
 - `Roast { id, kind, leagueId, rosterIds, text, facts, source, model, createdAt, usage }`.
 - `IssueFacts = DailyRoastFacts | ThursdayFalloutFacts | WeeklyRoastFacts | DraftGradesFacts`.

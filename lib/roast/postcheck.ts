@@ -10,17 +10,23 @@
  *         player name. Any other number is history or hyperbole ("1812", "six hundred thousand
  *         men", "200,000 miles") and is free.
  *       ties a FACTS number to the wrong person (decimals and numbers of 20 or more must sit in
- *         the same sentence as, or right after, a name from the same part of FACTS)
+ *         the same sentence as, or right after, a name from the same part of FACTS; "the
+ *         commissioner" counts as naming him)
+ *       makes an exact claim that is not that value: "17 spots early" or "a steal of 12" (that
+ *         pick's reach), "age 29", "the 11th guy on the board" (fcRank), "has no quarterback"
+ *         (his count at the position), "30 picks left" (his picksLeft), a time of day
+ *         (onTheClock.resumesAt) or "round 5 opens" (the round in onTheClock.pick)
  *       claims a streak nobody named there has
  *       writes a score-like pair ("28-6") that FACTS does not contain word for word
  *       uses a box-score word FACTS never carries (touchdowns, yards, "7 catches"...)
  *       claims how long someone took to pick (FACTS has no pick times)
  *       uses the medical / school theme, a slur, banned filler, a word that announces the joke,
- *         a banned joke shape, or shouts in caps
+ *         a banned joke shape, or shouts in caps (an issue may pass one short all-caps rant
+ *         sentence through CheckOptions.caps)
  *   Profanity is allowed. Callers decide what a flagged sentence means (issues and items
  *   reject the whole slot).
  */
-import { ANNOUNCE_TERMS, BANNED_FILLER, BANNED_SHAPES, BOX_SCORE_TERMS, CAPS_ALLOWED, CLOCK_CLAIMS, COUNTED_STATS, SLUR_TERMS, THEME_TERMS, type BannedTerm } from "./banned";
+import { ANNOUNCE_TERMS, BANNED_FILLER, BANNED_SHAPES, BOX_SCORE_TERMS, CAPS_ALLOWED, CLOCK_CLAIMS, COUNTED_STATS, SLUR_TERMS, STAT_WORDS, THEME_TERMS, type BannedTerm } from "./banned";
 import { noLongDashes } from "./format";
 
 /* ------------------------------------------------------------------ */
@@ -192,78 +198,8 @@ const NAME_MARK = "\u0001";
 /** How many words on each side of a number decide whether it is a league stat. */
 export const STAT_WINDOW = 5;
 
-/**
- * Words that make a nearby number a league stat. Hyperbole never needs them: "six hundred
- * thousand men", "200,000 miles", "in 1812".
- */
-const STAT_WORDS = [
-  "points?",
-  "pts",
-  "scor(?:e|es|ed|ing)",
-  "put\\s+up",
-  "posted",
-  "projected",
-  "projections?",
-  "optimal",
-  "bench(?:ed)?",
-  "picks?",
-  "picked",
-  "spots?",
-  "reach(?:ed|es)?",
-  "steals?",
-  "rank(?:s|ed|ing)?",
-  "overall",
-  "place",
-  "rounds?",
-  "record",
-  "wins?",
-  "loss(?:es)?",
-  "lost\\s+by",
-  "won\\s+by",
-  "games?",
-  "straight",
-  "streak",
-  "in\\s+a\\s+row",
-  "weeks?",
-  "seasons?",
-  "all-play",
-  "faab",
-  "dollars?",
-  "bucks?",
-  "bids?",
-  "paid",
-  "pays?",
-  "overpa\\w*",
-  "spent",
-  "costs?",
-  "worth",
-  "value[sd]?",
-  "fantasycalc",
-  "net",
-  "grade",
-  "age[sd]?",
-  "year-olds?",
-  "years?\\s+old",
-  "qbs?",
-  "rbs?",
-  "wrs?",
-  "tes?",
-  "flex",
-  "quarterbacks?",
-  "running\\s+backs?",
-  "receivers?",
-  "wideouts?",
-  "tight\\s+ends?",
-  "percent",
-  "odds",
-  "playoffs?",
-  "title",
-  "margin",
-  "hours?",
-  "minutes?",
-  "clock",
-];
-const STAT_CONTEXT_RE = new RegExp(`(?<![a-z0-9])(?:${STAT_WORDS.join("|")})(?![a-z0-9])`, "i");
+/** A stat word (lib/roast/banned.ts STAT_WORDS; the prompt lists the same words). Hyperbole never needs one. */
+const STAT_CONTEXT_RE = new RegExp(`(?<![a-z0-9])(?:${STAT_WORDS.map((w) => w.source).join("|")})(?![a-z0-9])`, "i");
 
 /**
  * Whether the number at `h` in `text` (names already replaced by NAME_MARK) reads as a league
@@ -335,6 +271,24 @@ interface Streak {
   names: NameRef[];
 }
 
+/** FACTS keys whose values a specific claim shape must match exactly (see `badClaimsIn`). */
+type ClaimKey = "reach" | "fcRank" | "age" | "picksLeft" | "roundsLeft" | "posCount";
+
+/** One FACTS value a claim can be checked against. */
+interface ClaimRecord {
+  key: ClaimKey;
+  /** Absolute value (a steal of 12 is written "12 spots late"). */
+  n: number;
+  /** Who the value is about: the player for reach, fcRank and age; the manager for counts. */
+  subject: NameRef | null;
+  /** Every name the value sits under in FACTS, the subject included. */
+  chain: NameRef[];
+  /** Position, for position counts ("QB"). */
+  pos?: string;
+}
+
+const COUNT_POSITIONS = ["QB", "RB", "WR", "TE"];
+
 /**
  * Everything the checks need from FACTS and LORE: the allowed numbers (with their roundings),
  * which names each number belongs to, every name (to keep "A.J. Brown" in one sentence), and
@@ -350,6 +304,14 @@ export class AllowedNumbers {
   /** Player surnames as written ("Brown" for "A.J. Brown"), matched case-sensitively. */
   private readonly surnames: string[];
   private readonly streaks: Streak[] = [];
+  /** Values that claim shapes ("17 spots early", "age 29", "30 picks left") must match exactly. */
+  private readonly claims: ClaimRecord[] = [];
+  /** The round in onTheClock.pick: the only round that "resumes" or "opens". */
+  private readonly clockRounds: number[] = [];
+  /** Times of day FACTS/LORE states ("8 AM ET"), normalized like "8:00am". */
+  private readonly times: Set<string>;
+  /** The commissioner's first name (FACTS "commissioner"): "the commissioner" in a sentence names him. */
+  private commissioner: string | null = null;
   /** FACTS and LORE text, for word-for-word checks. */
   readonly text: string;
 
@@ -372,6 +334,116 @@ export class AllowedNumbers {
     }
     this.nameList = [...names].sort((a, b) => b.length - a.length);
     this.surnames = [...surnames].filter((x) => !names.has(x)).sort((a, b) => b.length - a.length);
+    this.times = new Set(clockTimesIn(this.text).map((t) => t.norm));
+  }
+
+  /** `text` lowercased for name matching, with "the commissioner" standing for his first name. */
+  private scope(text: string): string {
+    const t = text.toLowerCase().replace(/\u2019/g, "'");
+    return this.commissioner ? t.replace(/\b(?:the\s+)?commissioner\b/g, this.commissioner.toLowerCase()) : t;
+  }
+
+  /** The claimable values on one FACTS object (a pick, a player, a manager's draft so far). */
+  private recordClaims(obj: Record<string, unknown>, chain: NameRef[]): void {
+    const str = (v: unknown) => (typeof v === "string" && v.trim() ? v.trim() : null);
+    const nested = obj.player && typeof obj.player === "object" ? (obj.player as Record<string, unknown>) : null;
+    const playerName = str(obj.player) ?? str(nested?.name) ?? str(obj.name);
+    const player = playerName ? nameRef(playerName, true) : null;
+    const managerName = str(obj.manager);
+    const manager = managerName ? nameRef(managerName, false) : null;
+    const withPlayer = player && !chain.some((r) => r.full === player.full) ? [...chain, player] : chain;
+    const add = (key: ClaimKey, v: unknown, subject: NameRef | null, pos?: string) => {
+      if (typeof v === "number" && Number.isFinite(v)) this.claims.push({ key, n: Math.abs(v), subject, chain: key === "roundsLeft" ? [] : withPlayer, ...(pos ? { pos } : {}) });
+    };
+    add("reach", obj.reach, player);
+    add("fcRank", obj.fcRank, player);
+    add("age", obj.age, player);
+    add("picksLeft", obj.picksLeft, manager);
+    add("roundsLeft", obj.roundsLeft, null);
+    const pos = str(nested?.pos) ?? str(obj.pos);
+    if (manager && pos) add("posCount", obj.posCountForManager, manager, pos.toUpperCase());
+    const byPos = obj.byPosition;
+    if (manager && byPos && typeof byPos === "object" && !Array.isArray(byPos)) {
+      const counts = byPos as Record<string, unknown>;
+      for (const p of new Set([...COUNT_POSITIONS, ...Object.keys(counts)])) add("posCount", typeof counts[p] === "number" ? counts[p] : 0, manager, p.toUpperCase());
+    }
+  }
+
+  /**
+   * The FACTS values a claim in `sentence` can be about: values on a player named there whose
+   * manager or team is named too, else anything about a player or manager named there, else
+   * the same in the sentence before. Null when FACTS has no such values at all (nothing to
+   * check), [] when no name is in reach (history, or a claim floating free of its owner).
+   */
+  private claimCandidates(key: ClaimKey, sentence: string, previous: string, pos?: string): ClaimRecord[] | null {
+    const recs = this.claims.filter((r) => r.key === key && (pos === undefined || r.pos === pos));
+    if (!recs.length) return null;
+    // A count (picks left, players at a position) belongs to one manager: only his own name counts.
+    const managerOnly = key === "posCount" || key === "picksLeft";
+    for (const scope of [sentence, previous]) {
+      const t = this.scope(scope);
+      if (!t.trim()) continue;
+      const named = (r: ClaimRecord) => r.subject !== null && mentions(t, r.subject);
+      if (managerOnly) {
+        const own = recs.filter(named);
+        if (own.length) return own;
+        continue;
+      }
+      const owner = (r: ClaimRecord) => r.chain.some((ref) => ref !== r.subject && ref.full !== r.subject?.full && mentions(t, ref));
+      const both = recs.filter((r) => named(r) && owner(r));
+      if (both.length) return both;
+      const loose = recs.filter((r) => named(r) || r.chain.some((ref) => mentions(t, ref)));
+      if (loose.length) return loose;
+    }
+    return [];
+  }
+
+  /**
+   * Claims whose exact value FACTS pins down, checked against the value itself rather than
+   * "the number is somewhere in FACTS": spot counts must be that pick's reach, ages that
+   * player's age, FantasyCalc ranks that player's rank, picks or rounds left that manager's
+   * picksLeft (or onTheClock.roundsLeft), position counts that manager's count, a time of day
+   * onTheClock.resumesAt, and a round that opens or resumes the round in onTheClock.pick.
+   */
+  badClaimsIn(sentence: string, previous = ""): string[] {
+    const out: string[] = [];
+    const check = (what: string, n: number, key: ClaimKey, extra: number[] = [], pos?: string) => {
+      const c = this.claimCandidates(key, sentence, previous, pos);
+      if (c === null || !c.length) return;
+      const ok = [...new Set([...c.map((r) => r.n), ...extra])];
+      if (!ok.some((v) => eq(v, n))) out.push(`"${what}" does not match FACTS (${ok.sort((a, b) => a - b).join(" or ")})`);
+    };
+    for (const m of claimMatches(sentence, SPOT_CLAIMS)) check(m.text, m.n, "reach");
+    for (const m of claimMatches(sentence, AGE_CLAIMS)) check(m.text, m.n, "age");
+    for (const m of claimMatches(sentence, RANK_CLAIMS)) check(m.text, m.n, "fcRank");
+    for (const m of claimMatches(sentence, POS_CLAIMS)) {
+      const pos = positionCode(m.extra ?? "");
+      if (!pos) continue;
+      check(m.text, m.n, "posCount", [], pos);
+    }
+    for (const m of claimMatches(sentence, LEFT_CLAIMS)) {
+      const rounds = this.claims.filter((r) => r.key === "roundsLeft").map((r) => r.n);
+      const mine = this.claimCandidates("picksLeft", sentence, previous);
+      if (mine === null && !rounds.length) continue;
+      // A named manager's picks (or rounds) left are his own; with nobody named, the draft's rounds left.
+      const ok = mine && mine.length ? mine.map((r) => r.n) : /round/i.test(m.extra ?? "") ? rounds : [];
+      if (!ok.some((v) => eq(v, m.n))) out.push(`"${m.text}" does not match FACTS (${ok.length ? ok.join(" or ") : "no such count"})`);
+    }
+    for (const m of claimMatches(sentence, ROUND_CLAIMS)) {
+      if (!this.clockRounds.some((r) => r === m.n)) out.push(`"${m.text}" is not the round on the clock (${this.clockRounds.join(" or ") || "none"})`);
+    }
+    const times = clockTimesIn(sentence);
+    if (times.length && (this.markNames(sentence).includes(NAME_MARK) || DRAFT_TIME_CONTEXT.test(sentence))) {
+      for (const t of times) {
+        if (!this.times.has(t.norm)) out.push(`"${t.text}" is not a time FACTS gives${this.times.size ? "" : " (FACTS has none)"}`);
+      }
+    }
+    return out;
+  }
+
+  /** Whether `text` names anyone in FACTS (a manager, team or player). */
+  namesSomeone(text: string): boolean {
+    return this.markNames(text).includes(NAME_MARK);
   }
 
   private record(n: number, chain: NameRef[]): void {
@@ -398,6 +470,7 @@ export class AllowedNumbers {
     const own: NameRef[] = [];
     for (const [k, v] of Object.entries(obj)) {
       if (typeof v !== "string" || !v.trim()) continue;
+      if (k === "commissioner" && !this.commissioner) this.commissioner = v.trim();
       if (NAME_KEYS.has(k)) {
         const isPlayer = k === "name" || k === "player";
         own.push(nameRef(v, isPlayer));
@@ -410,14 +483,24 @@ export class AllowedNumbers {
         }
       } else if (REF_KEYS.has(k)) names.add(v.trim());
     }
+    // A pick's own numbers (its label, pick number, rank, reach) belong to the player it took too.
+    const nested = obj.player && typeof obj.player === "object" && !Array.isArray(obj.player) ? (obj.player as Record<string, unknown>).name : undefined;
+    if (typeof nested === "string" && nested.trim()) own.push(nameRef(nested, true));
     const here = own.length ? [...chain, ...own] : chain;
+    this.recordClaims(obj, here);
     for (const [k, v] of Object.entries(obj)) {
       if (typeof v === "string" && (NAME_KEYS.has(k) || REF_KEYS.has(k))) continue;
+      if (k === "onTheClock" && v && typeof v === "object") {
+        const pick = (v as Record<string, unknown>).pick;
+        const round = typeof pick === "string" ? Number(/^(\d+)\./.exec(pick)?.[1]) : NaN;
+        if (Number.isInteger(round)) this.clockRounds.push(round);
+      }
       if (k === "streak" && typeof v === "string") {
         const m = /^(\d+)[WLT]$/.exec(v);
         if (m) this.streaks.push({ count: Number(m[1]), names: here });
       }
-      this.walk(v, here, names, surnames);
+      // Rounds left belong to the whole draft, not to the manager on the clock.
+      this.walk(v, k === "roundsLeft" ? [] : here, names, surnames);
     }
   }
 
@@ -439,6 +522,7 @@ export class AllowedNumbers {
       out = out.replace(new RegExp(`(?<![A-Za-z0-9])${esc(n)}(?![A-Za-z0-9])`, "gi"), mark);
     }
     for (const n of this.surnames) out = out.replace(new RegExp(`(?<![A-Za-z0-9])${esc(n)}(?![A-Za-z0-9])`, "g"), mark);
+    if (this.commissioner) out = out.replace(/(?<![A-Za-z0-9])(?:the\s+)?commissioner(?![A-Za-z0-9])/gi, mark);
     return out;
   }
 
@@ -469,7 +553,7 @@ export class AllowedNumbers {
    * (ranks, counts, weeks) are everywhere.
    */
   unboundIn(sentence: string, previous = ""): number[] {
-    const scope = `${previous}\n${sentence}`.toLowerCase().replace(/\u2019/g, "'");
+    const scope = this.scope(`${previous}\n${sentence}`);
     const out: number[] = [];
     for (const n of this.statNumbersIn(sentence)) {
       if (Number.isInteger(n) && n < 20) continue;
@@ -484,7 +568,7 @@ export class AllowedNumbers {
 
   /** Streak claims ("lost 4 straight", "third straight loss") no team named there has. */
   badStreaksIn(sentence: string, previous = ""): number[] {
-    const scope = `${previous}\n${sentence}`.toLowerCase().replace(/\u2019/g, "'");
+    const scope = this.scope(`${previous}\n${sentence}`);
     return streakClaims(sentence).filter((n) => !this.streaks.some((s) => s.count === n && s.names.some((ref) => mentions(scope, ref))));
   }
 }
@@ -539,6 +623,129 @@ export function shoutingIn(sentence: string, exempt: string): string[] {
     const w = m[0];
     if (CAPS_ALLOWED.has(w) || new RegExp(`(?<![A-Za-z0-9])${w}(?![A-Za-z0-9])`).test(exempt)) continue;
     out.push(w);
+  }
+  return out;
+}
+
+/* ------------------------------------------------------------------ */
+/* exact claims (spots, ages, ranks, counts, picks left, times, rounds) */
+/* ------------------------------------------------------------------ */
+
+const CARD_WORDS = [...TEN_WORDS.map((t) => `${t}(?:[-\\s](?:${UNIT_WORDS.slice(0, 9).join("|")}))?`), ...UNIT_WORDS, "zero"];
+/** A cardinal as a claim writes it: "1,200", "17", "seventeen", "twenty-four" (never part of a decimal or pick label). */
+const CARD = `\\d{1,3}(?:,\\d{3})+(?![\\d.])|\\d+(?!\\d|[.,]\\d)|(?:${CARD_WORDS.join("|")})(?![a-z])`;
+/** An ordinal: "11th", "eleventh". */
+const ORD = `\\d+(?:st|nd|rd|th)(?![a-z])|(?:${ORDINAL_WORDS.join("|")})(?![a-z])`;
+const POS_WORDS = "quarterbacks?|qbs?|running\\s+backs?|rbs?|(?:wide\\s+)?receivers?|wideouts?|wrs?|tight\\s+ends?|tes?";
+const NOT_A_POSITION = "(?!\\s*(?:quarterback|qb|running|rb|receiver|wr|wide|tight|te)s?\\b)";
+const HIS = "(?:his|her|their|fantasycalc(?:['’]s)?)";
+
+interface ClaimShape {
+  re: RegExp;
+  /** Capture groups that may hold the number (the first one that matched is used). */
+  groups: number[];
+  /** Capture group with the thing counted (a position, "picks" or "rounds"). */
+  extra?: number;
+}
+
+/** "17 spots early", "an 11-spot reach", "reached 11 spots", "a steal of 12": a pick's reach. */
+const SPOT_CLAIMS: ClaimShape[] = [
+  {
+    re: new RegExp(`\\b(${CARD})(?:\\s+|-)spots?\\s+(?:too\\s+)?(?:early|late|deep|high|higher|sooner|reach|steal|before\\s+${HIS}|ahead\\s+of\\s+${HIS}|past\\s+${HIS})\\b`, "gi"),
+    groups: [1],
+  },
+  { re: new RegExp(`\\breach(?:ed|es|ing)?\\s+(?:of\\s+|by\\s+)?(${CARD})\\b`, "gi"), groups: [1] },
+  { re: new RegExp(`\\bsteal\\s+of\\s+(${CARD})\\b`, "gi"), groups: [1] },
+  { re: new RegExp(`\\bfell\\s+(${CARD})\\s+spots?\\b`, "gi"), groups: [1] },
+];
+
+/** "age 29", "a 30-year-old": that player's age. */
+const AGE_CLAIMS: ClaimShape[] = [
+  { re: new RegExp(`\\bage[sd]?\\s+(${CARD})\\b`, "gi"), groups: [1] },
+  { re: new RegExp(`\\b(${CARD})(?:-|\\s+)years?(?:-|\\s+)old\\b`, "gi"), groups: [1] },
+];
+
+/** "the 11th guy on the board", "FantasyCalc's number one", "a receiver FantasyCalc ranks 31st": that player's fcRank. */
+const RANK_CLAIMS: ClaimShape[] = [
+  {
+    re: new RegExp(`\\b(${ORD})[-\\s]+(?:best\\s+|ranked\\s+)?(?:guy|player|man|name|option)\\s+(?:on|in)\\s+(?:the|his|fantasycalc(?:['’]s)?)\\s+(?:big\\s+)?(?:board|list|rankings)\\b`, "gi"),
+    groups: [1],
+  },
+  { re: new RegExp(`\\bfantasycalc(?:['’]s)?\\s+(?:number\\s+(${CARD})|no\\.\\s*(\\d+)|#\\s*(\\d+))${NOT_A_POSITION}`, "gi"), groups: [1, 2, 3] },
+  { re: new RegExp(`\\bfantasycalc(?:['’]s)?\\s+(${ORD})[-\\s]best\\b${NOT_A_POSITION}`, "gi"), groups: [1] },
+  { re: new RegExp(`\\bfantasycalc\\s+ranks?\\s+(?:him\\s+|them\\s+|it\\s+)?(${ORD}|${CARD})(?!\\s+(?:at|among|in)\\b)`, "gi"), groups: [1] },
+  { re: new RegExp(`\\b(${ORD})-ranked\\b${NOT_A_POSITION}`, "gi"), groups: [1] },
+  { re: new RegExp(`\\bnumber\\s+(${CARD})\\s+(?:player|overall|guy|name)\\b`, "gi"), groups: [1] },
+];
+
+/** "has no quarterback", "owns one quarterback", "his second running back": that manager's count at the position. */
+const POS_CLAIMS: ClaimShape[] = [
+  {
+    re: new RegExp(
+      `\\b(?:has|have|had|owns?|owned|holds?|held|rosters?|rostered|drafted|took|taken|picked|carries|carrying|got|gets)\\s+(?:only\\s+|just\\s+|exactly\\s+|now\\s+|still\\s+)?(${CARD}|no(?![a-z]))\\s+(?:more\\s+|other\\s+|real\\s+|starting\\s+|healthy\\s+)?(${POS_WORDS})\\b`,
+      "gi",
+    ),
+    groups: [1],
+    extra: 2,
+  },
+  { re: new RegExp(`\\bhis\\s+(${ORD})\\s+(${POS_WORDS})\\b`, "gi"), groups: [1], extra: 2 },
+];
+
+/** "30 picks left", "31 rounds to go": that manager's picksLeft, or the draft's roundsLeft. */
+const LEFT_CLAIMS: ClaimShape[] = [
+  { re: new RegExp(`\\b(${CARD})\\s+(?:more\\s+)?(picks?|rounds?|chances|tries|shots)\\s+(?:left|to\\s+go|remaining)\\b`, "gi"), groups: [1], extra: 2 },
+];
+
+/** "Round 5 opens", "resumes with round 4": only the round in onTheClock.pick opens or resumes. */
+const ROUND_VERBS = "opens|open|starts|start|begins|begin|resumes|resume|restarts|restart|continues|kicks\\s+off|picks\\s+up|gets\\s+going|is\\s+back";
+const ROUND_CLAIMS: ClaimShape[] = [
+  { re: new RegExp(`\\bround\\s+(${CARD})\\s+(?:will\\s+)?(?:${ROUND_VERBS})\\b`, "gi"), groups: [1] },
+  { re: new RegExp(`\\b(?:${ROUND_VERBS})\\s+(?:with\\s+|at\\s+|in\\s+)?round\\s+(${CARD})\\b`, "gi"), groups: [1] },
+  { re: new RegExp(`\\b(${ORD})\\s+round\\s+(?:will\\s+)?(?:${ROUND_VERBS})\\b`, "gi"), groups: [1] },
+];
+
+/** A sentence about the draft or a league member, so a time of day in it is a league claim, not history. */
+const DRAFT_TIME_CONTEXT = /\b(?:picks?|draft(?:ing)?|resum\w*|rounds?|clock|opens?|starts?)\b/i;
+
+/** The number a claim token spells: "17", "11th", "seventeen", "twenty-four", "no". */
+function claimNumber(token: string): number | null {
+  const t = token.toLowerCase().replace(/,/g, "").trim();
+  if (/^\d+(?:st|nd|rd|th)?$/.test(t)) return parseInt(t, 10);
+  if (t === "no" || t === "zero") return 0;
+  const parts = t.split(/[-\s]+/);
+  if (parts.length === 2 && TENS.has(parts[0]) && UNITS.has(parts[1])) return TENS.get(parts[0])! + UNITS.get(parts[1])!;
+  return UNITS.get(t) ?? TENS.get(t) ?? ORDINALS.get(t) ?? null;
+}
+
+function claimMatches(sentence: string, shapes: ClaimShape[]): Array<{ text: string; n: number; extra?: string }> {
+  const out: Array<{ text: string; n: number; extra?: string }> = [];
+  for (const shape of shapes) {
+    for (const m of sentence.matchAll(new RegExp(shape.re.source, shape.re.flags))) {
+      const token = shape.groups.map((g) => m[g]).find((x) => x !== undefined);
+      const n = token === undefined ? null : claimNumber(token);
+      if (n !== null) out.push({ text: m[0].trim(), n, ...(shape.extra ? { extra: m[shape.extra] } : {}) });
+    }
+  }
+  return out;
+}
+
+/** "quarterbacks" -> "QB". */
+function positionCode(word: string): string | null {
+  const w = word.toLowerCase();
+  if (/^(?:quarterback|qb)/.test(w)) return "QB";
+  if (/^(?:running|rb)/.test(w)) return "RB";
+  if (/(?:receiver|wideout|^wr)/.test(w)) return "WR";
+  if (/^(?:tight|te)/.test(w)) return "TE";
+  return null;
+}
+
+/** Times of day ("8 AM", "10:30 p.m."), normalized like "8:00am". */
+export function clockTimesIn(text: string): Array<{ text: string; norm: string }> {
+  const out: Array<{ text: string; norm: string }> = [];
+  for (const m of text.matchAll(/\b(\d{1,2})(?::(\d{2}))?\s*([ap])\.?\s?m\b\.?/gi)) {
+    const h = Number(m[1]);
+    if (h < 1 || h > 12) continue;
+    out.push({ text: m[0].trim(), norm: `${h}:${m[2] ?? "00"}${m[3].toLowerCase()}m` });
   }
   return out;
 }
@@ -645,10 +852,26 @@ export interface CheckedText {
   dropped: Dropped[];
   /** Sentences in the sanitized text, kept or not. */
   sentences: number;
+  /** Whether the text's last sentence (its punchline) was dropped. */
+  lastDropped: boolean;
+  /** All-caps sentences let through on the issue's caps allowance. */
+  capsUsed: number;
 }
 
+export interface CheckOptions {
+  /**
+   * The issue's all-caps allowance (one rant sentence per issue: at most CAPS_RANT_WORDS words,
+   * naming someone in FACTS). Shared across an issue's slots in reading order; items and the
+   * headline pass none, so caps always fail there. Decremented for each sentence it lets through.
+   */
+  caps?: { left: number };
+}
+
+/** The longest all-caps rant sentence the caps allowance lets through. */
+export const CAPS_RANT_WORDS = 10;
+
 /** Flag every sentence that fails a check; `text` holds only the ones that passed. */
-export function checkText(text: string, allowed: AllowedNumbers, exempt = ""): CheckedText {
+export function checkText(text: string, allowed: AllowedNumbers, exempt = "", opts: CheckOptions = {}): CheckedText {
   const paragraphs = sanitize(text).split(/\n{2,}/);
   const keptParas: string[] = [];
   const dropped: Dropped[] = [];
@@ -656,29 +879,40 @@ export function checkText(text: string, allowed: AllowedNumbers, exempt = ""): C
   let kept = 0;
   let total = 0;
   let previous = "";
+  let lastDropped = false;
+  let capsUsed = 0;
   for (const p of paragraphs) {
     const keep: string[] = [];
     for (const s of splitSentences(p.replace(/\n/g, " "), allowed.names)) {
       total++;
       const unknownNumbers = allowed.unknownIn(s);
       const bannedWords = bannedWordsIn(s, wordsExempt);
-      const problems = [
+      const other = [
         ...allowed.unboundIn(s, previous).map((n) => `${n} next to the wrong name`),
         ...allowed.badStreaksIn(s, previous).map((n) => `a streak of ${n} that nobody named there has`),
+        ...allowed.badClaimsIn(s, previous),
         ...pairsNotIn(s, allowed.text).map((x) => `${x} is not in FACTS`),
         ...boxScoreIn(s, wordsExempt).map((w) => `box-score word "${w}"`),
         ...clockClaimsIn(s),
         ...shapesIn(s).map((x) => `the shape "${x}"`),
-        ...shoutingIn(s, wordsExempt).map((w) => `all caps "${w}"`),
       ];
-      if (unknownNumbers.length || bannedWords.length || problems.length) dropped.push({ sentence: s, unknownNumbers, bannedWords, problems });
+      let shout = shoutingIn(s, wordsExempt);
+      const clean = !unknownNumbers.length && !bannedWords.length && !other.length;
+      if (shout.length && clean && opts.caps && opts.caps.left > 0 && s.split(/\s+/).filter(Boolean).length <= CAPS_RANT_WORDS && allowed.namesSomeone(s)) {
+        opts.caps.left--;
+        capsUsed++;
+        shout = [];
+      }
+      const problems = [...other, ...shout.map((w) => `all caps "${w}"`)];
+      lastDropped = Boolean(unknownNumbers.length || bannedWords.length || problems.length);
+      if (lastDropped) dropped.push({ sentence: s, unknownNumbers, bannedWords, problems });
       else keep.push(s);
       previous = s;
     }
     kept += keep.length;
     if (keep.length) keptParas.push(keep.join(" "));
   }
-  return { text: keptParas.join("\n\n"), kept, dropped, sentences: total };
+  return { text: keptParas.join("\n\n"), kept, dropped, sentences: total, lastDropped, capsUsed };
 }
 
 /** One entry per reason, for logs and the retry note. */

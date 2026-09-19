@@ -1,8 +1,8 @@
 /**
  * Draft facts: every pick with FantasyCalc reach/steal, position runs, who is on the clock,
- * when picks resume while the draft is paused (config/draft.ts, never Sleeper's autopause
- * window) and grades once complete. There is no time on the clock: the tick only knows when it
- * first noticed a pick, not when the pick was made.
+ * when picks resume while the draft is paused or in Sleeper's overnight autopause (the time is
+ * always config/draft.ts, never Sleeper's autopause end) and grades once complete. There is no
+ * time on the clock: the tick only knows when it first noticed a pick, not when it was made.
  *
  * Reach = expected pick - pickNo: positive = taken earlier than FantasyCalc says (a reach),
  * negative = the player fell (a steal). (The lib/types.ts comment writes the formula the other
@@ -122,11 +122,30 @@ export function parsePickSeen(raw: unknown, draftId?: string): Map<number, numbe
 }
 
 /**
- * When picks resume, for a draft in this state: the commissioner's time (config/draft.ts) while
- * the draft is paused, otherwise nothing. Never Sleeper's autopause window.
+ * Whether Sleeper's own overnight autopause is on right now. Sleeper keeps the draft "drafting"
+ * through it; the window is in minutes after midnight UTC (180 to 840 is 11 PM to 10 AM EDT) and
+ * may wrap past midnight.
  */
-export function resumesAtFor(status: SleeperDraft["status"]): string | null {
-  return status === "paused" ? DRAFT_RESUMES_LABEL : null;
+export function inAutopause(settings: SleeperDraft["settings"] | null | undefined, now: number): boolean {
+  if (!settings?.autopause_enabled) return false;
+  const start = settings.autopause_start_time;
+  const end = settings.autopause_end_time;
+  if (typeof start !== "number" || typeof end !== "number" || start === end) return false;
+  const d = new Date(now);
+  const m = d.getUTCHours() * 60 + d.getUTCMinutes();
+  return start < end ? m >= start && m < end : m >= start || m < end;
+}
+
+/**
+ * When picks resume, for a draft in this state: the commissioner's time (config/draft.ts) while
+ * the draft is paused, or while Sleeper's overnight autopause is on (pass the draft settings and
+ * the clock), otherwise nothing. The time itself never comes from Sleeper: its autopause ends
+ * at 10 AM, and the league picks again at 8.
+ */
+export function resumesAtFor(status: SleeperDraft["status"], settings?: SleeperDraft["settings"] | null, now = Date.now()): string | null {
+  if (status === "paused") return DRAFT_RESUMES_LABEL;
+  if (status === "drafting" && inAutopause(settings, now)) return DRAFT_RESUMES_LABEL;
+  return null;
 }
 
 export interface DraftEnv {
@@ -261,7 +280,7 @@ export async function computeDraftFacts(loader: FactsLoader): Promise<DraftFacts
     teams,
     picks,
     onTheClock,
-    resumesAt: resumesAtFor(draft.status),
+    resumesAt: resumesAtFor(draft.status, draft.settings, Date.now()),
     positionRuns: positionRuns(picks.map((p) => ({ pickNo: p.pickNo, position: p.player.position }))),
     grades: draft.status === "complete" && picks.length ? draftGrades(ctx, picks) : null,
     placeholder: false,

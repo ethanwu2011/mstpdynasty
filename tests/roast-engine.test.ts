@@ -13,7 +13,7 @@ import { EMPTY_MEMORY, starterCounts } from "@/lib/roast/memory-shape";
 import type { RoastClient } from "@/lib/roast/llm";
 import { planItem } from "@/lib/roast/items";
 import { AllowedNumbers, numbersIn } from "@/lib/roast/postcheck";
-import { saveRoast } from "@/lib/archive";
+import { saveIssue, saveRoast } from "@/lib/archive";
 import * as store from "@/lib/store";
 import { etDate } from "@/lib/time";
 import type {
@@ -230,15 +230,50 @@ describe.skipIf(!hasFixtures())("roastIssue", () => {
     expect(allText(again)).not.toContain("123.45");
   });
 
+  it("after the retry, a slot that lost one sentence in the middle keeps the rest (never when the punchline failed)", async () => {
+    const m = weekly.matchups[0];
+    const bad = goodReply().replace("Nobody looked good.", "It was 123.45 of pain. Nobody looked good.");
+    const { client, calls } = fakeClient([{ text: bad }]);
+    setRoastClient(client);
+    const issue = await roastIssue("weekly_roast", facts, ctx, { now: NOW });
+    expect(calls).toHaveLength(2);
+    const text = allText(issue);
+    expect(text).toContain(`${m.home.team.managerName} and ${m.away.team.managerName} were separated by ${m.margin}. Nobody looked good.`);
+    expect(text).not.toContain("123.45");
+  });
+
+  it("stores what the writer used, and shows the next issue PREVIOUS after LORE", async () => {
+    const reply = goodReply().replace(/@@allusion\n[^\n]*/, "@@allusion\nThe Vasa sinking off Stockholm, 1628");
+    const { client } = fakeClient([{ text: reply }]);
+    setRoastClient(client);
+    const first = await roastIssue("weekly_roast", facts, ctx, { now: NOW });
+    expect(first.writerNotes?.allusion).toBe("The Vasa sinking off Stockholm, 1628");
+    expect(first.writerNotes?.lines).toContain("Nobody looked good.");
+    expect(allText(first)).not.toContain("Vasa"); // hidden, never printed
+
+    await saveIssue({ ...first, slug: "2030-10-01-weekly-roast", date: "2030-10-01", status: "sent" });
+    const { client: c2, calls } = fakeClient([{ text: reply }]);
+    setRoastClient(c2);
+    await roastIssue("weekly_roast", facts, ctx, { now: NOW });
+    const lines = String(calls[0].messages[0].content).split("\n");
+    expect(lines.indexOf("PREVIOUS:")).toBe(lines.indexOf("LORE:") + 2);
+    const previous = JSON.parse(lines.at(-1)!);
+    expect(previous).toMatchObject({ allusions: ["The Vasa sinking off Stockholm, 1628"], headlines: ["Week 7 was a group project nobody did."] });
+    expect(previous.lines).toContain("Nobody looked good.");
+    await store.del(store.keys.issue(ctx.leagueId, "2030-10-01-weekly-roast"));
+  });
+
   it("Week N Recap: a headline, a fake epic, per-manager matchup hits and a closer", () => {
     const plan = planIssue(facts, ctx);
     expect(plan.title).toBe("Week 7 Recap");
     expect(plan.header).toBe("ISSUE: Week 7 Recap");
     const ids = plan.slots.map((x) => x.id);
-    expect(ids.slice(0, 2)).toEqual(["dek", "cold-open"]);
+    expect(ids.slice(0, 3)).toEqual(["dek", "cold-open", "allusion"]);
     expect(ids.at(-1)).toBe("closer");
     expect(plan.slots[0].brief).toContain("email subject and as the H1");
-    expect(plan.slots[1].brief).toMatch(/^4 to 7 sentences\. A real historical, literary or mythic disaster/);
+    expect(plan.slots[1].brief).toMatch(/^6 to 10 sentences in two paragraphs about the week's worst manager\. First paragraph: a real historical, literary or mythic disaster/);
+    expect(plan.slots[1].brief).toContain("excuse contrast");
+    expect(plan.slots[2].brief).toMatch(/^Hidden, never printed/);
     const matchups = plan.slots.filter((x) => x.id.startsWith("m-"));
     expect(matchups.length).toBe(weekly.matchups.length);
     for (const m of matchups) expect(m.brief).toMatch(/^4 to 8 sentences on matchup m-\d+: one short paragraph per manager/);
@@ -507,13 +542,17 @@ describe("roastItem", () => {
     const plan = planIssue(daily, ctx, mem);
     expect(plan.title).toBe("The Daily");
     expect(plan.header).toBe("ISSUE: The Daily, 2030-10-08");
-    expect(plan.slots.map((x) => x.id)).toEqual(["dek", "cold-open", "d-3", "d-4", "d-2", "closer"]);
+    expect(plan.slots.map((x) => x.id)).toEqual(["dek", "cold-open", "allusion", "d-3", "d-4", "d-2", "closer"]);
     const brief = (id: string) => plan.slots.find((x) => x.id === id)!.brief;
-    expect(brief("cold-open")).toMatch(/^4 to 7 sentences about Kevin, the worst of it\. A real historical, literary or mythic disaster/);
+    expect(brief("cold-open")).toMatch(/^6 to 12 sentences in two paragraphs about Kevin, the worst of it\. First paragraph: a real historical, literary or mythic disaster/);
+    expect(brief("cold-open")).toContain("once as an excuse contrast");
     expect(brief("cold-open")).toContain("Kevin gets no paragraph of his own below.");
-    expect(brief("d-3")).toMatch(/^2 or 3 sentences on Priya's pick since the last issue \(1\.03\)/);
+    expect(brief("d-3")).toMatch(/^2 or 3 sentences on Priya's pick since the last issue \(1\.03\)\. Angle: /);
+    // The commissioner is last but gets a full hit, not the short one.
+    expect(brief("d-2")).toMatch(/^2 or 3 sentences on Rory's/);
     expect(brief("d-2")).toContain("Rory is the commissioner: he gets it at least as hard as anyone.");
     expect(brief("closer")).toContain("Say when picks resume");
+    expect(brief("closer")).toContain("cold-open history one last time");
     expect(plan.facts).toMatchObject({
       commissioner: "Rory",
       starters: { QB: 2, RB: 2, WR: 3, TE: 1, FLEX: 3 },
@@ -530,9 +569,22 @@ describe("roastItem", () => {
         { type: "slot", slot: "closer", fallback: [] },
       ],
     });
+    // Nobody is silently spared: a hit that fails twice falls back to a code line about his pick.
+    expect(draft.blocks[2]).toEqual({ type: "slot", slot: "d-2", fallback: [{ type: "paragraph", text: "Rory took Tre Holloway at 1.02, 7 spots before his FantasyCalc rank." }] });
+    // Each hit gets its own angle, not one shared template.
+    expect(brief("d-4")).toContain("Angle: Lon Pryor at 2.01, a player FantasyCalc does not rank.");
+    expect(brief("d-2")).toContain("Angle: his reach at 1.02 (Tre Holloway).");
+    // With the whole draft in memory, code counts each manager's draft so the writer never does.
+    const withBoard = planIssue(daily, ctx, { ...mem, draft: { picks, fc: null, pickTimerSeconds: 14400, rookieOnly: false }, picksLeft: { 1: 33, 2: 33, 3: 33, 4: 32 } });
+    expect(withBoard.facts.managers).toEqual([
+      { manager: "Kevin", picksSoFar: 1, picksLeft: 33, byPosition: { QB: 1, RB: 0, WR: 0, TE: 0 }, reachCount: 1, stealCount: 0 },
+      { manager: "Rory", picksSoFar: 1, picksLeft: 33, byPosition: { QB: 0, RB: 0, WR: 1, TE: 0 }, reachCount: 1, stealCount: 0 },
+      { manager: "Priya", picksSoFar: 1, picksLeft: 33, byPosition: { QB: 0, RB: 0, WR: 0, TE: 1 }, reachCount: 0, stealCount: 0 },
+      { manager: "Wes", picksSoFar: 2, picksLeft: 32, byPosition: { QB: 0, RB: 1, WR: 1, TE: 0 }, reachCount: 0, stealCount: 0 },
+    ]);
     // A lopsided trade outranks the draft: the cold open is left to the worst thing, and Kevin gets his own hit.
     const withTrade = planIssue({ ...daily, trades: [TRADE] }, ctx, mem);
-    expect(withTrade.slots.map((x) => x.id)).toEqual(["dek", "cold-open", "t-1", "d-1", "d-3", "d-4", "d-2", "closer"]);
+    expect(withTrade.slots.map((x) => x.id)).toEqual(["dek", "cold-open", "allusion", "t-1", "d-1", "d-3", "d-4", "d-2", "closer"]);
     expect(withTrade.slots[1].brief).toContain("the ugliest trade first");
   });
 

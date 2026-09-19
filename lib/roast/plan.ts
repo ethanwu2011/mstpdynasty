@@ -46,6 +46,8 @@ export function issueTitle(kind: IssueKind, week: number | null | undefined): st
 export interface SlotSpec {
   id: string;
   brief: string;
+  /** The manager a per-manager hit is about (a slot that loses him is never kept in part). */
+  manager?: string;
 }
 
 export type PlannedBlock = IssueBlock | { type: "slot"; slot: string; fallback: IssueBlock[] };
@@ -79,6 +81,25 @@ const DEK_SLOT: SlotSpec = {
 
 /** The last line of every issue. */
 const closerSlot = (brief: string): SlotSpec => ({ id: "closer", brief: `One line, at most 2 short sentences. ${brief}` });
+
+/**
+ * Written by the model, stored with the issue, never printed: the history the cold open used,
+ * so later issues can be told not to reuse it (lib/roast/index.ts builds PREVIOUS from it).
+ */
+export const ALLUSION_SLOT: SlotSpec = {
+  id: "allusion",
+  brief: "Hidden, never printed: name the history your cold open used, in under ten words.",
+};
+
+/** Slots the model writes that are never printed or checked (see ALLUSION_SLOT). */
+export const HIDDEN_SLOTS = new Set([ALLUSION_SLOT.id]);
+
+/**
+ * The fake-epic cold open (the shape of the Daily the commissioner approved): the disaster told
+ * straight, the drop, then the proof with the history coming back inside it.
+ */
+const EPIC_OPEN = "First paragraph: a real historical, literary or mythic disaster told straight for two or three sentences, then the drop, one plain anti-climax insult";
+const EPIC_RETURN = "and the history keeps coming back inside the proof, at least twice, once as an excuse contrast (the old disaster at least had an excuse; he had none)";
 
 /** "Theo, Gus and Raf". */
 function nameList(names: string[]): string {
@@ -386,7 +407,7 @@ export function planWeekly(f: WeeklyRoastFacts, mem: PayloadMemory = EMPTY_MEMOR
     {
       id: "cold-open",
       brief:
-        "4 to 7 sentences. A real historical, literary or mythic disaster told straight, then turned on the week's worst manager with an anti-climax insult, then the fact that proves it. Plant one image the later slots come back to.",
+        `6 to 10 sentences in two paragraphs about the week's worst manager. ${EPIC_OPEN}. Second paragraph: the facts that prove it, ${EPIC_RETURN}. Plant one image the later slots come back to.`,
     },
   ];
   if (loser) {
@@ -501,7 +522,7 @@ export function planWeekly(f: WeeklyRoastFacts, mem: PayloadMemory = EMPTY_MEMOR
   }
   if (f.odds.teams.length) sections.push(oddsSection(f.odds, "Season odds", true));
   else slots.splice(slots.findIndex((s) => s.id === "odds"), 1);
-  slots.push(closerSlot("Predict how next week ends for one named manager, and come back to the cold-open image."));
+  slots.push(closerSlot("Predict how next week ends for one named manager, and come back to the cold-open history one last time."));
   sections.push({ heading: "Next week", blocks: [slot("closer", [])] });
 
   const title = issueTitle("weekly_roast", f.week);
@@ -728,7 +749,7 @@ function draftPickTable(picks: DraftPickFact[]): IssueBlock {
   };
 }
 
-interface DraftOffender {
+export interface DraftOffender {
   team: TeamRef;
   picks: DraftPickFact[];
   /** Spots reached, summed over his picks (falls count as zero). */
@@ -753,6 +774,122 @@ export function draftOffenders(picks: DraftPickFact[]): DraftOffender[] {
     .sort((a, b) => b.reach - a.reach || b.unranked - a.unranked || a.picks[0].pickNo - b.picks[0].pickNo);
 }
 
+/**
+ * Every manager's whole draft so far, for FACTS "managers": picks made, his own picks still to
+ * make, players per position (zeros included), and how many picks FantasyCalc calls a reach or
+ * a steal. Code counts, so the writer never counts across a list.
+ */
+export function draftBoard(draftId: string, mem: PayloadMemory): Array<Record<string, unknown>> {
+  const all = (mem.draft?.picks ?? []).filter((p) => p.draftId === draftId);
+  const byRoster = new Map<number, DraftPickFact[]>();
+  for (const p of all) byRoster.set(p.team.rosterId, [...(byRoster.get(p.team.rosterId) ?? []), p]);
+  return [...byRoster.values()]
+    .map((own) => [...own].sort((a, b) => a.pickNo - b.pickNo))
+    .sort((a, b) => a[0].pickNo - b[0].pickNo)
+    .map((own) => {
+      const byPosition: Record<string, number> = { QB: 0, RB: 0, WR: 0, TE: 0 };
+      for (const p of own) byPosition[p.player.position || "?"] = (byPosition[p.player.position || "?"] ?? 0) + 1;
+      const rid = own[0].team.rosterId;
+      return {
+        manager: own[0].team.managerName,
+        picksSoFar: own.length,
+        ...(mem.picksLeft ? { picksLeft: mem.picksLeft[rid] ?? 0 } : {}),
+        byPosition,
+        reachCount: own.filter((p) => p.verdict === "reach").length,
+        stealCount: own.filter((p) => p.verdict === "steal").length,
+      };
+    });
+}
+
+/** What one manager's hit is about. `kind` keeps two hits in a row from being the same joke. */
+export interface DraftAngle {
+  kind: "passed" | "self" | "no-qb" | "big-steal" | "passed-late" | "fell" | "old" | "reach" | "steal" | "unranked" | "worst";
+  text: string;
+  /** The pick the angle is about (for the code-written fallback line). */
+  pick: DraftPickFact;
+}
+
+/** A passed-on player counts on a pick that was not a reach when FantasyCalc had him at least this many spots higher. */
+const PASSED_GAP = 5;
+/** A steal this big is the story of his draft, and gets suspicion. */
+const BIG_STEAL = 10;
+
+/**
+ * The angles for one manager's hit, strongest first: a reach while a better player sat there for
+ * someone else; a player he passed on and took himself anyway; no quarterback in a two-QB
+ * league; a steal so big it is suspicious; any pick that left a much better player for someone
+ * else; a player who fell to him because someone else passed; his oldest pick; his biggest reach;
+ * a smaller steal; an unranked pick.
+ */
+export function draftAngles(o: DraftOffender, mem: PayloadMemory, board: Array<Record<string, unknown>>): DraftAngle[] {
+  const d = mem.draft;
+  const name = o.team.managerName;
+  const out: DraftAngle[] = [];
+  const byReach = [...o.picks].sort((a, b) => (b.reach ?? -99) - (a.reach ?? -99) || a.pickNo - b.pickNo);
+  const leftFor = (p: DraftPickFact) => passedOn(p, d).find((x) => x.takenBy && x.takenBy !== name);
+  const passedText = (p: DraftPickFact, x: { name: string; takenAt?: string; takenBy?: string }) =>
+    `${p.player.name} at ${pickLabel(p)} while ${x.name} was on the board, and ${x.takenBy} took ${x.name} at ${x.takenAt}`;
+  const reachPass = byReach.filter((p) => p.verdict === "reach").find((p) => leftFor(p));
+  if (reachPass) out.push({ kind: "passed", text: passedText(reachPass, leftFor(reachPass)!), pick: reachPass });
+  for (const p of o.picks) {
+    const mine = passedOn(p, d).find((x) => x.takenBy === name);
+    if (mine) {
+      out.push({ kind: "self", text: `he passed on ${mine.name} at ${pickLabel(p)} and still got him at ${mine.takenAt}, because nobody else wanted him either`, pick: p });
+      break;
+    }
+  }
+  const row = board.find((b) => b.manager === name);
+  const qbs = (row?.byPosition as Record<string, number> | undefined)?.QB;
+  if ((mem.starters?.QB ?? 0) >= 2 && qbs === 0 && Number(row?.picksSoFar ?? 0) >= 3) {
+    out.push({ kind: "no-qb", text: "no quarterback yet (managers.byPosition) in a league that starts two", pick: o.picks[o.picks.length - 1] });
+  }
+  const steals = [...o.picks].filter((p) => p.verdict === "steal").sort((a, b) => (a.reach ?? 0) - (b.reach ?? 0) || a.pickNo - b.pickNo);
+  const stealText = (p: DraftPickFact) => `his steal at ${pickLabel(p)} (${p.player.name}): treat it as evidence of something, never as praise`;
+  if (steals[0] && -(steals[0].reach ?? 0) >= BIG_STEAL) out.push({ kind: "big-steal", text: stealText(steals[0]), pick: steals[0] });
+  const latePass = byReach.find((p) => p.verdict !== "reach" && leftFor(p) && (p.fcRank ?? 999) - leftFor(p)!.fcRank >= PASSED_GAP);
+  if (latePass) out.push({ kind: "passed-late", text: passedText(latePass, leftFor(latePass)!), pick: latePass });
+  const others = (d?.picks ?? []).filter((q) => q.team.rosterId !== o.team.rosterId && q.draftId === o.picks[0].draftId);
+  for (const p of o.picks) {
+    const before = others.filter((q) => q.pickNo < p.pickNo).find((q) => passedOn(q, d).some((x) => x.name === p.player.name && x.takenBy === name));
+    if (before) {
+      out.push({ kind: "fell", text: `${p.player.name} fell to him at ${pickLabel(p)} only because ${before.team.managerName} passed on him at ${pickLabel(before)}`, pick: p });
+      break;
+    }
+  }
+  const old = [...o.picks].filter((p) => (p.player.age ?? 0) >= 29).sort((a, b) => (b.player.age ?? 0) - (a.player.age ?? 0) || b.pickNo - a.pickNo)[0];
+  if (old) out.push({ kind: "old", text: `${old.player.name} at ${pickLabel(old)}, age in FACTS: a dynasty pick with no dynasty left in him`, pick: old });
+  const reach = byReach.find((p) => p.verdict === "reach");
+  if (reach) out.push({ kind: "reach", text: `his reach at ${pickLabel(reach)} (${reach.player.name})`, pick: reach });
+  if (steals[0] && -(steals[0].reach ?? 0) < BIG_STEAL) out.push({ kind: "steal", text: stealText(steals[0]), pick: steals[0] });
+  const unranked = o.picks.find((p) => p.fcRank === null);
+  if (unranked) out.push({ kind: "unranked", text: `${unranked.player.name} at ${pickLabel(unranked)}, a player FantasyCalc does not rank`, pick: unranked });
+  out.push({ kind: "worst", text: "his worst pick by FantasyCalc", pick: byReach[0] });
+  return out;
+}
+
+/**
+ * One angle per manager, in hit order: each takes the first of his three strongest angles that
+ * no earlier hit used, else his strongest, so the hits do not all come out the same shape. The
+ * commissioner (`boss`) always gets his strongest.
+ */
+export function pickAngles(ordered: DraftOffender[], mem: PayloadMemory, board: Array<Record<string, unknown>>, boss: (o: DraftOffender) => boolean = () => false): DraftAngle[] {
+  const used = new Set<string>();
+  return ordered.map((o) => {
+    const all = draftAngles(o, mem, board);
+    const real = all.filter((a) => a.kind !== "worst");
+    const angle = (boss(o) ? real[0] : real.slice(0, 3).find((a) => !used.has(a.kind)) ?? real[0]) ?? all[0];
+    used.add(angle.kind);
+    return angle;
+  });
+}
+
+/** The code-written line a hit falls back to, so no manager is left out when the writer fails. */
+function angleFallback(a: DraftAngle): string {
+  const p = a.pick;
+  const why = p.verdict === "reach" && p.reach !== null ? `, ${p.reach} spots before his FantasyCalc rank` : p.verdict === "steal" && p.reach !== null ? `, ${-p.reach} spots after his FantasyCalc rank` : "";
+  return `${p.team.managerName} took ${p.player.name} at ${pickLabel(p)}${why}.`;
+}
+
 export function planDaily(f: DailyRoastFacts, faabBudget: number, mem: PayloadMemory = EMPTY_MEMORY, waiverMode: WaiverMode = "faab"): IssuePlan {
   const facts: Record<string, unknown> = { date: f.date, ...commissionerFact(mem) };
   const sections: PlannedSection[] = [];
@@ -767,14 +904,13 @@ export function planDaily(f: DailyRoastFacts, faabBudget: number, mem: PayloadMe
   // The cold open is about the worst drafter, unless a lopsided trade is worse news.
   const offenders = draftOffenders(f.draftPicks);
   const target = !f.trades.some((t) => t.winnerRosterId !== null) && offenders.length ? offenders[0] : null;
-  const epic = "A real historical, literary or mythic disaster told straight for two or three sentences";
   const slots: SlotSpec[] = [
     DEK_SLOT,
     {
       id: "cold-open",
       brief: target
-        ? `4 to 7 sentences about ${target.team.managerName}, the worst of it. ${epic}, then turned on ${target.team.managerName} with an anti-climax insult, then his picks since the last issue as the proof. ${target.team.managerName} gets no paragraph of his own below.`
-        : `4 to 7 sentences. ${epic}, then turned on whoever did the worst thing since the last issue (the ugliest trade first, then the worst bid or pick) with an anti-climax insult, then the facts that prove it. Save his other sins for the slots below.`,
+        ? `6 to 12 sentences in two paragraphs about ${target.team.managerName}, the worst of it. ${EPIC_OPEN} on ${target.team.managerName}. Second paragraph: his picks since the last issue as the proof, ${EPIC_RETURN}. ${target.team.managerName} gets no paragraph of his own below.`
+        : `4 to 8 sentences in one or two paragraphs about whoever did the worst thing since the last issue (the ugliest trade first, then the worst bid or pick). ${EPIC_OPEN} on him. Then the facts that prove it, with the history coming back inside them at least once. Save his other sins for the slots below.`,
     },
   ];
   sections.push({ heading: "Since the last issue", blocks: [slot("cold-open", counts ? [para(counts)] : [])] });
@@ -853,21 +989,31 @@ export function planDaily(f: DailyRoastFacts, faabBudget: number, mem: PayloadMe
     f.draftPicks.forEach((p) => managers.add(p.team.managerName));
     if (mem.starters) facts.starters = mem.starters;
     facts.draftPicks = f.draftPicks.map((p) => pickPayload(p, mem.draft));
+    const board = mem.draft ? draftBoard(f.draftPicks[0].draftId, mem) : [];
+    if (board.length) facts.managers = board;
     if (mem.onTheClock) facts.onTheClock = mem.onTheClock;
     // One hit per manager: worst first, the commissioner last (he is never spared, he just waits).
     const rest = offenders.filter((o) => o !== target);
     const boss = (o: DraftOffender) => mem.commissioner !== null && o.team.managerName === mem.commissioner;
     const ordered = [...rest.filter((o) => !boss(o)), ...rest.filter(boss)];
+    const angles = pickAngles(ordered, mem, board, boss);
+    // With four hits or more, one manager (never the first two, never the commissioner) gets a
+    // single flat line: the first whose angle is a plain reach or no quarterback, else the last.
+    const flatOk = (o: DraftOffender, i: number) => ordered.length >= 4 && i >= 2 && !boss(o);
+    const plain = ordered.findIndex((o, i) => flatOk(o, i) && (angles[i].kind === "reach" || angles[i].kind === "no-qb"));
+    const flat = plain >= 0 ? plain : ordered.reduce((last, o, i) => (flatOk(o, i) ? i : last), -1);
     const blocks: PlannedBlock[] = [];
     ordered.forEach((o, i) => {
       const id = `d-${o.team.rosterId}`;
       const name = o.team.managerName;
       const plural = o.picks.length === 1 ? "pick" : "picks";
+      const size = i === flat ? "1 sentence, a flat verdict with no setup," : i < 2 || boss(o) ? "2 or 3 sentences" : "1 or 2 sentences";
       slots.push({
         id,
-        brief: `${i < 2 ? "2 or 3" : "1 or 2"} sentences on ${name}'s ${plural} since the last issue (${o.picks.map(pickLabel).join(", ")}): the worst reach, who he passed on and who took that player, how many at that position he has now. The hardest word last.${boss(o) ? ` ${name} is the commissioner: he gets it at least as hard as anyone.` : ""}`,
+        manager: name,
+        brief: `${size} on ${name}'s ${plural} since the last issue (${o.picks.map(pickLabel).join(", ")}). Angle: ${angles[i].text}. The hardest word last.${boss(o) ? ` ${name} is the commissioner: he gets it at least as hard as anyone.` : ""}`,
       });
-      blocks.push(slot(id, []));
+      blocks.push(slot(id, [para(angleFallback(angles[i]))]));
     });
     blocks.push(draftPickTable(f.draftPicks));
     sections.push({ heading: "The draft", blocks });
@@ -875,7 +1021,11 @@ export function planDaily(f: DailyRoastFacts, faabBudget: number, mem: PayloadMe
 
   const clock = mem.onTheClock;
   const resume = clock?.resumesAt ? ` Picks resume at ${clock.resumesAt}.` : "";
-  slots.push(closerSlot(`Predict how this ends for one named manager, back on the cold-open image.${resume ? " Say when picks resume (onTheClock.resumesAt)." : ""}`));
+  slots.push(
+    closerSlot(
+      `Predict how this ends for one named manager, and come back to the cold-open history one last time.${resume ? " Say when picks resume (onTheClock.resumesAt) and who is on the clock." : ""}`,
+    ),
+  );
   sections.push({
     heading: clock ? "On the clock" : "Up next",
     blocks: [...(clock ? [para(`On the clock now: ${clock.manager}, pick ${clock.pick}.${resume}`)] : []), slot("closer", [])],
@@ -932,7 +1082,7 @@ export function planDraftGrades(f: DraftGradesFacts, mem: PayloadMemory = EMPTY_
     {
       id: "cold-open",
       brief:
-        "4 to 7 sentences. The draft as a founding myth: a real coronation, treaty, partition or doomed expedition told straight, then turned on the manager with the worst draft with an anti-climax insult, then the pick that proves it.",
+        `6 to 10 sentences in two paragraphs about the manager with the worst draft. ${EPIC_OPEN}: the draft as a founding myth (a real coronation, treaty, partition or doomed expedition). Second paragraph: the picks that prove it, ${EPIC_RETURN}.`,
     },
   ];
   const sections: PlannedSection[] = [];
@@ -988,7 +1138,7 @@ export function planDraftGrades(f: DraftGradesFacts, mem: PayloadMemory = EMPTY_
     slots.push({ id: "odds", brief: "2 to 4 sentences: the projected season odds after the draft, read as a prophecy. Name the doomed." });
     sections.push(oddsSection(f.odds, "Projected season odds", true));
   }
-  slots.push(closerSlot("Predict how the season ends for one named manager, back on the cold-open image."));
+  slots.push(closerSlot("Predict how the season ends for one named manager, and come back to the cold-open history one last time."));
   sections.push({ heading: "The season", blocks: [slot("closer", [])] });
   return {
     kind: "draft_grades",

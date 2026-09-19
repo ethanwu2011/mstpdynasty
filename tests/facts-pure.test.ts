@@ -6,7 +6,7 @@ import { describe, expect, it } from "vitest";
 import { bestSwap, benchPointsLeft, flipSwapFor, swapCandidates, teamOptimal, zeroStarterReason, type TeamWeekInput } from "@/lib/facts/lineup";
 import { draftGrade, ordinal, tradeGrade } from "@/lib/facts/util";
 import { approxPickValue, buildTrade, buildWaivers, type LosingBidFact, type TransactionEnv } from "@/lib/facts/transactions";
-import { buildDraftPicks, parsePickSeen, resumesAtFor, positionRunLengths, positionRuns, rosterForPick, slotForPick, verdictFor } from "@/lib/facts/draft";
+import { buildDraftPicks, inAutopause, parsePickSeen, resumesAtFor, positionRunLengths, positionRuns, rosterForPick, slotForPick, verdictFor } from "@/lib/facts/draft";
 import { standingsThrough, streakOf, weekResults } from "@/lib/facts/weekly";
 import type { FactsLoader } from "@/lib/facts/load";
 import { assembleShame, transactionShame } from "@/lib/facts/shame";
@@ -355,9 +355,24 @@ describe("draft math (hand-checked)", () => {
     expect(parsePickSeen(null, "d1").size).toBe(0);
   });
 
-  it("picks resume at the commissioner's 8 AM ET while the draft is paused, never from Sleeper's autopause", () => {
+  it("picks resume at the commissioner's 8 AM ET while the draft is paused, never at Sleeper's autopause end", () => {
     expect(resumesAtFor("paused")).toBe("8 AM ET");
     for (const s of ["drafting", "pre_draft", "complete"] as const) expect(resumesAtFor(s)).toBeNull();
+  });
+
+  it("Sleeper's overnight autopause also means picks resume at 8 AM ET, not at its own 10 AM end", () => {
+    // The live draft's window: 180 to 840 minutes after midnight UTC, 11 PM to 10 AM EDT.
+    const settings = { rounds: 34, teams: 10, autopause_enabled: 1, autopause_start_time: 180, autopause_end_time: 840 };
+    const utc = (h: number, m = 0) => Date.UTC(2026, 8, 19, h, m);
+    expect(resumesAtFor("drafting", settings, utc(12))).toBe("8 AM ET"); // 8 AM EDT, when the Daily goes out
+    expect(resumesAtFor("drafting", settings, utc(3, 30))).toBe("8 AM ET"); // 11:30 PM EDT
+    expect(resumesAtFor("drafting", settings, utc(14))).toBeNull(); // 10 AM EDT: Sleeper's clock runs again
+    expect(resumesAtFor("drafting", settings, utc(20))).toBeNull();
+    expect(resumesAtFor("drafting", { ...settings, autopause_enabled: 0 }, utc(12))).toBeNull();
+    expect(resumesAtFor("complete", settings, utc(12))).toBeNull();
+    // A window that wraps past midnight UTC.
+    expect(inAutopause({ ...settings, autopause_start_time: 1380, autopause_end_time: 600 }, utc(2))).toBe(true);
+    expect(inAutopause({ ...settings, autopause_start_time: 1380, autopause_end_time: 600 }, utc(12))).toBe(false);
   });
 
   it("reach thresholds scale with the pick", () => {

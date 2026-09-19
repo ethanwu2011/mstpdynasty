@@ -926,6 +926,12 @@ export interface Issue {
   /** Loser of the Week image (phase 2), null for now. */
   imageUrl: string | null;
   placeholder: boolean;
+  /**
+   * What the writer used, never printed: the cold open's history, the closer and the short
+   * lines, so later issues are told not to repeat them (lib/roast/index.ts PREVIOUS). Absent on
+   * facts-only and older issues.
+   */
+  writerNotes?: { allusion: string | null; closer: string | null; lines: string[] };
 }
 
 export interface DailyRoastFacts {
