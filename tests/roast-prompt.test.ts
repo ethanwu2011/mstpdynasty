@@ -284,6 +284,7 @@ describe.skipIf(!hasFixtures())("the FACTS glossary", () => {
       injuries: [{ team: refs[0], player, status: "Out", previousStatus: null, isStarter: true }],
       lineupAlerts: [{ team: refs[1], player, slot: "WR", reason: "bye", kickoff: null }],
       draftPicks: picks.slice(0, 6),
+      slate: { week: 5, first: true, matchups: winProbs.matchups },
       hasMaterial: true,
     };
     const payloads: unknown[] = [

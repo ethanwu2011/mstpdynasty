@@ -69,6 +69,11 @@ export function upcomingWeekFor(schedule: NflGame[], date: string): number | nul
   return best;
 }
 
+/** The first game date of a week (its Thursday, in practice). */
+export function firstDateOfWeek(schedule: NflGame[], week: number): string | null {
+  return datesByWeek(schedule).get(week)?.[0] ?? null;
+}
+
 /** The most common game date of a week (its Sunday, in practice). */
 export function mainDateOfWeek(schedule: NflGame[], week: number): string | null {
   const counts = new Map<string, number>();

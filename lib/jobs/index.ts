@@ -88,6 +88,21 @@ const order = (o: JobOutcome) => {
   return i === -1 ? -1 : i;
 };
 
+/** What the daily job does today (the same plan the external writer's briefs come from). */
+export function todaysPlan(ctx: LeagueContext, t: number, schedule: NflGame[]) {
+  return planDaily({
+    date: etDate(t),
+    nowMs: t,
+    phase: ctx.phase,
+    season: ctx.season,
+    currentWeek: ctx.week,
+    startWeek: ctx.league.settings.start_week ?? 1,
+    lastWeek: ctx.lastWeek,
+    schedule,
+    draft: planDraft(ctx),
+  });
+}
+
 export async function runDaily(now: Date = new Date(), opts: JobOptions & { schedule?: NflGame[] } = {}): Promise<JobRunReport> {
   const startedAt = Date.now();
   const t = now.getTime();
@@ -106,17 +121,7 @@ export async function runDaily(now: Date = new Date(), opts: JobOptions & { sche
   }
   try {
     const schedule = opts.schedule ?? (await getSchedule(ctx.season).catch(() => [] as NflGame[]));
-    const plan = planDaily({
-      date: etDate(t),
-      nowMs: t,
-      phase: ctx.phase,
-      season: ctx.season,
-      currentWeek: ctx.week,
-      startWeek: ctx.league.settings.start_week ?? 1,
-      lastWeek: ctx.lastWeek,
-      schedule,
-      draft: planDraft(ctx),
-    });
+    const plan = todaysPlan(ctx, t, schedule);
     // Today's values first: trade grades and hindsight in today's issues read them.
     const snapshot = snapshotOutcome(await ensureDailySnapshot(t), true);
     const ran = await Promise.all(plan.jobs.map((job) => runIssueJob(job, ctx, t, schedule)));

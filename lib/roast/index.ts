@@ -52,6 +52,7 @@ import { AllowedNumbers, checkText, describeDrops, limitExclamations, parseSlots
 
 export { ISSUE_TITLES, issueTitle } from "./plan";
 export { SYSTEM_PROMPT } from "./persona";
+import { SYSTEM_PROMPT } from "./persona";
 export { draftContext, issueMemory } from "./memory";
 export {
   buildRoastRequest,
@@ -135,6 +136,24 @@ export interface RoastOptions {
   now?: number;
   /** Draft picks so far, for draft pick roasts (saves a draftFacts() call per pick). */
   draftPicks?: DraftPickFact[];
+  /**
+   * An issue written outside the site (Claude Code on the commissioner's own plan, through
+   * /api/admin/issue), used in place of the model call and held to the same post-check. There
+   * is no second call for failed slots: `report` says which failed, so the writer can fix them
+   * and post again.
+   */
+  reply?: { text: string; model: string };
+  report?: IssueReport;
+}
+
+/** What the post-check did to an externally written issue. */
+export interface IssueReport {
+  accepted: string[];
+  /** Slots that fell back to code text. */
+  failed: string[];
+  /** Slots kept without the one sentence that failed. */
+  partial: string[];
+  reasons: string[];
 }
 
 /**
@@ -320,17 +339,36 @@ function acceptSlots(reply: string, slots: SlotSpec[], allowed: AllowedNumbers, 
 }
 
 /** Write a full newsletter issue from its facts. Never throws for LLM reasons. */
+/** Plan, slug, lore and PREVIOUS for an issue: shared by the writer and the external brief so both see the same request. */
+async function prepareIssue(facts: IssueFacts, c: LeagueContext, date: string, withContext: boolean) {
+  const memory = withContext ? await issueMemory(facts, c).catch(() => EMPTY_MEMORY) : EMPTY_MEMORY;
+  const plan = planIssue(facts, c, memory);
+  const slug = `${date}-${plan.kind.replace(/_/g, "-")}`;
+  const lore = withContext ? notesFor(await loadRoastNotes(), plan.managers) : {};
+  const previous = withContext ? await previousIssues(c.leagueId, slug) : null;
+  return { plan, slug, lore, previous };
+}
+
+/**
+ * The exact request the site's writer would send for an issue (system prompt and user
+ * message), for a writer outside the site: Claude Code on the commissioner's own plan writes
+ * the reply and posts it back to /api/admin/issue, where roastIssue checks it.
+ */
+export async function issueBrief(facts: IssueFacts, ctx: LeagueContext, now: number) {
+  const date = etDate(now);
+  const { plan, slug, lore, previous } = await prepareIssue(facts, ctx, date, true);
+  return { slug, kind: plan.kind, date, system: SYSTEM_PROMPT, user: userMessage(plan, lore, previous), slots: plan.slots.map((x) => x.id) };
+}
+
 export async function roastIssue(kind: IssueKind, facts: IssueFacts, ctx?: LeagueContext, opts: RoastOptions = {}): Promise<Issue> {
   const c = ctx ?? (await getLeagueContext());
   const now = opts.now ?? Date.now();
   const date = etDate(now);
   if (facts.kind !== kind) console.warn(`[roast] roastIssue: kind ${kind} does not match facts.kind ${facts.kind}; using facts.kind`);
-  const writer = hasRoastClient();
-  const memory = writer ? await issueMemory(facts, c).catch(() => EMPTY_MEMORY) : EMPTY_MEMORY;
-  const plan = planIssue(facts, c, memory);
-  const slug = `${date}-${plan.kind.replace(/_/g, "-")}`;
-  const lore = writer ? notesFor(await loadRoastNotes(), plan.managers) : {};
-  const label = `${plan.kind} ${date}`;
+  const external = opts.reply;
+  const writer = Boolean(external) || hasRoastClient();
+  const { plan, slug, lore, previous } = await prepareIssue(facts, c, date, writer);
+  const label = `${plan.kind} ${date}${external ? " (external)" : ""}`;
 
   const base: Issue = {
     id: `${c.leagueId}:${date}:${plan.kind}`,
@@ -356,21 +394,29 @@ export async function roastIssue(kind: IssueKind, facts: IssueFacts, ctx?: Leagu
     placeholder: plan.placeholder,
   };
 
-  const previous = writer ? await previousIssues(c.leagueId, slug) : null;
-  const res = await callRoastModel(userMessage(plan, lore, previous), label, "issue");
-  if (!res.ok) return { ...base, model: res.model, usage: res.usage };
-  let usage: RoastUsage | null = res.usage;
-  let model: string | null = res.model;
+  let text: string;
+  let usage: RoastUsage | null = null;
+  let model: string | null;
+  if (external) {
+    text = external.text;
+    model = external.model;
+  } else {
+    const res = await callRoastModel(userMessage(plan, lore, previous), label, "issue");
+    if (!res.ok) return { ...base, model: res.model, usage: res.usage };
+    text = res.text;
+    usage = res.usage;
+    model = res.model;
+  }
 
   const { allowed, exempt } = numberSources(plan, lore);
   const visible = plan.slots.filter((s) => !HIDDEN_SLOTS.has(s.id));
   const caps = { left: CAPS_PER_ISSUE };
   const cuck = { left: CUCK_CHAIR_PER_ISSUE };
-  const first = acceptSlots(res.text, visible, allowed, exempt, label, caps, cuck);
+  const first = acceptSlots(text, visible, allowed, exempt, label, caps, cuck);
   const accepted = first.accepted;
   let failed = first.failed;
   let second: ReturnType<typeof acceptSlots> | null = null;
-  if (failed.length) {
+  if (failed.length && !external) {
     // One more call for just the failing slots. The system prompt is cached, so this is cheap.
     const retry = { ...plan, slots: failed };
     const again = await callRoastModel(userMessage(retry, lore, previous) + retryNote(first.reasons), `${label} retry`, "issue");
@@ -390,7 +436,16 @@ export async function roastIssue(kind: IssueKind, facts: IssueFacts, ctx?: Leagu
       accepted.set(s.id, kept);
     }
   }
+  const partialIds = failed.filter((s) => accepted.has(s.id)).map((s) => s.id);
   failed = failed.filter((s) => !accepted.has(s.id));
+  if (opts.report) {
+    Object.assign(opts.report, {
+      accepted: [...accepted.keys()].filter((id) => !partialIds.includes(id)),
+      failed: failed.map((s) => s.id),
+      partial: partialIds,
+      reasons: [...new Set([...first.reasons, ...(second?.reasons ?? [])])],
+    });
+  }
   if (!accepted.size || failed.length / Math.max(1, visible.length) > MAX_FAILED_SLOT_SHARE) {
     console.warn(`[roast] ${label}: ${failed.length} of ${visible.length} slots failed the checks twice; publishing facts only`);
     return { ...base, model, usage };

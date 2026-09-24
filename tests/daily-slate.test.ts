@@ -1,0 +1,52 @@
+import { describe, expect, it } from "vitest";
+import { planDaily } from "@/lib/roast/plan";
+import type { DailyFacts, TeamRef, TeamWinProb, WinProb } from "@/lib/types";
+
+const team = (rosterId: number, managerName: string, teamName = managerName): TeamRef => ({ rosterId, managerName, teamName, managerKey: managerName.toLowerCase() });
+const side = (t: TeamRef, projected: number, winProb: number): TeamWinProb => ({ team: t, actual: 0, projected, mean: projected, sd: 20, winProb, starters: [] });
+const matchup = (id: number, home: TeamWinProb, away: TeamWinProb): WinProb => ({ week: 3, matchupId: id, home, away, isFinal: false });
+
+const quiet = (slate: DailyFacts["slate"]): DailyFacts => ({
+  kind: "daily",
+  date: "2026-09-24",
+  sinceMs: 0,
+  trades: [],
+  waivers: [],
+  injuries: [],
+  lineupAlerts: [],
+  draftPicks: [],
+  slate,
+  hasMaterial: true,
+});
+
+describe("the Daily on a week's first game day", () => {
+  const slate = {
+    week: 3,
+    first: true,
+    matchups: [
+      matchup(1, side(team(1, "Justin", "Shough and Fhough"), 161.14, 0.321), side(team(2, "Brandon"), 183.08, 0.679)),
+      matchup(5, side(team(3, "Peter"), 189.6, 0.77), side(team(4, "Anish"), 155.8, 0.23)),
+    ],
+  };
+
+  it("previews every matchup with projections and win odds, and opens on the biggest underdog", () => {
+    const plan = planDaily(quiet(slate), 100);
+    expect(plan.facts.week).toBe(3);
+    expect(plan.facts.matchups).toEqual([
+      { home: { manager: "Justin", team: "Shough and Fhough", projected: 161.1, winPct: 32 }, away: { manager: "Brandon", team: "Brandon", projected: 183.1, winPct: 68 } },
+      { home: { manager: "Peter", team: "Peter", projected: 189.6, winPct: 77 }, away: { manager: "Anish", team: "Anish", projected: 155.8, winPct: 23 } },
+    ]);
+    expect(plan.slots.find((s) => s.id === "cold-open")?.brief).toMatch(/about Anish, the biggest underdog of week 3, the league's first real week/);
+    expect(plan.slots.map((s) => s.id)).toContain("slate");
+    const section = plan.sections.find((s) => s.heading === "Week 3: the slate");
+    expect(section?.blocks.find((b) => b.type === "table")).toMatchObject({ rows: [["Shough and Fhough (Justin)", "161.1", "32%", "Brandon", "183.1", "68%"], ["Peter", "189.6", "77%", "Anish", "155.8", "23%"]] });
+    expect(plan.task).toContain("and the slate for week 3, the league's first real week.");
+    expect(plan.managers.sort()).toEqual(["Anish", "Brandon", "Justin", "Peter"]);
+  });
+
+  it("leaves the Daily as it was without a slate", () => {
+    const plan = planDaily(quiet(null), 100);
+    expect(plan.facts.matchups).toBeUndefined();
+    expect(plan.slots.map((s) => s.id)).not.toContain("slate");
+  });
+});

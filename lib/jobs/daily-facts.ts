@@ -17,6 +17,7 @@ import { getGameClocks } from "@/lib/espn";
 import { draftFacts, transactionFacts } from "@/lib/facts";
 import { getFantasyCalc, valueOf } from "@/lib/fantasycalc";
 import { teamRef } from "@/lib/league";
+import { getWinProbabilities } from "@/lib/models";
 import { byeTeams, getPlayers, playerInfo } from "@/lib/sleeper";
 import * as store from "@/lib/store";
 import { etDate } from "@/lib/time";
@@ -32,7 +33,7 @@ import type {
   PlayerInfo,
   PlayersMap,
 } from "@/lib/types";
-import { addDays, DAY_MS, mainDateOfWeek, upcomingWeekFor } from "./schedule";
+import { addDays, DAY_MS, firstDateOfWeek, mainDateOfWeek, upcomingWeekFor } from "./schedule";
 
 /** Injury statuses worth a line in The Daily. "Questionable" is too noisy. */
 export const SERIOUS_INJURY = new Set(["Doubtful", "Out", "IR", "PUP", "Sus", "COV"]);
@@ -217,6 +218,7 @@ export async function buildDailyFacts(ctx: LeagueContext, now: number, schedule:
   }
 
   let alerts: LineupAlertFact[] = [];
+  let slate: DailyFacts["slate"] = null;
   let alertIds: string[] = [];
   let alertWeek: number | null = null;
   let reported: string[] = [];
@@ -236,6 +238,15 @@ export async function buildDailyFacts(ctx: LeagueContext, now: number, schedule:
       const a = lineupAlerts(ctx, players, fc, schedule, week, date, kickoffs, new Set(reported));
       alerts = a.alerts;
       alertIds = a.ids;
+      // The morning the week's first game is played: preview every matchup before kickoff.
+      if (firstDateOfWeek(schedule, week) === date) {
+        try {
+          const wp = await getWinProbabilities(week, ctx, { pregame: true });
+          if (wp && !wp.placeholder && wp.matchups.length) slate = { week, first: week === startWeek, matchups: wp.matchups };
+        } catch {
+          // No slate is a smaller issue, not a failed one.
+        }
+      }
     }
   }
 
@@ -248,7 +259,8 @@ export async function buildDailyFacts(ctx: LeagueContext, now: number, schedule:
     injuries,
     lineupAlerts: alerts,
     draftPicks,
-    hasMaterial: tx.trades.length + waivers.length + injuries.length + alerts.length + draftPicks.length > 0,
+    slate,
+    hasMaterial: tx.trades.length + waivers.length + injuries.length + alerts.length + draftPicks.length + (slate ? 1 : 0) > 0,
   };
 
   return {

@@ -901,16 +901,23 @@ export function planDaily(f: DailyFacts, faabBudget: number, mem: PayloadMemory 
     f.lineupAlerts.length ? `${f.lineupAlerts.length} lineup alert${f.lineupAlerts.length === 1 ? "" : "s"}.` : null,
   );
 
-  // The cold open is about the worst drafter, unless a lopsided trade is worse news.
+  // The cold open is about the worst drafter, unless a lopsided trade is worse news. On a quiet
+  // morning with a slate, it is about the week's biggest underdog.
   const offenders = draftOffenders(f.draftPicks);
   const target = !f.trades.some((t) => t.winnerRosterId !== null) && offenders.length ? offenders[0] : null;
+  const slate = f.slate?.matchups.length ? f.slate : null;
+  const sides = slate ? slate.matchups.flatMap((m) => [m.home, m.away]) : [];
+  const dog = slate && !f.trades.length && !f.waivers.length && !target ? [...sides].sort((a, b) => a.winProb - b.winProb)[0] : null;
+  const weekName = slate ? `week ${slate.week}${slate.first ? ", the league's first real week" : ""}` : "";
   const slots: SlotSpec[] = [
     DEK_SLOT,
     {
       id: "cold-open",
       brief: target
         ? `6 to 12 sentences in two paragraphs about ${target.team.managerName}, the worst of it. ${EPIC_OPEN} on ${target.team.managerName}. Second paragraph: his picks since the last issue as the proof, ${EPIC_RETURN}. ${target.team.managerName} gets no paragraph of his own below.`
-        : `4 to 8 sentences in one or two paragraphs about whoever did the worst thing since the last issue (the ugliest trade first, then the worst bid or pick). ${EPIC_OPEN} on him. Then the facts that prove it, with the history coming back inside them at least once. Save his other sins for the slots below.`,
+        : dog
+          ? `4 to 8 sentences in one or two paragraphs about ${dog.team.managerName}, the biggest underdog of ${weekName}. ${EPIC_OPEN} on ${dog.team.managerName}. Then the facts that prove it (his projection and win chance in matchups against his opponent's), with the history coming back inside them at least once.`
+          : `4 to 8 sentences in one or two paragraphs about whoever did the worst thing since the last issue (the ugliest trade first, then the worst bid or pick). ${EPIC_OPEN} on him. Then the facts that prove it, with the history coming back inside them at least once. Save his other sins for the slots below.`,
     },
   ];
   sections.push({ heading: "Since the last issue", blocks: [slot("cold-open", counts ? [para(counts)] : [])] });
@@ -960,6 +967,24 @@ export function planDaily(f: DailyFacts, faabBudget: number, mem: PayloadMemory 
             w.dropped.map((p) => p.name).join(", "),
           ]),
         },
+      ],
+    });
+  }
+  if (slate) {
+    sides.forEach((t) => managers.add(t.team.managerName));
+    const side = (t: (typeof sides)[number]) => ({ ...who(t.team), projected: Math.round(t.projected * 10) / 10, winPct: Math.round(t.winProb * 100) });
+    facts.week = slate.week;
+    facts.matchups = slate.matchups.map((m) => ({ home: side(m.home), away: side(m.away) }));
+    slots.push({
+      id: "slate",
+      brief: `One or two sentences per matchup of ${weekName} (${slate.matchups.length} matchups, in matchups), every manager hit: the favorite's projection and win chance against the underdog's, and the worst reading of each side.${dog ? ` ${dog.team.managerName} already got the cold open: one short line for his matchup at most.` : ""}`,
+    });
+    const cell = (t: (typeof sides)[number]) => [label(t.team), (Math.round(t.projected * 10) / 10).toFixed(1), `${Math.round(t.winProb * 100)}%`];
+    sections.push({
+      heading: `Week ${slate.week}: the slate`,
+      blocks: [
+        slot("slate", []),
+        { type: "table", columns: ["Team", "Proj", "Win", "Team", "Proj", "Win"], rows: slate.matchups.map((m) => [...cell(m.home), ...cell(m.away)]) },
       ],
     });
   }
@@ -1035,11 +1060,11 @@ export function planDaily(f: DailyFacts, faabBudget: number, mem: PayloadMemory 
     kind: "daily",
     title: ISSUE_TITLES.daily,
     header: `ISSUE: ${ISSUE_TITLES.daily}, ${f.date}`,
-    task: "Write The Daily: everything in the league since the last issue, only what is in FACTS. Headline, cold open, one short hit per manager in the slots below, then the closer. One manager may get a one-sentence dismissal.",
+    task: `Write The Daily: everything in the league since the last issue${slate ? `, and the slate for ${weekName}` : ""}. Only what is in FACTS. Headline, cold open, one short hit per manager in the slots below, then the closer. One manager may get a one-sentence dismissal.`,
     slots,
     facts,
     sections,
-    fallbackDek: dailyWorstFact(f) ?? (counts || "A quiet day."),
+    fallbackDek: dailyWorstFact(f) ?? (counts || (slate ? `Week ${slate.week} kicks off.` : "A quiet day.")),
     week: null,
     managers: [...managers],
     placeholder: false,

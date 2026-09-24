@@ -182,6 +182,19 @@ describe.skipIf(!hasFixtures())("roastIssue", () => {
     expect(matchups.blocks).toContainEqual({ type: "paragraph", text: `${m.home.team.managerName} and ${m.away.team.managerName} were separated by ${m.margin}. Nobody looked good.` });
   });
 
+  it("takes an externally written reply in place of the model call, with the same checks and a report", async () => {
+    const { client, calls } = fakeClient([]);
+    setRoastClient(client);
+    const bad = goodReply().replace("Nobody looked good.", "Nobody looked good. A real lineup scores 987.65.");
+    const report = { accepted: [] as string[], failed: [] as string[], partial: [] as string[], reasons: [] as string[] };
+    const issue = await roastIssue("weekly_recap", facts, ctx, { now: NOW, reply: { text: bad, model: "claude-code" }, report });
+    expect(calls).toHaveLength(0);
+    expect(issue).toMatchObject({ factsOnly: false, model: "claude-code", usage: null, dek: "Week 7 was a group project nobody did." });
+    expect(allText(issue)).not.toContain("987.65");
+    expect(report.accepted).toContain("dek");
+    expect(report.reasons.join(" ")).toMatch(/987\.65/);
+  });
+
   it("drops invented numbers and theme words, keeps the rest", async () => {
     const bad = goodReply().replace("Nobody looked good.", "Nobody looked good. A real lineup scores 987.65. This belongs in a hospital.");
     const { client } = fakeClient([{ text: bad }]);

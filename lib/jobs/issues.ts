@@ -17,9 +17,9 @@ import { sendIssue } from "@/lib/email";
 import { newsletterMode } from "@/lib/env";
 import { draftFacts, tnfFacts, weeklyFacts } from "@/lib/facts";
 import { backfillOddsHistory, getPowerRankings, getWinProbabilities, runSeasonSim } from "@/lib/models";
-import { roastIssue } from "@/lib/roast";
+import { issueBrief, roastIssue, type IssueReport } from "@/lib/roast";
 import * as store from "@/lib/store";
-import type { Issue, IssueFacts, JobOutcome, LeagueContext, NflGame } from "@/lib/types";
+import type { Issue, IssueFacts, IssueKind, JobOutcome, LeagueContext, NflGame } from "@/lib/types";
 import { buildDailyFacts } from "./daily-facts";
 import { claimOnce, getDone, markDone, releaseClaim } from "./once";
 import type { PlannedJob } from "./schedule";
@@ -181,4 +181,103 @@ export async function runIssueJob(job: PlannedJob, ctx: LeagueContext, now: numb
     await releaseClaim(l, job.key).catch(() => {});
     return { job: job.job, status: "error", detail: errText(err) };
   }
+}
+
+/* ------------------------------------------------------------------ */
+/* the external writer                                                 */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Claude Code on the commissioner's own plan can write the issues instead of the site's API
+ * writer: GET /api/admin/issue hands it each due issue's brief (the exact system prompt and user
+ * message the site's writer would send), and POST /api/admin/issue brings the reply back, which
+ * roastIssue holds to the same post-check. A reply that comes back before the 8 AM job is
+ * stored under the job's built key, so that job sends it instead of paying for a model call. If
+ * no reply comes, the job writes the issue itself as before.
+ */
+interface StoredBrief {
+  job: PlannedJob;
+  facts: IssueFacts;
+  now: number;
+}
+
+const briefKey = (leagueId: string, slug: string) => store.keys.snapshot(leagueId, `ext-brief:${slug}`);
+const BRIEF_TTL_SECONDS = 6 * 3600;
+
+export interface ExternalBrief {
+  job: PlannedJob["job"];
+  key: string;
+  slug: string;
+  kind: IssueKind;
+  date: string;
+  /** Already emailed or on the site: a reply replaces the words there and emails nobody. */
+  published: boolean;
+  system: string;
+  user: string;
+  slots: string[];
+}
+
+export async function externalBriefs(
+  jobs: PlannedJob[],
+  ctx: LeagueContext,
+  now: number,
+  schedule: NflGame[],
+  opts: { rewrite?: boolean } = {},
+): Promise<{ briefs: ExternalBrief[]; skipped: Array<{ job: string; detail: string }> }> {
+  const l = ctx.leagueId;
+  const briefs: ExternalBrief[] = [];
+  const skipped: Array<{ job: string; detail: string }> = [];
+  for (const job of jobs) {
+    if (!opts.rewrite && (await getDone(l, job.key).catch(() => null))) {
+      skipped.push({ job: job.job, detail: "Already done for this period (pass rewrite=1 to rewrite it)." });
+      continue;
+    }
+    const step = await factsFor(job, ctx, now, schedule);
+    if (step.kind === "skip") {
+      skipped.push({ job: job.job, detail: step.detail });
+      continue;
+    }
+    const b = await issueBrief(step.facts, ctx, now);
+    const existing = await getIssue(l, b.slug);
+    await store.set<StoredBrief>(briefKey(l, b.slug), { job, facts: step.facts, now }, { ttlSeconds: BRIEF_TTL_SECONDS });
+    briefs.push({ job: job.job, key: job.key, slug: b.slug, kind: b.kind, date: b.date, published: Boolean(existing && published(existing)), system: b.system, user: b.user, slots: b.slots });
+  }
+  return { briefs, skipped };
+}
+
+export interface ExternalPublish {
+  status: "queued" | "updated" | "rejected" | "missing";
+  detail: string;
+  slug: string;
+  report: IssueReport | null;
+}
+
+export async function publishExternal(slug: string, text: string, model: string, ctx: LeagueContext, schedule: NflGame[]): Promise<ExternalPublish> {
+  const l = ctx.leagueId;
+  const brief = await store.get<StoredBrief>(briefKey(l, slug));
+  if (!brief) return { status: "missing", detail: "No brief for that slug in the last 6 hours. GET /api/admin/issue first.", slug, report: null };
+  const report: IssueReport = { accepted: [], failed: [], partial: [], reasons: [] };
+  const built = await roastIssue(brief.job.job, brief.facts, ctx, { now: brief.now, reply: { text, model }, report });
+  if (built.placeholder || built.factsOnly) {
+    return { status: "rejected", detail: "Too many slots failed the checks, so nothing was saved. Fix them and post again.", slug, report };
+  }
+  const existing = await getIssue(l, built.slug);
+  const done = await getDone(l, brief.job.key).catch(() => null);
+  if ((existing && published(existing)) || done) {
+    // Already sent (or the day's job is over): replace the words on the site, email nobody.
+    await saveIssue({
+      ...built,
+      status: existing && published(existing) ? existing.status : "approved",
+      sentAt: existing?.sentAt ?? null,
+      recipientCount: existing?.recipientCount ?? null,
+      createdAt: existing?.createdAt ?? built.createdAt,
+    });
+    return { status: "updated", detail: "Replaced on the site. Nobody was emailed again.", slug, report };
+  }
+  await saveIssue(built);
+  await store.set(builtKey(l, brief.job.key), built.slug, { ttlSeconds: 30 * 24 * 3600 });
+  // Move the cursors the way runIssueJob does once an issue is stored.
+  const step = await factsFor(brief.job, ctx, brief.now, schedule).catch(() => null);
+  if (step?.commit) await step.commit();
+  return { status: "queued", detail: "Stored. The 8 AM job sends it.", slug, report };
 }
