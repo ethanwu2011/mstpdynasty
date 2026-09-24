@@ -250,3 +250,64 @@ describe("planSundayRecap", () => {
     expectSlotsPrinted(plan);
   });
 });
+
+describe("Sunday issues: pre-kickoff odds, the starters named, one-decimal win chances", () => {
+  it("Preview: the pre-kickoff number is whole and adds to 100, and is left out when only rounding moved", () => {
+    const f: SundayPreviewFacts = {
+      kind: "sunday_preview",
+      week: 3,
+      winProbs: week([matchup(1, side(JUSTIN, 150, 0.62), side(BRANDON, 160, 0.38)), matchup(5, side(PETER, 170, 0.55), side(ANISH, 120, 0.45))]),
+      lineupAlerts: [],
+    };
+    // Justin was 61.6 before kickoff and is 62 now: rounding, not a swing. Peter slid from 60.5
+    // to 55: 61 and 39 before (never 61 and 40), whole like winPct.
+    const mem: PayloadMemory = { ...EMPTY_MEMORY, winPctBefore: { 1: 61.6, 2: 38.4, 3: 60.5, 4: 39.5 } };
+    const plan = planSundayPreview(f, mem);
+    const m1 = plan.facts["m-1"] as Sides;
+    const m5 = plan.facts["m-5"] as Sides;
+    expect(m1.home).not.toHaveProperty("winPctBefore");
+    expect(m1.away).not.toHaveProperty("winPctBefore");
+    expect([m5.home.winPct, m5.away.winPct]).toEqual([55, 45]);
+    expect([m5.home.winPctBefore, m5.away.winPctBefore]).toEqual([61, 39]);
+  });
+
+  it("Preview: stars and the weak link are starters still to play, never a Thursday player who is done", () => {
+    const justin = side(JUSTIN, 150, 0.5, { starters: [line("1", "Ace", "QB", 22.4), line("2", "Deuce", "WR", 15.06)] });
+    const brandon = side(BRANDON, 160, 0.5, {
+      actual: 32.2,
+      starters: [final("7", "Thursday Star", "WR", 25, 31.4), line("8", "Sunday Two", "RB", 14), line("9", "Sunday One", "QB", 20), final("10", "Thursday Dud", "TE", 1.5, 0.8)],
+    });
+    const plan = planSundayPreview({ kind: "sunday_preview", week: 3, winProbs: week([matchup(1, justin, brandon)]), lineupAlerts: [] });
+    const away = (plan.facts["m-1"] as Sides).away;
+    expect(away.banked).toBe(32.2);
+    expect(away.stars).toEqual([
+      { name: "Sunday One", pos: "QB", projected: 20 },
+      { name: "Sunday Two", pos: "RB", projected: 14 },
+    ]);
+    expect(away.weakest).toEqual({ name: "Sunday Two", pos: "RB", projected: 14 });
+  });
+
+  it("Recap: no worstStarter when every starter who played beat his projection", () => {
+    const hot = side(JUSTIN, 150, 0.7, {
+      actual: 70,
+      starters: [final("1", "Ace", "QB", 20, 35), final("2", "Deuce", "WR", 12, 15), final("3", "Trey", "TE", 6, 20), line("4", "Monday Guy", "RB", 10)],
+    });
+    const cold = side(BRANDON, 160, 0.3, { actual: 40, starters: [final("5", "Boom", "WR", 15, 30), final("6", "Bust", "RB", 18, 10)] });
+    const m = planSundayRecap({ kind: "sunday_recap", week: 3, winProbs: week([matchup(1, hot, cold)]) }).facts["m-1"] as Sides;
+    expect(m.home.topStarter).toEqual({ name: "Ace", pos: "QB", points: 35 });
+    expect(m.home).not.toHaveProperty("worstStarter");
+    // A starter who fell short is still named.
+    expect(m.away.worstStarter).toEqual({ name: "Bust", pos: "RB", points: 10, projected: 18 });
+  });
+
+  it("Recap: one-decimal win chances add to 100 in the facts, the fallback and the table", () => {
+    // On their own, 37.55 and 62.45 would both round up: 37.6 and 62.5.
+    const plan = planSundayRecap({ kind: "sunday_recap", week: 3, winProbs: week([matchup(1, side(JUSTIN, 150, 0.3755, { actual: 80 }), side(BRANDON, 160, 0.6245, { actual: 90 }))]) });
+    const m = plan.facts["m-1"] as Sides;
+    expect([m.home.winPct, m.away.winPct]).toEqual([37.6, 62.4]);
+    const fallback = plan.sections[1].blocks.flatMap((b) => (b.type === "slot" && b.slot === "m-1" ? b.fallback : []));
+    expect(fallback).toEqual([{ type: "paragraph", text: "Justin 80, Brandon 90. Win chance: 37.6% to 62.4%." }]);
+    const table = plan.sections[1].blocks.find((b) => b.type === "table");
+    expect(table?.type === "table" && table.rows.map((r) => r[3])).toEqual(["37.6%", "62.4%"]);
+  });
+});

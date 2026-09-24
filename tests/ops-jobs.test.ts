@@ -40,13 +40,13 @@ vi.mock("@/lib/fantasycalc", async (importOriginal) => {
   return { ...mod, getFantasyCalc: vi.fn(async () => Promise.reject(new Error("offline"))) };
 });
 
-import { getIssue, listIssues, listRoasts, roastIds, saveRoast } from "@/lib/archive";
+import { getIssue, getRoast, listIssues, listRoasts, roastIds, saveRoast } from "@/lib/archive";
 import { setEmailTransportForTests } from "@/lib/email";
 import { MSTP_LEAGUE_ID } from "@/lib/env";
 import { draftFacts, tnfFacts, transactionFacts, weeklyFacts } from "@/lib/facts";
 import { diffInjuries, lineupAlerts } from "@/lib/jobs/daily-facts";
 import { ensurePickRoast, listJobRuns, readDraftPickTimes, runDaily, runTick, todaysPlan } from "@/lib/jobs";
-import { externalBriefs, publishExternal } from "@/lib/jobs/issues";
+import { externalBriefs, publishExternal, setClaimRetryMsForTests } from "@/lib/jobs/issues";
 import { claimOnce, getDone, releaseClaim } from "@/lib/jobs/once";
 import { backfillOddsHistory, getPowerRankings, getWinProbabilities, runSeasonSim } from "@/lib/models";
 import { isRoastConfigured, issueBrief, roastIssue, roastItem, withinBudget } from "@/lib/roast";
@@ -643,6 +643,126 @@ describe("the external writer (publishExternal)", () => {
     expect(t.sent).toHaveLength(1);
   });
 
+  it("a rewrite brief taken before the issue went out cannot replace it or email it again", async () => {
+    autoMode();
+    const ctx = fakeCtx();
+    // rewrite=1 while nothing is out yet: an ordinary brief, pinned to no sent words.
+    expect((await brief(ctx, true)).published).toBe(false);
+    // No reply by 8 AM: the job writes the issue itself and sends it.
+    expect(outcome(await runDaily(TUE, { ctx, schedule }), "weekly_recap")).toMatchObject({ status: "ran", issueSlug: SLUG });
+    expect(t.sent).toHaveLength(1);
+
+    expect(await post(ctx, WORDS, "now")).toMatchObject({ status: "stale" });
+    expect(await post(ctx, WORDS)).toMatchObject({ status: "stale" });
+    expect(await getIssue(ctx.leagueId, SLUG)).toMatchObject({ status: "sent", dek: "Week 3, reviewed.", factsOnly: true });
+    expect(t.sent).toHaveLength(1);
+  });
+
+  it("a rewrite reply is stale once the site's words moved on to another reply to the same brief", async () => {
+    autoMode();
+    const ctx = fakeCtx();
+    await brief(ctx);
+    expect(await post(ctx, WORDS, "now")).toMatchObject({ status: "sent" });
+    await brief(ctx, true);
+    expect(await post(ctx, NEW_WORDS)).toMatchObject({ status: "updated" });
+    // The words this brief was taken against are gone from the site: a third version is refused.
+    expect(await post(ctx, "@@dek\nWeek 3, and nobody folded at all.", "now")).toMatchObject({ status: "stale" });
+    expect(await getIssue(ctx.leagueId, SLUG)).toMatchObject({ status: "sent", dek: "Week 3, and Manager 2 folded first, again." });
+    expect(t.sent).toHaveLength(1);
+  });
+
+  it("a rewrite queued first and then posted with deliver now emails its words exactly once; a third post emails nothing", async () => {
+    autoMode();
+    const ctx = fakeCtx();
+    await brief(ctx);
+    expect(await post(ctx, WORDS, "now")).toMatchObject({ status: "sent" });
+    await brief(ctx, true);
+    expect(await post(ctx, NEW_WORDS)).toMatchObject({ status: "updated", detail: "Replaced on the site. Nobody was emailed again." });
+    expect(t.sent).toHaveLength(1);
+
+    // Already on the site, never emailed: deliver now sends them.
+    expect(await post(ctx, NEW_WORDS, "now")).toMatchObject({ status: "resent" });
+    expect(t.sent).toHaveLength(2);
+    expect(t.sent[1].messages[0].text).toContain("Week 3, and Manager 2 folded first, again.");
+
+    expect(await post(ctx, NEW_WORDS, "now")).toMatchObject({ status: "updated", detail: "Same words as the issue on the site: nothing changed." });
+    expect(t.sent).toHaveLength(2);
+  });
+
+  it("a rewrite back to the words the league was first sent goes on the site without a second email", async () => {
+    autoMode();
+    const ctx = fakeCtx();
+    await brief(ctx);
+    expect(await post(ctx, WORDS, "now")).toMatchObject({ status: "sent" });
+    await brief(ctx, true);
+    expect(await post(ctx, NEW_WORDS, "now")).toMatchObject({ status: "resent" });
+    expect(t.sent).toHaveLength(2);
+
+    await brief(ctx, true);
+    expect(await post(ctx, WORDS, "now")).toMatchObject({
+      status: "updated",
+      detail: "Replaced on the site. These exact words already went to the league, so nobody was emailed.",
+    });
+    expect(t.sent).toHaveLength(2);
+    expect(await getIssue(ctx.leagueId, SLUG)).toMatchObject({ status: "sent", dek: "Week 3, and Manager 2 folded first." });
+  });
+
+  it("an issue published without email (approved) is never emailed by a rewrite with deliver now", async () => {
+    vi.stubEnv("NEWSLETTER_MODE", "auto");
+    vi.stubEnv("LEAGUE_EMAILS", addr("fan"));
+    const ctx = fakeCtx();
+    await brief(ctx);
+    // Email is not set up: the reply goes on the site only.
+    expect(await post(ctx, WORDS, "now")).toMatchObject({ status: "sent" });
+    expect(await getIssue(ctx.leagueId, SLUG)).toMatchObject({ status: "approved" });
+
+    // Email set up later: a rewrite replaces the words and still emails nobody.
+    setEmailTransportForTests(t);
+    expect((await brief(ctx, true)).published).toBe(true);
+    expect(await post(ctx, NEW_WORDS, "now")).toMatchObject({ status: "updated", detail: "Replaced on the site. Nobody was emailed again." });
+    expect(t.sent).toHaveLength(0);
+    expect(await getIssue(ctx.leagueId, SLUG)).toMatchObject({ status: "approved", dek: "Week 3, and Manager 2 folded first, again." });
+  });
+
+  it("the morning job skipped the period (placeholder facts): a reply queued after it is sent at once", async () => {
+    autoMode();
+    const ctx = fakeCtx();
+    await brief(ctx);
+    vi.mocked(weeklyFacts).mockImplementationOnce(async (week) => ({
+      week,
+      season: "2026",
+      matchups: [],
+      teams: [],
+      highest: null,
+      lowest: null,
+      loserOfTheWeek: null,
+      standings: [],
+      placeholder: true,
+    }));
+    expect(outcome(await runDaily(TUE, { ctx, schedule }), "weekly_recap")).toMatchObject({ status: "skipped", detail: "Facts are still placeholder data, so nothing was built." });
+    expect(await getDone(ctx.leagueId, KEY)).toBeNull();
+    expect(t.sent).toHaveLength(0);
+
+    // The weekly job does not come by again this week, so the reply does not wait for it.
+    expect(await post(ctx, WORDS)).toMatchObject({ status: "sent" });
+    expect(t.sent).toHaveLength(1);
+    expect(await getDone(ctx.leagueId, KEY)).toMatchObject({ slug: SLUG });
+    expect(await getIssue(ctx.leagueId, SLUG)).toMatchObject({ status: "sent", dek: "Week 3, and Manager 2 folded first." });
+  });
+
+  it("the morning job waits out a claim an external save holds for a moment, instead of skipping the period", async () => {
+    const ctx = fakeCtx();
+    // An external save holds the period's claim for 400 ms (its few store writes).
+    expect(await claimOnce(ctx.leagueId, KEY, 0.4)).toBe("claimed");
+    setClaimRetryMsForTests(250);
+    try {
+      expect(outcome(await runDaily(TUE, { ctx, schedule }), "weekly_recap")).toMatchObject({ status: "ran", issueSlug: SLUG });
+    } finally {
+      setClaimRetryMsForTests(1500);
+    }
+    expect(await getDone(ctx.leagueId, KEY)).toMatchObject({ slug: SLUG });
+  });
+
   it("externalBriefs leaves The Daily to the site's own writer", async () => {
     const ctx = offseason();
     const jobs = todaysPlan(ctx, TUE.getTime(), schedule).jobs;
@@ -819,6 +939,98 @@ describe("runTick", () => {
     } finally {
       vi.mocked(isRoastConfigured).mockReturnValue(false);
       vi.mocked(withinBudget).mockResolvedValue(true);
+    }
+    expect(roastItem).not.toHaveBeenCalled();
+  });
+
+  it("skips an item a page wrote after the tick read the index, and never writes over it", async () => {
+    const now = Date.now();
+    const ctx = liveCtx(now);
+    vi.mocked(isRoastConfigured).mockReturnValue(true);
+    txNow = { trades: [trade("t1", now - 60_000)], waivers: [], placeholder: false };
+    vi.mocked(getDraftPicks).mockResolvedValue([]);
+    vi.mocked(draftFacts).mockResolvedValue(draftFactsWith([], { status: "drafting" }));
+    const indexKey = store.keys.snapshot(ctx.leagueId, "roast-index");
+    const page: Roast = { id: "trade:t1", kind: "trade", leagueId: ctx.leagueId, rosterIds: [1, 2], text: "Written by a page.", facts: trade("t1", now - 60_000), source: "llm", model: "claude-sonnet-5", createdAt: now, usage: null };
+    // The tick's own budget check comes after it read the index; by the per-item check a page
+    // viewer has written the trade.
+    let checks = 0;
+    vi.mocked(withinBudget).mockImplementation(async () => {
+      if (++checks >= 2) {
+        await saveRoast(page);
+        await store.set(indexKey, { "trade:t1": { s: "llm", t: now, w: true, v: ROAST_VOICE } });
+      }
+      return true;
+    });
+    let r: Awaited<ReturnType<typeof runTick>>;
+    try {
+      r = await runTick(new Date(now), { ctx, ignoreCooldown: true });
+    } finally {
+      vi.mocked(isRoastConfigured).mockReturnValue(false);
+      vi.mocked(withinBudget).mockReset().mockResolvedValue(true);
+    }
+    expect(roastItem).not.toHaveBeenCalled();
+    expect(r.outcomes[0]).toEqual({ job: "roast_trades", status: "skipped", detail: "1 already being written by another run." });
+    expect(await getRoast(ctx.leagueId, "trade:t1")).toEqual(page);
+    expect((await store.get<Record<string, unknown>>(indexKey))?.["trade:t1"]).toEqual({ s: "llm", t: now, w: true, v: ROAST_VOICE });
+  });
+
+  it("with the writer off, still writes facts-only posts when the day's spend is over the item share", async () => {
+    const now = Date.now();
+    const ctx = liveCtx(now);
+    vi.mocked(withinBudget).mockResolvedValue(false);
+    txNow = { trades: [trade("free", now - 60_000)], waivers: [], placeholder: false };
+    vi.mocked(getDraftPicks).mockResolvedValue([]);
+    vi.mocked(draftFacts).mockResolvedValue(draftFactsWith([], { status: "drafting" }));
+    let r: Awaited<ReturnType<typeof runTick>>;
+    try {
+      r = await runTick(new Date(now), { ctx, ignoreCooldown: true });
+    } finally {
+      vi.mocked(withinBudget).mockResolvedValue(true);
+    }
+    expect(vi.mocked(roastItem).mock.calls.map((c) => (c[1] as TradeFact).transactionId)).toEqual(["free"]);
+    expect(r.outcomes[0]).toEqual({ job: "roast_trades", status: "ran", detail: "Wrote up 1 trade." });
+    expect((await listRoasts(ctx.leagueId)).map((x) => [x.id, x.source])).toEqual([["trade:free", "facts_only"]]);
+  });
+
+  it("a page returns at once for a pick the writer gave up on (nothing will write it)", async () => {
+    const now = Date.now();
+    const ctx = liveCtx(now);
+    vi.mocked(isRoastConfigured).mockReturnValue(true);
+    const id = roastIds.pick("draft-1", 1);
+    const old: Roast = { id, kind: "draft_pick", leagueId: ctx.leagueId, rosterIds: [1], text: "Facts only.", facts: pick(1), source: "facts_only", model: null, createdAt: now - 7200_000, usage: null };
+    await saveRoast(old);
+    await store.set(store.keys.snapshot(ctx.leagueId, "roast-index"), { [id]: { s: "facts_only", t: now - 7200_000, w: true, n: 3, v: ROAST_VOICE } });
+    try {
+      const started = Date.now();
+      expect(await ensurePickRoast(ctx, pick(1), [pick(1)], 3_000)).toEqual(old);
+      expect(Date.now() - started).toBeLessThan(1_000);
+    } finally {
+      vi.mocked(isRoastConfigured).mockReturnValue(false);
+    }
+    expect(roastItem).not.toHaveBeenCalled();
+  });
+
+  it("a page waiting on another run's claim stops as soon as that run records a result", async () => {
+    const now = Date.now();
+    const ctx = liveCtx(now);
+    vi.mocked(isRoastConfigured).mockReturnValue(true);
+    const id = roastIds.pick("draft-1", 1);
+    // The tick holds the pick's claim, and records a facts-only result a moment later.
+    await store.lock(store.keys.lock(ctx.leagueId, `roast:${id}`), 300);
+    const written: Roast = { id, kind: "draft_pick", leagueId: ctx.leagueId, rosterIds: [1], text: "Facts only.", facts: pick(1), source: "facts_only", model: null, createdAt: now, usage: null };
+    const other = (async () => {
+      await new Promise((r) => setTimeout(r, 200));
+      await saveRoast(written);
+      await store.set(store.keys.snapshot(ctx.leagueId, "roast-index"), { [id]: { s: "facts_only", t: Date.now(), w: true, n: 1, v: ROAST_VOICE } });
+    })();
+    try {
+      const started = Date.now();
+      expect(await ensurePickRoast(ctx, pick(1), [pick(1)], 10_000)).toEqual(written);
+      expect(Date.now() - started).toBeLessThan(5_000);
+    } finally {
+      await other;
+      vi.mocked(isRoastConfigured).mockReturnValue(false);
     }
     expect(roastItem).not.toHaveBeenCalled();
   });

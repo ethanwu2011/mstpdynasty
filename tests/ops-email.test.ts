@@ -8,6 +8,7 @@ import {
   MAX_RECIPIENTS,
   readEmailStatus,
   recipients,
+  resendIssue,
   scrubAddresses,
   sendIssue,
   sendTestCopy,
@@ -143,6 +144,23 @@ describe("sending", () => {
     expect((await sendIssue(issue, "auto")).status).toBe("sent");
     expect((await sendIssue(issue, "auto")).status).toBe("skipped");
     expect(t.sent).toHaveLength(1);
+  });
+
+  it("resendIssue never emails the words the league already got from the first send; new words go once", async () => {
+    leagueList("a");
+    const issue = makeIssue({ factsOnly: false });
+    await saveIssue(issue);
+    expect((await sendIssue(issue, "auto")).status).toBe("sent");
+
+    const same = await getIssue(MSTP_LEAGUE_ID, issue.slug);
+    expect(await resendIssue(same!)).toMatchObject({ status: "skipped", error: "These exact words already went to the league." });
+    expect(t.sent).toHaveLength(1);
+
+    const rewritten = { ...same!, dek: "Week 3, reviewed again." };
+    await saveIssue(rewritten);
+    expect(await resendIssue(rewritten)).toMatchObject({ status: "sent", recipients: 1 });
+    expect(t.sent).toHaveLength(2);
+    expect(t.sent[1].messages[0].text).toContain("Week 3, reviewed again.");
   });
 });
 

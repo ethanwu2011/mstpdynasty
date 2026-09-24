@@ -40,10 +40,10 @@ vi.mock("@/lib/fantasycalc", async (importOriginal) => {
 
 import { standingsAsOf } from "@/lib/facts";
 import { refreshLines } from "@/lib/jobs/lines";
-import { currentLines, refreshSurfaceLines, setRoastClient, surfaceKeys } from "@/lib/roast";
+import { currentLines, oddsRows, powerRows, refreshSurfaceLines, rowHash, setRoastClient, surfaceKeys } from "@/lib/roast";
 import type { RoastClient } from "@/lib/roast/llm";
 import * as store from "@/lib/store";
-import type { LeagueContext, RoastSurface, StandingRow, StoredSurfaceLines, SurfaceRow, TeamRef } from "@/lib/types";
+import type { LeagueContext, PowerRankings, PowerRow, RoastSurface, SimResult, SimTeamOdds, StandingRow, StoredSurfaceLines, SurfaceRow, TeamRef } from "@/lib/types";
 import { fakeCtx } from "./ops-helpers";
 
 type Params = Parameters<RoastClient["beta"]["messages"]["create"]>[0];
@@ -223,5 +223,53 @@ describe("the standings job before the league's second week", () => {
     const facts = standingsFacts(calls);
     expect(facts).toHaveLength(4);
     expect(facts.map((f) => f.lastWeekRank)).toEqual([1, 2, 3, 4]);
+  });
+});
+
+describe("odds and power rows hash on the numbers a line quotes", () => {
+  const team1: TeamRef = { rosterId: 1, teamName: "Team 1", managerName: "Manager 1", managerKey: "m1" };
+  const sim = (over: Partial<SimTeamOdds> = {}): SimResult => ({
+    season: "2026",
+    asOfWeek: 4,
+    runs: 10_000,
+    seed: 1,
+    generatedAt: 0,
+    placeholder: false,
+    teams: [{ team: team1, wins: 3, losses: 1, ties: 0, pointsFor: 480, meanPoints: 120, sdPoints: 20, expectedWins: 8.04, playoffPct: 55.2, byePct: 12.4, titlePct: 4.61, lastPlacePct: 3.2, firstPickPct: 1, ...over }],
+  });
+  const power = (over: Partial<PowerRow> = {}): PowerRankings => ({
+    season: "2026",
+    asOfWeek: 4,
+    formula: "Half all-play, half points per game.",
+    placeholder: false,
+    rows: [{ rank: 2, previousRank: 3, team: team1, score: 0.6, allPlayWinPct: 0.6, allPlayWins: 24, allPlayLosses: 16, pointsPerGame: 121.35, projectedStrength: 145.12, wins: 3, losses: 1, luck: 0.4, ...over }],
+  });
+  const oddsHash = (over: Partial<SimTeamOdds> = {}) => rowHash(oddsRows(sim(over))[0]);
+  const powerHash = (over: Partial<PowerRow> = {}) => rowHash(powerRows(power(over))[0]);
+
+  it("odds: a sim rerun on fresh projections keeps the hash; a quoted number moving changes it", () => {
+    expect(oddsHash({ expectedWins: 8.31, playoffPct: 55.4, byePct: 11.6, titlePct: 4.64 })).toBe(oddsHash());
+    expect(oddsHash({ playoffPct: 58.1 })).not.toBe(oddsHash());
+    expect(oddsHash({ titlePct: 4.82 })).not.toBe(oddsHash());
+    expect(oddsHash({ expectedWins: 8.61 })).not.toBe(oddsHash());
+  });
+
+  it("power: the projection drifting within the point keeps the hash; the rank or the projection's point moving changes it", () => {
+    expect(powerHash({ projectedStrength: 145.38 })).toBe(powerHash());
+    expect(powerHash({ projectedStrength: 146.2 })).not.toBe(powerHash());
+    expect(powerHash({ rank: 1 })).not.toBe(powerHash());
+    expect(powerHash({ pointsPerGame: 124.1 })).not.toBe(powerHash());
+  });
+
+  it("an odds line is not rewritten when only the projections drifted", async () => {
+    const { client, calls } = scripted();
+    setRoastClient(client);
+    const ctx = fakeCtx();
+    const key = surfaceKeys.odds("2026", 4);
+    expect(await refreshSurfaceLines("odds", key, oddsRows(sim()), ctx, { now: T0 })).toMatchObject({ status: "written", written: 1 });
+    // Three hours on (past the two-hour rewrite window), the sim reran on fresh projections.
+    const drift = oddsRows(sim({ expectedWins: 8.31, playoffPct: 55.4, byePct: 11.6 }));
+    expect(await refreshSurfaceLines("odds", key, drift, ctx, { now: T0 + 3 * HOUR })).toMatchObject({ status: "fresh", asked: 0 });
+    expect(calls).toHaveLength(1);
   });
 });
