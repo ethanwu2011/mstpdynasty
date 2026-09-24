@@ -6,7 +6,7 @@
 import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { SYSTEM_PROMPT } from "@/lib/roast/persona";
-import { buildRoastRequest, ROAST_MAX_TOKENS, ROAST_MODEL } from "@/lib/roast/llm";
+import { buildRoastRequest, costUsd, dailyBudgetUsd, ROAST_MAX_TOKENS, ROAST_MODEL, ROAST_MODELS } from "@/lib/roast/llm";
 import { userMessage } from "@/lib/roast";
 import { planItem } from "@/lib/roast/items";
 import { AllowedNumbers, checkText, parseSlots } from "@/lib/roast/postcheck";
@@ -136,21 +136,48 @@ describe("the system prompt", () => {
 });
 
 describe("the Claude request", () => {
-  it("is exactly the spec's call shape", () => {
+  it("is exactly the spec's call shape for a newsletter", () => {
     const req = buildRoastRequest("hello");
     expect(req).toEqual({
       model: "claude-opus-5",
       max_tokens: 16000,
       betas: ["server-side-fallback-2026-07-01"],
       fallbacks: "default",
-      cache_control: { type: "ephemeral" },
       system: [{ type: "text", text: SYSTEM_PROMPT, cache_control: { type: "ephemeral" } }],
       messages: [{ role: "user", content: "hello" }],
     });
     expect(ROAST_MODEL).toBe("claude-opus-5");
     expect(ROAST_MAX_TOKENS).toBe(16000);
-    for (const banned of ["temperature", "top_p", "top_k", "thinking", "stop_sequences"]) expect(req).not.toHaveProperty(banned);
+    for (const banned of ["temperature", "top_p", "top_k", "thinking", "stop_sequences", "cache_control"]) expect(req).not.toHaveProperty(banned);
     expect(req.messages.every((m) => m.role === "user")).toBe(true); // no assistant prefill
+  });
+
+  it("sends items and stat lines to the cheaper model at lower effort, with an hour-long system cache", () => {
+    for (const [kind, effort] of [["item", "medium"], ["lines", "low"]] as const) {
+      const req = buildRoastRequest("hello", kind);
+      expect(req).toEqual({
+        model: "claude-sonnet-5",
+        max_tokens: 8000,
+        output_config: { effort },
+        system: [{ type: "text", text: SYSTEM_PROMPT, cache_control: { type: "ephemeral", ttl: "1h" } }],
+        messages: [{ role: "user", content: "hello" }],
+      });
+      // The fallback beta belongs to the newsletter's model only.
+      expect(req).not.toHaveProperty("betas");
+      expect(req).not.toHaveProperty("fallbacks");
+    }
+    expect(ROAST_MODELS).toEqual({ issue: "claude-opus-5", item: "claude-sonnet-5", lines: "claude-sonnet-5" });
+  });
+
+  it("prices a reply from its usage and the model that wrote it", () => {
+    const usage = { inputTokens: 1_000_000, outputTokens: 1_000_000, cacheReadInputTokens: 1_000_000, cacheCreationInputTokens: 1_000_000 };
+    expect(costUsd("claude-opus-5", usage)).toBeCloseTo(5 + 25 + 0.5 + 10);
+    expect(costUsd("claude-sonnet-5", usage)).toBeCloseTo(2 + 10 + 0.2 + 4);
+    expect(costUsd("something-new", usage)).toBeCloseTo(costUsd("claude-opus-5", usage));
+    expect(costUsd("claude-opus-5", null)).toBe(0);
+    expect(dailyBudgetUsd(undefined)).toBe(1.5);
+    expect(dailyBudgetUsd("0.75")).toBe(0.75);
+    expect(dailyBudgetUsd("nope")).toBe(1.5);
   });
 
   it("keeps the system prefix byte-identical across different requests", () => {
@@ -333,7 +360,7 @@ describe("LINES requests (one line per stat-table row)", () => {
     expect(msg).not.toMatch(/JSON/);
     expect(msg).not.toMatch(/\broast/i);
     // The request goes out with the same frozen system prompt as every issue and item.
-    expect(buildRoastRequest(msg).system).toEqual([{ type: "text", text: SYSTEM_PROMPT, cache_control: { type: "ephemeral" } }]);
+    expect(buildRoastRequest(msg, "lines").system).toEqual([{ type: "text", text: SYSTEM_PROMPT, cache_control: { type: "ephemeral", ttl: "1h" } }]);
   });
 
   it("read a slot reply and a JSON reply alike, and hold every line to the same post-check", () => {

@@ -39,6 +39,8 @@ export interface Store {
    * starts a ttlSeconds window; later ones never extend it (rate-limit buckets).
    */
   incr(key: string, ttlSeconds: number): Promise<number>;
+  /** incr by a whole `amount` instead of 1 (the writer's spend counter, in micro-dollars). */
+  incrBy(key: string, amount: number, ttlSeconds: number): Promise<number>;
 }
 
 const PREFIX = () => process.env.STORE_PREFIX ?? "mstp:";
@@ -88,6 +90,11 @@ function upstashStore(creds: { url: string; token: string }): Store {
       if (n === 1) await redis.expire(p + key, Math.max(1, Math.ceil(ttlSeconds)));
       return n;
     },
+    async incrBy(key: string, amount: number, ttlSeconds: number) {
+      const n = await redis.incrby(p + key, Math.round(amount));
+      if (n === Math.round(amount)) await redis.expire(p + key, Math.max(1, Math.ceil(ttlSeconds)));
+      return n;
+    },
   };
 }
 
@@ -134,8 +141,11 @@ function memoryStore(): Store {
       map.delete(key);
     },
     async incr(key: string, ttlSeconds: number) {
+      return this.incrBy(key, 1, ttlSeconds);
+    },
+    async incrBy(key: string, amount: number, ttlSeconds: number) {
       const e = live(key);
-      const n = (typeof e?.v === "number" ? e.v : 0) + 1;
+      const n = (typeof e?.v === "number" ? e.v : 0) + Math.round(amount);
       map.set(key, { v: n, exp: e ? e.exp : Date.now() + ttlSeconds * 1000 });
       return n;
     },
@@ -236,8 +246,11 @@ function fileStore(): Store {
     },
     // Local dev only: read-modify-write, not atomic across processes.
     async incr(key: string, ttlSeconds: number) {
+      return this.incrBy(key, 1, ttlSeconds);
+    },
+    async incrBy(key: string, amount: number, ttlSeconds: number) {
       const e = await readEntry(key);
-      const n = (typeof e?.v === "number" ? e.v : 0) + 1;
+      const n = (typeof e?.v === "number" ? e.v : 0) + Math.round(amount);
       await writeEntry(key, { v: n, exp: e ? e.exp : Date.now() + ttlSeconds * 1000 });
       return n;
     },
@@ -283,6 +296,7 @@ export const list = (prefix: string) => getStore().list(prefix);
 export const lock = (key: string, ttlSeconds: number) => getStore().lock(key, ttlSeconds);
 export const unlock = (key: string) => getStore().unlock(key);
 export const incr = (key: string, ttlSeconds: number) => getStore().incr(key, ttlSeconds);
+export const incrBy = (key: string, amount: number, ttlSeconds: number) => getStore().incrBy(key, amount, ttlSeconds);
 
 /**
  * Shared key convention. League-scoped data always starts with `league:<leagueId>:` so a

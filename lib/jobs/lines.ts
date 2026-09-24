@@ -45,9 +45,9 @@ import type { FantasyCalcSnapshot, JobOutcome, LeagueContext, PlayersMap, RoastS
 import { ROAST_VOICE } from "./tick";
 
 /** The tick sweeps the tables at most this often. */
-export const TABLE_SWEEP_SECONDS = 600;
-/** Draft odds move with every pick: their lines may be rewritten this often while the draft is live. */
-export const DRAFT_ODDS_LINES_MAX_AGE_MS = 5 * 60_000;
+export const TABLE_SWEEP_SECONDS = 1800;
+/** Draft odds move with every pick: a line whose numbers went stale may be rewritten this soon while the draft is live. */
+export const DRAFT_ODDS_LINES_STALE_MS = 20 * 60_000;
 /** Rows asked per surface per run (the rest wait for the next run). */
 export const MAX_LINE_ROWS_PER_RUN = 80;
 /** Claim on one surface while its lines are being written (released when done). */
@@ -126,7 +126,7 @@ function instantJobs(ctx: LeagueContext): SurfaceJob[] {
         key: surfaceKeys.odds(ctx.season, 0),
         rows: draftOddsRows(odds),
         opts: {
-          maxAgeMs: odds.basis === "drafting" ? DRAFT_ODDS_LINES_MAX_AGE_MS : undefined,
+          staleAfterMs: odds.basis === "drafting" ? DRAFT_ODDS_LINES_STALE_MS : undefined,
           context:
             odds.basis === "drafting"
               ? "These are odds for a season that started today with only the players drafted so far, every open starting spot filled by the best player nobody has drafted."

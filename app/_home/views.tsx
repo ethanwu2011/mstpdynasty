@@ -25,7 +25,9 @@ import { IssuesPanel, LeadPanel, ShamePanel } from "./shared";
 /** The last week with final scores: Sleeper's last scored leg when it is not ahead of the league week. */
 function lastScoredWeek(ctx: LeagueContext): number {
   const scored = ctx.league.settings.last_scored_leg ?? 0;
-  return scored > 0 && scored <= ctx.week ? scored : ctx.week - 1;
+  const week = scored > 0 && scored <= ctx.week ? scored : ctx.week - 1;
+  // Weeks before the league's start_week were never played.
+  return week >= (ctx.league.settings.start_week ?? 1) ? week : 0;
 }
 
 /** The one-liner for whatever leads the page: a pick or a trade. */

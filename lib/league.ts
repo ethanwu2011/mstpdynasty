@@ -116,13 +116,42 @@ export function buildManagers(rosters: SleeperRoster[], users: SleeperUser[]): M
   });
 }
 
+/** The league's first week (Sleeper settings.start_week, default 1). */
+export function leagueStartWeek(league: SleeperLeague): number {
+  const s = league.settings.start_week;
+  return typeof s === "number" && s >= 1 ? s : 1;
+}
+
+/**
+ * Sleeper scores the weeks before a league's start_week anyway: this league's startup draft ran
+ * into week 2 and came out of it with a 0-0 tie for every team and last_scored_leg 2. Those
+ * weeks were never league weeks, so drop them here, once, and no page shows a "Week 2" nobody
+ * played or a 0-0-1 record.
+ */
+export function dropPreStartWeeks(league: SleeperLeague, rosters: SleeperRoster[]): { league: SleeperLeague; rosters: SleeperRoster[] } {
+  const start = leagueStartWeek(league);
+  if (start <= 1) return { league, rosters };
+  const scored = league.settings.last_scored_leg ?? 0;
+  const realWeeks = Math.max(0, scored - start + 1);
+  const cleanLeague = scored > 0 && scored < start ? { ...league, settings: { ...league.settings, last_scored_leg: 0 } } : league;
+  const cleanRosters = rosters.map((r) => {
+    const st = r.settings;
+    const ties = st.ties ?? 0;
+    // Pre-start weeks are empty rosters scoring 0-0, so the extra games are all ties.
+    const extra = (st.wins ?? 0) + (st.losses ?? 0) + ties - realWeeks;
+    return extra > 0 && ties > 0 ? { ...r, settings: { ...st, ties: Math.max(0, ties - extra) } } : r;
+  });
+  return { league: cleanLeague, rosters: cleanRosters };
+}
+
 async function loadLeagueContext(leagueId: string): Promise<LeagueContext> {
-  const [league, users, rosters, state] = await Promise.all([
+  const [rawLeague, users, rawRosters, state] = await Promise.all([
     getLeague(leagueId),
     getUsers(leagueId),
     getRosters(leagueId),
     getNflState(),
   ]);
+  const { league, rosters } = dropPreStartWeeks(rawLeague, rawRosters);
   const draft = league.draft_id ? await getDraft(league.draft_id).catch(() => null) : null;
   const weeks = seasonWeeks(league);
 

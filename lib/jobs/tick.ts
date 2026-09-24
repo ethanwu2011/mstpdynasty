@@ -16,7 +16,7 @@
 import { getRoast, listRoasts, roastIds, saveRoast } from "@/lib/archive";
 import { draftFacts, transactionFacts } from "@/lib/facts";
 import { withFrozenRank } from "@/lib/facts/draft";
-import { isRoastConfigured, roastItem } from "@/lib/roast";
+import { isRoastConfigured, roastItem, withinBudget } from "@/lib/roast";
 import { getDraftPicks } from "@/lib/sleeper";
 import * as store from "@/lib/store";
 import type { DraftPickFact, JobOutcome, LeagueContext, Roast, RoastItemFact, RoastItemKind, RoastSource, WaiverFact } from "@/lib/types";
@@ -42,6 +42,11 @@ const REROAST_AFTER_MS = 30 * 60_000;
  * lines, the once-per-issue cuck chair enforced by code): every stored item is written again.
  */
 export const ROAST_VOICE = 4;
+/**
+ * A new voice rewrites only this many of the newest items per kind. Bumping the voice once
+ * rewrote every pick of the draft (hundreds of calls); older items keep the voice they have.
+ */
+export const REVOICE_NEWEST = 10;
 /** Give up on the writer for an item after this many facts-only results while it was configured. */
 const MAX_WRITER_ATTEMPTS = 3;
 const RETRY_ERROR_AFTER_MS = 3600_000;
@@ -79,12 +84,12 @@ async function loadIndex(leagueId: string): Promise<RoastIndex> {
   return rebuilt;
 }
 
-function wants(idx: RoastIndex, id: string, now: number, writerConfigured: boolean): boolean {
+function wants(idx: RoastIndex, id: string, now: number, writerConfigured: boolean, revoice = true): boolean {
   const e = idx[id];
   if (!e) return true;
   if (e.s === "error") return now - e.t > RETRY_ERROR_AFTER_MS;
   if (!writerConfigured) return false;
-  if (e.s === "llm") return (e.v ?? 1) < ROAST_VOICE;
+  if (e.s === "llm") return revoice && (e.v ?? 1) < ROAST_VOICE;
   // Written before the writer existed (for example before the API key was added): redo it now.
   if (!e.w) return true;
   // Gave up on the writer: a new voice (and its new checks) gets one more try.
@@ -178,8 +183,13 @@ export async function tickOutcomes(ctx: LeagueContext, now: number): Promise<Job
 
   const index = await loadIndex(l);
   const writer = isRoastConfigured();
-  const wanted = candidates.filter((c) => wants(index, c.id, now, writer));
-  const selected = wanted.slice(0, MAX_ROASTS_PER_TICK);
+  // Candidates are newest first within each group, so the first REVOICE_NEWEST of a group are its newest.
+  const seen: Partial<Record<Group, number>> = {};
+  const recent = new Set(candidates.filter((c) => (seen[c.group] = (seen[c.group] ?? 0) + 1) <= REVOICE_NEWEST).map((c) => c.id));
+  const wanted = candidates.filter((c) => wants(index, c.id, now, writer, recent.has(c.id)));
+  // Out of today's budget for items: write nothing, so nothing counts as a failed attempt.
+  const affordable = !writer || (await withinBudget("item", now));
+  const selected = affordable ? wanted.slice(0, MAX_ROASTS_PER_TICK) : [];
 
   const updates: RoastIndex = {};
   const results = await mapLimit(selected, ROAST_CONCURRENCY, async (c) => {
@@ -224,7 +234,7 @@ export async function tickOutcomes(ctx: LeagueContext, now: number): Promise<Job
     if (failed) parts.push(`${failed} failed.`);
     if (placeholders) parts.push(`${placeholders} came back as placeholders (not saved).`);
     if (busy) parts.push(`${busy} already being written by another run.`);
-    if (waiting > 0) parts.push(`${waiting} more next tick.`);
+    if (waiting > 0) parts.push(affordable ? `${waiting} more next tick.` : `${waiting} waiting for tomorrow's writer budget.`);
     const status: JobOutcome["status"] = failed && !roasted ? "error" : roasted ? "ran" : "skipped";
     outcomes.push({ job: group, status, detail: parts.join(" ") || `No new ${many}.` });
   }
@@ -252,7 +262,7 @@ export async function ensurePickRoast(
     if (!writer || existing?.source === "llm") return existing;
     const index = await loadIndex(l);
     const deadline = Date.now() + budgetMs;
-    if (wants(index, id, Date.now(), writer)) {
+    if (wants(index, id, Date.now(), writer) && (await withinBudget("item"))) {
       const claim = store.keys.lock(l, `roast:${id}`);
       if (await store.lock(claim, ROAST_CLAIM_SECONDS).catch(() => false)) {
         const now = Date.now();

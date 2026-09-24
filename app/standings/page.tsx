@@ -104,7 +104,8 @@ export default async function StandingsPage({ searchParams }: { searchParams: Se
   const byes = playoffTeams > 1 ? 2 ** playoffRounds(playoffTeams) - playoffTeams : 0;
   const championId = bracket.find((m) => m.p === 1)?.w ?? null;
   const scored = ctx.league.settings.last_scored_leg ?? 0;
-  const through = Math.min(scored > 0 ? scored : Math.max(0, ctx.week - 1), ctx.lastRegularSeasonWeek);
+  const lastPlayed = scored > 0 ? scored : Math.max(0, ctx.week - 1);
+  const through = lastPlayed >= (ctx.league.settings.start_week ?? 1) ? Math.min(lastPlayed, ctx.lastRegularSeasonWeek) : 0;
   const powerGames = Boolean(power && power.rows.some((r) => r.pointsPerGame > 0));
   const WORDS = ["No", "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine", "Ten", "Eleven", "Twelve", "Thirteen", "Fourteen"];
   const teamWord = WORDS[rows.length] ?? String(rows.length);

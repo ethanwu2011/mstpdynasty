@@ -137,9 +137,9 @@ async function withPreviousRanks(rows: StandingRow[], week: number, loader: Fact
 /** Last week whose results are final: Sleeper's last_scored_leg, else the week before the current one. */
 export function lastCompletedWeek(ctx: LeagueContext): number {
   const scored = ctx.league.settings.last_scored_leg ?? 0;
-  if (scored > 0) return Math.min(scored, ctx.lastWeek);
-  if (ctx.phase === "complete") return ctx.lastWeek;
-  return Math.max(0, ctx.week - 1);
+  const week = scored > 0 ? Math.min(scored, ctx.lastWeek) : ctx.phase === "complete" ? ctx.lastWeek : Math.max(0, ctx.week - 1);
+  // A week before the league's start_week was never played (see dropPreStartWeeks).
+  return week >= (ctx.league.settings.start_week ?? 1) ? week : 0;
 }
 
 interface WeekEnv {

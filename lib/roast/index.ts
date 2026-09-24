@@ -43,7 +43,7 @@ import type {
 import { configured } from "@/lib/env";
 import { draftFacts } from "@/lib/facts";
 import { planItem, type ItemPlan } from "./items";
-import { addUsage, callRoastModel, hasRoastClient, ISSUE_REQUEST, ITEM_REQUEST, sharedStoreMissing } from "./llm";
+import { addUsage, callRoastModel, hasRoastClient, sharedStoreMissing } from "./llm";
 import { draftContext, EMPTY_MEMORY, issueMemory, starterCounts, type PayloadMemory } from "./memory";
 import { loadRoastNotes, notesFor } from "./notes";
 import { ALLUSION_SLOT, HIDDEN_SLOTS, planDaily, planDraftGrades, planThursday, planWeekly, type IssuePlan, type SlotSpec, type WaiverMode } from "./plan";
@@ -53,7 +53,18 @@ import { AllowedNumbers, checkText, describeDrops, limitExclamations, parseSlots
 export { ISSUE_TITLES, issueTitle } from "./plan";
 export { SYSTEM_PROMPT } from "./persona";
 export { draftContext, issueMemory } from "./memory";
-export { buildRoastRequest, hasRoastClient, MAX_WRITER_CALLS_PER_DAY, ROAST_MODEL, setRoastClient, sharedStoreMissing } from "./llm";
+export {
+  buildRoastRequest,
+  dailyBudgetUsd,
+  hasRoastClient,
+  MAX_WRITER_CALLS_PER_DAY,
+  ROAST_MODEL,
+  ROAST_MODELS,
+  setRoastClient,
+  sharedStoreMissing,
+  spentTodayUsd,
+  withinBudget,
+} from "./llm";
 export {
   checkLine,
   CUCK_CHAIR_PER_TABLE,
@@ -68,6 +79,7 @@ export {
   ROW_RETRY_AFTER_MS,
   rowHash,
   SURFACE_MAX_AGE_MS,
+  SURFACE_STALE_REWRITE_MS,
   SURFACES,
   surfaceFactsHash,
   surfaceKeys,
@@ -345,7 +357,7 @@ export async function roastIssue(kind: IssueKind, facts: IssueFacts, ctx?: Leagu
   };
 
   const previous = writer ? await previousIssues(c.leagueId, slug) : null;
-  const res = await callRoastModel(userMessage(plan, lore, previous), label, ISSUE_REQUEST);
+  const res = await callRoastModel(userMessage(plan, lore, previous), label, "issue");
   if (!res.ok) return { ...base, model: res.model, usage: res.usage };
   let usage: RoastUsage | null = res.usage;
   let model: string | null = res.model;
@@ -361,7 +373,7 @@ export async function roastIssue(kind: IssueKind, facts: IssueFacts, ctx?: Leagu
   if (failed.length) {
     // One more call for just the failing slots. The system prompt is cached, so this is cheap.
     const retry = { ...plan, slots: failed };
-    const again = await callRoastModel(userMessage(retry, lore, previous) + retryNote(first.reasons), `${label} retry`, ISSUE_REQUEST);
+    const again = await callRoastModel(userMessage(retry, lore, previous) + retryNote(first.reasons), `${label} retry`, "issue");
     usage = addUsage(usage, again.usage);
     model = again.model ?? model;
     if (again.ok) {
@@ -437,7 +449,7 @@ async function writeItem(plan: ItemPlan, lore: Record<string, string>, recent: s
   let model: string | null = null;
   let note = "";
   for (let attempt = 0; attempt < 2; attempt++) {
-    const res = await callRoastModel(message + note, `${plan.id}${attempt ? " retry" : ""}`, ITEM_REQUEST);
+    const res = await callRoastModel(message + note, `${plan.id}${attempt ? " retry" : ""}`, "item");
     usage = addUsage(usage, res.usage);
     model = res.model ?? model;
     if (!res.ok) return { text: null, model, usage };

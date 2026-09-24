@@ -17,6 +17,7 @@ vi.mock("@/lib/roast", () => ({
   hasRoastClient: vi.fn(() => false),
   roastIssue: vi.fn(),
   roastItem: vi.fn(),
+  withinBudget: vi.fn(async () => true),
 }));
 vi.mock("@/lib/models", () => ({
   getWinProbabilities: vi.fn(),
@@ -45,7 +46,7 @@ import { draftFacts, tnfFacts, transactionFacts, weeklyFacts } from "@/lib/facts
 import { diffInjuries, lineupAlerts } from "@/lib/jobs/daily-facts";
 import { listJobRuns, readDraftPickTimes, runDaily, runTick } from "@/lib/jobs";
 import { backfillOddsHistory, getPowerRankings, getWinProbabilities, runSeasonSim } from "@/lib/models";
-import { isRoastConfigured, roastIssue, roastItem } from "@/lib/roast";
+import { isRoastConfigured, roastIssue, roastItem, withinBudget } from "@/lib/roast";
 import { ROAST_VOICE } from "@/lib/jobs/tick";
 import { getDraftPicks, getPlayers } from "@/lib/sleeper";
 import * as store from "@/lib/store";
@@ -437,6 +438,25 @@ describe("runTick", () => {
       vi.mocked(isRoastConfigured).mockReturnValue(false);
     }
     expect(vi.mocked(roastItem).mock.calls.map((c) => (c[1] as TradeFact).transactionId).sort()).toEqual(["gaveup", "old"]);
+  });
+
+  it("writes nothing once the day's item budget is spent, and counts no failed attempt", async () => {
+    const now = Date.now();
+    const ctx = liveCtx(now);
+    vi.mocked(isRoastConfigured).mockReturnValue(true);
+    vi.mocked(withinBudget).mockResolvedValue(false);
+    txNow = { trades: [trade("broke", now - 60_000)], waivers: [], placeholder: false };
+    vi.mocked(getDraftPicks).mockResolvedValue([]);
+    vi.mocked(draftFacts).mockResolvedValue(draftFactsWith([], { status: "drafting" }));
+    try {
+      await runTick(new Date(now), { ctx, ignoreCooldown: true });
+    } finally {
+      vi.mocked(isRoastConfigured).mockReturnValue(false);
+      vi.mocked(withinBudget).mockResolvedValue(true);
+    }
+    expect(vi.mocked(roastItem)).not.toHaveBeenCalled();
+    const idx = await store.get<Record<string, unknown>>(store.keys.snapshot(ctx.leagueId, "roast-index"));
+    expect(idx?.["trade:broke"]).toBeUndefined();
   });
 
   it("takes the cooldown lock before loading the league", async () => {

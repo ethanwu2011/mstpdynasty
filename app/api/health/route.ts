@@ -2,7 +2,7 @@ import { readEmailStatus, recipientSummary } from "@/lib/email";
 import { adminSecretProblem, bearerOf, checkAdminAuth, checkCronAuth, clientIp } from "@/lib/email/gate";
 import { allowAdminAttempt } from "@/lib/email/limits";
 import { configured } from "@/lib/env";
-import { isRoastConfigured } from "@/lib/roast";
+import { dailyBudgetUsd, isRoastConfigured, ROAST_MODELS, spentTodayUsd } from "@/lib/roast";
 import { pickBackend } from "@/lib/store";
 import { readDrops, readWriterStatus } from "@/lib/roast/status";
 
@@ -37,11 +37,12 @@ export async function GET(req: Request) {
     }
     authed = Boolean(process.env.CRON_SECRET && checkCronAuth(req).ok) || checkAdminAuth(req).ok;
   }
-  const [writer, email, drops, recipients] = await Promise.all([
+  const [writer, email, drops, recipients, spent] = await Promise.all([
     readWriterStatus(),
     readEmailStatus(),
     readDrops(),
     authed ? recipientSummary().catch(() => null) : Promise.resolve(null),
+    spentTodayUsd().catch(() => null),
   ]);
   return Response.json(
     {
@@ -49,6 +50,9 @@ export async function GET(req: Request) {
       writerConfigured: configured.anthropic(),
       emailConfigured: configured.resend(),
       lastWriterCall: writer,
+      // Which model writes what, and today's API spend (Eastern day) against the daily budget.
+      writerModels: ROAST_MODELS,
+      writerSpendToday: spent === null ? null : { usd: Math.round(spent * 100) / 100, budgetUsd: dailyBudgetUsd() },
       lastEmail: email,
       // Sentences the fact check threw out most recently (the same text the site would have shown).
       recentDrops: drops.slice(0, 12),

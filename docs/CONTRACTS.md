@@ -263,7 +263,10 @@ persist issues and roasts through `lib/archive.ts` and write a run log under `ke
 - Writer spend guards (`lib/roast/llm.ts`): on Vercel the writer only runs with the shared store
   (`sharedStoreMissing()`: `VERCEL` set and the backend is not Upstash makes `hasRoastClient()` and
   `isRoastConfigured()` false, so a tick or the daily job makes no model call), and every call counts
-  against `MAX_WRITER_CALLS_PER_DAY` (400 per Eastern day, store-backed, fails closed). League sends
+  against `MAX_WRITER_CALLS_PER_DAY` (400 per Eastern day, store-backed, fails closed) and a dollar
+  budget per Eastern day (`WRITER_DAILY_BUDGET_USD`, default $1.50, priced from each reply's usage):
+  stat lines stop at 40% of it, items at 85%, issues at 100%. Issues go to claude-opus-5; items and
+  lines go to claude-sonnet-5 at lower effort. /api/health shows `writerModels` and `writerSpendToday`. League sends
   and approve links refuse (`not_configured`) on Vercel while the store is the per-instance file store.
 - Job details a person can read never call anything a roast ("Wrote up 1 trade."). Job ids
   (`roast_trades`, `roast_picks`...) are code identifiers and keep their names.
@@ -271,7 +274,7 @@ persist issues and roasts through `lib/archive.ts` and write a run log under `ke
   persist: true })`, `getPowerRankings(ctx, { asOfWeek: week })`), then `backfillOddsHistory(ctx)`.
 - Also exported from `lib/jobs`: `listJobRuns`, `planDaily`, `recapWeekFor`, `earlyGamesWeekFor`,
   `TICK_COOLDOWN_SECONDS`, `MAX_ROASTS_PER_TICK`, `sendTestEmail`, `refreshLines`, `tickLines`,
-  `TABLE_SWEEP_SECONDS`, `DRAFT_ODDS_LINES_MAX_AGE_MS`. Job keys: `daily:<date>`,
+  `TABLE_SWEEP_SECONDS` (30 minutes), `DRAFT_ODDS_LINES_STALE_MS`. Job keys: `daily:<date>`,
   `thursday_fallout:<season>:<week>`, `weekly_recap:<season>:<week>`, `draft_grades:<draftId>`. `runDaily`/`runTick` take an optional second argument
   `{ ctx?, schedule? }` / `{ ctx?, ignoreCooldown? }`.
 - Pages that trigger the tick with `after(() => runTick())` run it inside their own time limit: give them
@@ -341,9 +344,11 @@ tradeRows(TradeHindsight[])  shameRows(ShameEntry[])  draftRows(picks, draftCont
   one retry in one call with a note saying what failed. Without `ANTHROPIC_API_KEY`, or on a refusal or
   API error, the row has no line.
 - The refresh policy: a row with no line (a new trade, a new pick, a new week's table) is written at
-  once. A row that has a line is rewritten when its facts hash changes, at most once per
-  `SURFACE_MAX_AGE_MS` (a day; draft odds every 30 minutes while the draft is live; a final week's
-  matchups at once). Pick rows hash only who took whom (`hashKey`), so a pick's line is written once even
+  once. A row that has a line is rewritten when its facts hash changes: at most once per
+  `SURFACE_STALE_REWRITE_MS` (20-30 minutes) when a number in its line drifted past `currentLines`'
+  tolerance (the page already hides it), otherwise at most once per `SURFACE_MAX_AGE_MS` (6 hours for
+  odds, power and team pages, a day elsewhere; a final week's matchups at once). A voice bump rewrites
+  only the newest `REVOICE_NEWEST` (10) items per kind. Pick rows hash only who took whom (`hashKey`), so a pick's line is written once even
   though its live FantasyCalc rank moves. The jobs pass `voice: ROAST_VOICE`, folded into every row hash,
   so a new voice makes every stored line due again at that pace, pick lines included. One cuck chair per
   table (`CUCK_CHAIR_PER_TABLE`): the allowance is shared by every batch of a refresh and counts the

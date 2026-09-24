@@ -119,8 +119,8 @@ describe("the batched writer", () => {
     const res = await refreshSurfaceLines("standings", key, table(), ctx, { now: 1_000 });
     expect(res).toMatchObject({ status: "written", asked: 3, written: 3, failed: 0 });
     expect(calls).toHaveLength(1);
-    expect(params[0].model).toBe("claude-opus-5");
-    expect(params[0].system).toEqual([{ type: "text", text: SYSTEM_PROMPT, cache_control: { type: "ephemeral" } }]);
+    expect(params[0].model).toBe("claude-sonnet-5");
+    expect(params[0].system).toEqual([{ type: "text", text: SYSTEM_PROMPT, cache_control: { type: "ephemeral", ttl: "1h" } }]);
     expect(calls[0].content.startsWith("LINES: standings\nTASK: ")).toBe(true);
     expect(calls[0].content).not.toMatch(/roast/i);
     expect([...calls[0].slots.keys()]).toEqual(["r1", "r2", "r3"]);

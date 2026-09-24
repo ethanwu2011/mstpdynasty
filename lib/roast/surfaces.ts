@@ -30,7 +30,7 @@ import { createHash } from "node:crypto";
 import { leagueId as envLeagueId } from "@/lib/env";
 import * as store from "@/lib/store";
 import type { LeagueContext, RoastSurface, RoastUsage, StoredSurfaceLines, SurfaceLineMap, SurfaceRow, SurfaceRowFailure } from "@/lib/types";
-import { addUsage, callRoastModel, hasRoastClient, type RoastRequestOptions } from "./llm";
+import { addUsage, callRoastModel, hasRoastClient, LINES_REQUEST, withinBudget } from "./llm";
 import { loadRoastNotes, notesFor } from "./notes";
 import { AllowedNumbers, checkText, cuckChairIn, describeDrops, parseSlots, type Dropped } from "./postcheck";
 
@@ -61,21 +61,37 @@ export const surfaceKeys = {
 const DAY_MS = 24 * 3600_000;
 
 /**
- * How often a row that already has a line may be rewritten when its facts change. A row with
- * no line (a new trade, a new pick, a new week's table) is written at once on every surface.
- * Pick rows hash only who took whom (see draftRows), so they are written once.
+ * How often a row that already has a line may be rewritten when its facts changed but its line
+ * is still true (every number in it within currentLines' tolerance). A row with no line (a new
+ * trade, a new pick, a new week's table) is written at once on every surface. Pick rows hash
+ * only who took whom (see draftRows), so they are written once.
  */
 export const SURFACE_MAX_AGE_MS: Record<RoastSurface, number> = {
   standings: DAY_MS,
-  // Odds, power and team numbers move with every pick during the draft and every score in
-  // season. A line whose numbers went stale is hidden at render (currentLines), so rewrite fast.
-  odds: 5 * 60_000,
-  power: 10 * 60_000,
+  odds: 6 * 3600_000,
+  power: 6 * 3600_000,
   matchups: DAY_MS,
-  team: 10 * 60_000,
+  team: 6 * 3600_000,
   shame: DAY_MS,
   trades: DAY_MS,
   draft: DAY_MS,
+};
+
+/**
+ * How soon a line that went false (a number in it drifted past currentLines' tolerance, so the
+ * page already hides it) may be rewritten. Odds and team numbers move with every score and
+ * every transaction; rewriting on every move is what burned the budget, and a hidden line is
+ * never wrong, only missing for a while.
+ */
+export const SURFACE_STALE_REWRITE_MS: Record<RoastSurface, number> = {
+  standings: 30 * 60_000,
+  odds: 20 * 60_000,
+  power: 30 * 60_000,
+  matchups: 30 * 60_000,
+  team: 30 * 60_000,
+  shame: 30 * 60_000,
+  trades: 30 * 60_000,
+  draft: 30 * 60_000,
 };
 
 /**
@@ -95,10 +111,11 @@ export const ROW_RETRY_AFTER_MS = 30 * 60_000;
 /** ...and is given up on (until its facts change) after this many failed refreshes. */
 export const MAX_ROW_ATTEMPTS = 3;
 /**
- * Per call: one batch of short lines. With the jobs' 150-second start deadline, a call that
- * times out and is retried once still ends inside the routes' 300-second limit.
+ * Per call: one batch of short lines (LINES_REQUEST, 70 seconds, one retry). With the jobs'
+ * 150-second start deadline, a call that times out and is retried once still ends inside the
+ * routes' 300-second limit.
  */
-export const LINES_REQUEST: RoastRequestOptions = { timeout: 70_000, maxRetries: 1 };
+export { LINES_REQUEST };
 
 /** What each table's lines are about (the TASK line of a LINES request). */
 const SURFACE_TASKS: Record<RoastSurface, string> = {
@@ -332,7 +349,7 @@ async function writeChunk(surface: RoastSurface, rows: SurfaceRow[], notes: Reco
     if (attempt > 0 && opts.deadline !== undefined && Date.now() > opts.deadline) break;
     // The retry asks only for the rows that failed, under their original slot ids.
     const message = buildMessage(surface, pending, lore, opts) + note;
-    const res = await callRoastModel(message, `lines ${surface}${attempt ? " retry" : ""}`, LINES_REQUEST);
+    const res = await callRoastModel(message, `lines ${surface}${attempt ? " retry" : ""}`, "lines");
     out.usage = addUsage(out.usage, res.usage);
     out.model = res.model ?? out.model;
     if (!res.ok) {
@@ -437,8 +454,10 @@ export interface RefreshResult {
 
 export interface RefreshOptions extends LinesPromptOptions {
   now?: number;
-  /** Rewrite window for rows that already have a line (default SURFACE_MAX_AGE_MS[surface]). */
+  /** Rewrite window for rows whose line is still true (default SURFACE_MAX_AGE_MS[surface]). */
   maxAgeMs?: number;
+  /** Rewrite window for rows whose line went false (default SURFACE_STALE_REWRITE_MS[surface], never longer than maxAgeMs). */
+  staleAfterMs?: number;
   /** Ask every row again, ignoring hashes, windows and backoff. */
   force?: boolean;
   /** Ask at most this many rows now (in the order given); the rest wait for the next refresh. */
@@ -484,21 +503,27 @@ export async function refreshSurfaceLines(
   const hashes = Object.fromEntries(rows.map((r) => [r.id, voicedHash(rowHash(r), opts.voice)]));
   const kept: SurfaceLineMap = Object.fromEntries(rows.map((r) => [r.id, previous[r.id] ?? null]));
   const maxAge = opts.maxAgeMs ?? SURFACE_MAX_AGE_MS[surface];
+  const staleAfter = Math.min(maxAge, opts.staleAfterMs ?? SURFACE_STALE_REWRITE_MS[surface]);
 
   const changed = rows.filter((r) => opts.force || !previous[r.id] || prevHashes[r.id] !== hashes[r.id]);
   if (!changed.length) return { status: "fresh", lines: kept, asked: 0 };
+  // Lines whose numbers still match today's rows (what the page shows): no hurry to rewrite them.
+  const stillTrue = currentLines(previous, rows);
   const due = changed.filter((r) => {
     if (opts.force) return true;
     const f = prevFailures[r.id];
     if (f && f.hash === hashes[r.id] && (f.n >= MAX_ROW_ATTEMPTS || now - f.at < ROW_RETRY_AFTER_MS)) return false;
     if (previous[r.id]) {
       const at = prevAt[r.id] ?? stored?.generatedAt ?? 0;
-      if (maxAge > 0 && now - at < maxAge) return false;
+      const window = stillTrue[r.id] ? maxAge : staleAfter;
+      if (window > 0 && now - at < window) return false;
     }
     return true;
   });
   if (!due.length) return { status: "throttled", lines: kept, asked: 0 };
   if (!hasRoastClient()) return { status: "skipped", lines: kept, asked: 0 };
+  // Out of today's budget for lines: leave them due for tomorrow, without counting a failure.
+  if (!opts.force && !(await withinBudget("lines", now))) return { status: "throttled", lines: kept, asked: 0, pending: due.length };
   if (opts.claim) {
     const release = await opts.claim().catch(() => null);
     if (!release) return { status: "busy", lines: kept, asked: 0, pending: due.length };

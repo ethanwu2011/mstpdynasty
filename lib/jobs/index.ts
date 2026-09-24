@@ -42,7 +42,7 @@ export { readDraftPickTimes, DRAFT_PICK_SEEN } from "./draft-seen";
 export { planDaily, recapWeekFor, earlyGamesWeekFor } from "./schedule";
 export { MAX_ROASTS_PER_TICK, TICK_COOLDOWN_SECONDS, ensurePickRoast } from "./tick";
 export { sendTestEmail } from "./test-email";
-export { refreshLines, tickLines, TABLE_SWEEP_SECONDS, DRAFT_ODDS_LINES_MAX_AGE_MS } from "./lines";
+export { refreshLines, tickLines, TABLE_SWEEP_SECONDS, DRAFT_ODDS_LINES_STALE_MS } from "./lines";
 
 /** Longer than the cron function's max duration, so a crashed run cannot block tomorrow's. */
 const DAILY_LOCK_SECONDS = 600;
