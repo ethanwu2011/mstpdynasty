@@ -5,10 +5,13 @@
  *   GET   ?kind=daily (optional; default every issue due today) &rewrite=1 (optional: brief an
  *         issue that already went out, to replace its words on the site)
  *         -> { briefs: [{ slug, kind, published, system, user, slots }], skipped }
- *   POST  { slug, text, model? } -> { status: queued | updated | rejected | missing, report }
+ *   POST  { slug, text, model?, deliver?: "queue" | "now", dryRun? }
+ *         -> { status: checked | queued | sent | updated | resent | rejected | missing | error, report, preview }
  *         `text` is the reply in the persona's @@slot format. It passes the same post-check as
  *         the site's own writer; failed slots fall back to code text and are listed in the
- *         report, so the writer can fix them and post again.
+ *         report, so the writer can fix them and post again. dryRun checks without saving.
+ *         deliver "now" sends a new issue at once (the Thursday Night Fallout right after the
+ *         game) or emails a rewritten one again (at most twice a day per issue).
  *
  * Bearer ADMIN_SECRET (or CRON_SECRET), through the admin limiter like every admin route. The
  * brief holds the private lore, so nothing here is public.
@@ -61,7 +64,7 @@ export async function GET(req: Request) {
 export async function POST(req: Request) {
   const denied = await authorize(req);
   if (denied) return denied;
-  let body: { slug?: unknown; text?: unknown; model?: unknown };
+  let body: { slug?: unknown; text?: unknown; model?: unknown; deliver?: unknown; dryRun?: unknown };
   try {
     body = await req.json();
   } catch {
@@ -73,7 +76,8 @@ export async function POST(req: Request) {
   if (!slug || !text.trim()) return Response.json({ error: "slug and text are required." }, { status: 400, headers: NO_STORE });
   if (text.length > MAX_TEXT) return Response.json({ error: "text is too long." }, { status: 413, headers: NO_STORE });
   const { ctx, schedule } = await setup();
-  const res = await publishExternal(slug, text, model, ctx, schedule);
-  const code = res.status === "missing" ? 404 : res.status === "rejected" ? 422 : 200;
+  const deliver = body.deliver === "now" ? "now" : "queue";
+  const res = await publishExternal(slug, text, model, ctx, schedule, { deliver, dryRun: body.dryRun === true });
+  const code = res.status === "missing" ? 404 : res.status === "rejected" ? 422 : res.status === "error" ? 502 : 200;
   return Response.json(res, { status: code, headers: NO_STORE });
 }

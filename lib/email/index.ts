@@ -302,6 +302,48 @@ async function sendToLeague(issue: Issue, transport: EmailTransport): Promise<Se
   }
 }
 
+/** Resends of one issue per day, so a looping writer cannot spam the league. */
+export const MAX_RESENDS_PER_ISSUE_PER_DAY = 2;
+
+/**
+ * Email an issue that already went out again, to the same audience, after its words were
+ * rewritten (POST /api/admin/issue with deliver "now"). The idempotency key includes the
+ * issue's words, so the same words never go out twice.
+ */
+export async function resendIssue(issue: Issue): Promise<SendResult> {
+  const transport = getTransport();
+  if (!transport) return notConfigured("RESEND_API_KEY is not set.");
+  if (!adminSecret()) return notConfigured("ADMIN_SECRET is not set (it signs the unsubscribe links).");
+  if (isDevLeague(issue.leagueId)) return skipped("Dev league: never emailed.");
+  if (issue.placeholder || issue.factsOnly) return skipped("Only a written issue is sent again.");
+  if (perInstanceStore()) return notConfigured(KV_MISSING);
+  const l = issue.leagueId;
+  let result: SendResult;
+  try {
+    const n = await store.incr(store.keys.rate(`resend:${l}:${issue.slug}`), 86_400);
+    if (n > MAX_RESENDS_PER_ISSUE_PER_DAY) return skipped(`At most ${MAX_RESENDS_PER_ISSUE_PER_DAY} resends of one issue a day.`);
+    const current = (await getIssue(l, issue.slug)) ?? issue;
+    const to = await audience(l);
+    const webUrl = link(`/newsletter/${encodeURIComponent(current.slug)}`, {});
+    const messages: EmailMessage[] = [];
+    for (const email of to) {
+      const unsub = unsubscribeLink(l, email);
+      if (!unsub) throw new Error("Could not sign unsubscribe links.");
+      messages.push({ to: email, ...renderIssueEmail(current, { unsubscribeUrl: unsub, webUrl }), headers: unsubscribeHeaders(unsub) });
+    }
+    const words = shortHash(JSON.stringify([current.dek, current.sections]));
+    const ids = messages.length
+      ? (await transport.send(messages, { idempotencyKey: `resend/${l}/${current.slug}/${words}/${shortHash(to.join(","))}` })).ids
+      : [];
+    await saveIssue({ ...current, status: "sent", sentAt: Date.now(), recipientCount: messages.length });
+    result = { status: "sent", recipients: messages.length, messageIds: ids };
+  } catch (err) {
+    result = { status: "error", recipients: 0, messageIds: [], error: errText(err) };
+  }
+  await recordEmailStatus(result);
+  return result;
+}
+
 /** Test sends per hour (POST /api/admin/test-email), so a leaked admin secret cannot spam the inbox. */
 export const MAX_TEST_SENDS_PER_HOUR = 10;
 

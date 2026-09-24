@@ -13,7 +13,7 @@
  *   review, email not set up   stays a draft (nobody can approve it yet)
  */
 import { getIssue, saveIssue } from "@/lib/archive";
-import { sendIssue } from "@/lib/email";
+import { resendIssue, sendIssue } from "@/lib/email";
 import { newsletterMode } from "@/lib/env";
 import { draftFacts, tnfFacts, weeklyFacts } from "@/lib/facts";
 import { backfillOddsHistory, getPowerRankings, getWinProbabilities, runSeasonSim } from "@/lib/models";
@@ -246,13 +246,39 @@ export async function externalBriefs(
 }
 
 export interface ExternalPublish {
-  status: "queued" | "updated" | "rejected" | "missing";
+  status: "checked" | "queued" | "sent" | "updated" | "resent" | "rejected" | "missing" | "error";
   detail: string;
   slug: string;
   report: IssueReport | null;
+  /** The dek and section text as they would print (dry runs and every result). */
+  preview?: { dek: string; sections: Array<{ heading: string; text: string[] }> };
 }
 
-export async function publishExternal(slug: string, text: string, model: string, ctx: LeagueContext, schedule: NflGame[]): Promise<ExternalPublish> {
+export interface ExternalPublishOptions {
+  /** "queue" (default): the 8 AM job sends a new issue. "now": send a new issue now, or send a rewritten one again. */
+  deliver?: "queue" | "now";
+  /** Check the reply and return the report without saving or sending anything. */
+  dryRun?: boolean;
+}
+
+function previewOf(issue: Issue): ExternalPublish["preview"] {
+  return {
+    dek: issue.dek,
+    sections: issue.sections.map((sec) => ({
+      heading: sec.heading,
+      text: sec.blocks.flatMap((b) => (b.type === "paragraph" ? [b.text] : b.type === "list" ? b.items : [])),
+    })),
+  };
+}
+
+export async function publishExternal(
+  slug: string,
+  text: string,
+  model: string,
+  ctx: LeagueContext,
+  schedule: NflGame[],
+  opts: ExternalPublishOptions = {},
+): Promise<ExternalPublish> {
   const l = ctx.leagueId;
   const brief = await store.get<StoredBrief>(briefKey(l, slug));
   if (!brief) return { status: "missing", detail: "No brief for that slug in the last 6 hours. GET /api/admin/issue first.", slug, report: null };
@@ -261,23 +287,47 @@ export async function publishExternal(slug: string, text: string, model: string,
   if (built.placeholder || built.factsOnly) {
     return { status: "rejected", detail: "Too many slots failed the checks, so nothing was saved. Fix them and post again.", slug, report };
   }
+  const preview = previewOf(built);
+  if (opts.dryRun) return { status: "checked", detail: "Checked only: nothing saved or sent.", slug, report, preview };
+
   const existing = await getIssue(l, built.slug);
   const done = await getDone(l, brief.job.key).catch(() => null);
   if ((existing && published(existing)) || done) {
-    // Already sent (or the day's job is over): replace the words on the site, email nobody.
-    await saveIssue({
+    // Already out (or the day's job is over): replace the words on the site.
+    const kept: Issue = {
       ...built,
       status: existing && published(existing) ? existing.status : "approved",
       sentAt: existing?.sentAt ?? null,
       recipientCount: existing?.recipientCount ?? null,
       createdAt: existing?.createdAt ?? built.createdAt,
-    });
-    return { status: "updated", detail: "Replaced on the site. Nobody was emailed again.", slug, report };
+    };
+    await saveIssue(kept);
+    if (opts.deliver !== "now") return { status: "updated", detail: "Replaced on the site. Nobody was emailed again.", slug, report, preview };
+    const res = await resendIssue(kept);
+    return res.status === "sent"
+      ? { status: "resent", detail: `Replaced on the site and emailed again to ${res.recipients} address${res.recipients === 1 ? "" : "es"}.`, slug, report, preview }
+      : { status: "error", detail: `Replaced on the site, but the email did not go: ${res.error ?? res.status}.`, slug, report, preview };
   }
+
   await saveIssue(built);
   await store.set(builtKey(l, brief.job.key), built.slug, { ttlSeconds: 30 * 24 * 3600 });
   // Move the cursors the way runIssueJob does once an issue is stored.
   const step = await factsFor(brief.job, ctx, brief.now, schedule).catch(() => null);
   if (step?.commit) await step.commit();
-  return { status: "queued", detail: "Stored. The 8 AM job sends it.", slug, report };
+  if (opts.deliver !== "now") return { status: "queued", detail: "Stored. The 8 AM job sends it.", slug, report, preview };
+  // Now, under the same once-per-period claim the 8 AM job takes, so the two never both send.
+  const claim = await claimOnce(l, brief.job.key).catch(() => "busy" as const);
+  if (claim !== "claimed") return { status: "queued", detail: `Stored; not sent now (${claim === "done" ? "already done" : "another run holds it"}).`, slug, report, preview };
+  try {
+    const d = await deliverIssue(built, ctx);
+    if (!d.ok) {
+      await releaseClaim(l, brief.job.key);
+      return { status: "error", detail: d.detail, slug, report, preview };
+    }
+    await markDone(l, brief.job.key, { at: Date.now(), slug: built.slug });
+    return { status: "sent", detail: d.detail, slug, report, preview };
+  } catch (err) {
+    await releaseClaim(l, brief.job.key).catch(() => {});
+    return { status: "error", detail: errText(err), slug, report, preview };
+  }
 }
