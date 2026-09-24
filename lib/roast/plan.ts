@@ -972,7 +972,20 @@ export function planDaily(f: DailyFacts, faabBudget: number, mem: PayloadMemory 
   }
   if (slate) {
     sides.forEach((t) => managers.add(t.team.managerName));
-    const side = (t: (typeof sides)[number]) => ({ ...who(t.team), projected: Math.round(t.projected * 10) / 10, winPct: Math.round(t.winProb * 100) });
+    const tonight = new Set(slate.tonight ?? []);
+    const player = (p: (typeof sides)[number]["starters"][number]) => ({ name: p.name, pos: p.position, projected: Math.round(p.projected * 10) / 10 });
+    const side = (t: (typeof sides)[number]) => {
+      const real = t.starters.filter((p) => p.playerId && p.playerId !== "0");
+      const byProj = [...real].sort((a, b) => b.projected - a.projected);
+      const playing = real.filter((p) => p.nflTeam && tonight.has(p.nflTeam));
+      return {
+        ...who(t.team),
+        projected: Math.round(t.projected * 10) / 10,
+        winPct: Math.round(t.winProb * 100),
+        ...(byProj.length ? { stars: byProj.slice(0, 2).map(player), weakest: player(byProj[byProj.length - 1]) } : {}),
+        ...(playing.length ? { tonight: playing.map(player) } : {}),
+      };
+    };
     facts.week = slate.week;
     facts.matchups = slate.matchups.map((m) => ({ home: side(m.home), away: side(m.away) }));
     slots.push({

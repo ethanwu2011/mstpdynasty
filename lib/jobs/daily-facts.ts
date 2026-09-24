@@ -242,7 +242,9 @@ export async function buildDailyFacts(ctx: LeagueContext, now: number, schedule:
       if (firstDateOfWeek(schedule, week) === date) {
         try {
           const wp = await getWinProbabilities(week, ctx, { pregame: true });
-          if (wp && !wp.placeholder && wp.matchups.length) slate = { week, first: week === startWeek, matchups: wp.matchups };
+          // NFL teams playing today (the Thursday game), so the preview can name who plays tonight.
+          const tonight = [...new Set(schedule.filter((g) => g.week === week && g.date === date).flatMap((g) => [g.home, g.away]))];
+          if (wp && !wp.placeholder && wp.matchups.length) slate = { week, first: week === startWeek, matchups: wp.matchups, tonight };
         } catch {
           // No slate is a smaller issue, not a failed one.
         }

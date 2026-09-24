@@ -35,7 +35,7 @@ import type { DailyFacts, DraftOdds, PowerRankings, SimResult, SurfaceRow, Trade
 import { hasFixtures, loadManifest, rtLeagueId } from "./helpers/fixtures";
 import { ref } from "./facts-synthetic";
 
-const PROMPT_SHA256 = "9c57d4b322cba899f871d79798e45b0eada1b618c17b4f40dce391dcd9450d02";
+const PROMPT_SHA256 = "91bc7188300aa84dafe1b9f291cc0e6781852c07ee30006d6c65af6323b770b5";
 
 const trade = (id: string, net: number): TradeFact => ({
   kind: "trade",

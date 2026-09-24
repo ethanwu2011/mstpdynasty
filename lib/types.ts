@@ -965,7 +965,7 @@ export interface DailyFacts {
    * On the first game day of a league week (its Thursday, in practice): that week's matchups
    * before kickoff, with projections and win odds. `first` marks the league's first week.
    */
-  slate?: { week: number; first: boolean; matchups: WinProb[] } | null;
+  slate?: { week: number; first: boolean; matchups: WinProb[]; tonight?: string[] } | null;
   /** false = quiet day, nothing gets sent. */
   hasMaterial: boolean;
 }

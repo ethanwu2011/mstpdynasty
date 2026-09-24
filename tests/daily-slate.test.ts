@@ -44,6 +44,20 @@ describe("the Daily on a week's first game day", () => {
     expect(plan.managers.sort()).toEqual(["Anish", "Brandon", "Justin", "Peter"]);
   });
 
+  it("names each side's best and weakest starters and who plays tonight", () => {
+    const line = (playerId: string, name: string, position: string, nflTeam: string, projected: number) =>
+      ({ playerId, name, position, slot: position, nflTeam, actual: 0, projected, fractionRemaining: 1, expected: projected, status: "pre" }) as TeamWinProb["starters"][number];
+    const home = { ...side(team(1, "Justin"), 150, 0.4), starters: [line("1", "Ace", "QB", "BUF", 22.4), line("2", "Deuce", "WR", "MIA", 15.06), line("3", "Dud", "TE", "KC", 2.1), line("0", "Empty", "FLEX", "", 0)] };
+    const away = side(team(2, "Brandon"), 160, 0.6);
+    const plan = planDaily(quiet({ week: 3, first: false, matchups: [matchup(1, home, away)], tonight: ["MIA", "BUF"] }), 100);
+    const m = (plan.facts.matchups as Array<{ home: Record<string, unknown>; away: Record<string, unknown> }>)[0];
+    expect(m.home.stars).toEqual([{ name: "Ace", pos: "QB", projected: 22.4 }, { name: "Deuce", pos: "WR", projected: 15.1 }]);
+    expect(m.home.weakest).toEqual({ name: "Dud", pos: "TE", projected: 2.1 });
+    expect(m.home.tonight).toEqual([{ name: "Ace", pos: "QB", projected: 22.4 }, { name: "Deuce", pos: "WR", projected: 15.1 }]);
+    expect(m.away).not.toHaveProperty("stars");
+    expect(plan.slots.find((s) => s.id === "cold-open")?.brief).toMatch(/about Justin, the biggest underdog of week 3\./);
+  });
+
   it("leaves the Daily as it was without a slate", () => {
     const plan = planDaily(quiet(null), 100);
     expect(plan.facts.matchups).toBeUndefined();
