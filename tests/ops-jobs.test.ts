@@ -558,7 +558,7 @@ describe("the external writer (publishExternal)", () => {
 
     expect((await brief(ctx, true)).published).toBe(true);
     const r = await post(ctx, WORDS, "now");
-    expect(r).toMatchObject({ status: "updated", detail: "Same words as the issue that went out: nothing changed, nobody emailed." });
+    expect(r).toMatchObject({ status: "updated", detail: "Same words as the issue on the site: nothing changed." });
     expect(t.sent).toHaveLength(1);
     expect(await getIssue(ctx.leagueId, SLUG)).toMatchObject({ status: "sent", dek: "Week 3, and Manager 2 folded first." });
   });

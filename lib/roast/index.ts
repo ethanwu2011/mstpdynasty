@@ -500,7 +500,7 @@ async function recentBlock(leagueId: string, plan: ItemPlan): Promise<string> {
   }
 }
 
-async function writeItem(plan: ItemPlan, lore: Record<string, string>, recent: string): Promise<{ text: string | null; model: string | null; usage: RoastUsage | null }> {
+async function writeItem(plan: ItemPlan, lore: Record<string, string>, recent: string): Promise<{ text: string | null; model: string | null; usage: RoastUsage | null; refused?: boolean }> {
   const { allowed, exempt } = numberSources(plan, lore);
   // RECENT goes after FACTS and LORE, so everything before it stays the same request to request.
   const message = userMessage(plan, lore) + recent;
@@ -511,7 +511,9 @@ async function writeItem(plan: ItemPlan, lore: Record<string, string>, recent: s
     const res = await callRoastModel(message + note, `${plan.id}${attempt ? " retry" : ""}`, "item");
     usage = addUsage(usage, res.usage);
     model = res.model ?? model;
-    if (!res.ok) return { text: null, model, usage };
+    // Out of budget (or the daily cap): not the item's fault, so no facts-only result that
+    // would count as a failed attempt or replace a written post.
+    if (!res.ok) return { text: null, model, usage, refused: res.reason === "budget" };
     const slots = parseSlots(res.text, "roast");
     const raw = slots.get("roast") ?? [...slots.values()][0] ?? "";
     const checked = checkText(raw, allowed, exempt);
@@ -563,6 +565,8 @@ export async function roastItem(kind: RoastItemKind, fact: RoastItemFact, ctx?: 
   if (!writer) return base;
   const lore = notesFor(await loadRoastNotes(), plan.managers);
   const out = await writeItem(plan, lore, await recentBlock(c.leagueId, plan));
+  // A placeholder is never saved: the tick and the page leave the item for the next run.
+  if (out.refused) return { ...base, source: "placeholder", model: out.model, usage: out.usage };
   if (!out.text) return { ...base, model: out.model, usage: out.usage };
   return { ...base, text: out.text, source: "llm", model: out.model, usage: out.usage };
 }

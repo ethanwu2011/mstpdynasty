@@ -71,18 +71,26 @@ describe("planSundayPreview", () => {
       ],
       weakest: { name: "Dud", pos: "TE", projected: 2.1 },
     });
-    expect(m1.away).toMatchObject({ manager: "Brandon", projected: 183.1, winPct: 68, banked: 18.62, stars: [{ name: "Bell" }, { name: "Boot" }], weakest: { name: "Boot" } });
+    // Boot already played Thursday (his 18.62 is banked), so the stars and weak link are among
+    // the starters still to play.
+    expect(m1.away).toMatchObject({ manager: "Brandon", projected: 183.1, winPct: 68, banked: 18.62, stars: [{ name: "Bell" }], weakest: { name: "Bell" } });
+    expect((m1.away.stars as unknown[]).length).toBe(1);
     // No Thursday points, no "banked"; no starters, no stars or weakest.
     expect(m1.home).not.toHaveProperty("banked");
     expect(plan.facts["m-5"]).toEqual({ home: { manager: "Peter", team: "Peter", projected: 189.6, winPct: 77 }, away: { manager: "Anish", team: "Anish", projected: 155.8, winPct: 23 } });
     expect(plan.managers.sort()).toEqual(["Anish", "Brandon", "Justin", "Peter"]);
   });
 
-  it("carries the pre-kickoff odds when the league memory has them", () => {
-    const mem: PayloadMemory = { ...EMPTY_MEMORY, winPctBefore: { 4: 25 } };
-    const m5 = planSundayPreview(facts(), mem).facts["m-5"] as Sides;
+  it("carries the pre-kickoff odds when they moved, whole and adding to 100 like winPct", () => {
+    const mem: PayloadMemory = { ...EMPTY_MEMORY, winPctBefore: { 3: 75, 4: 25, 1: 32.1, 2: 67.9 } };
+    const plan = planSundayPreview(facts(), mem);
+    const m5 = plan.facts["m-5"] as Sides;
+    expect(m5.home.winPctBefore).toBe(75);
     expect(m5.away.winPctBefore).toBe(25);
-    expect(m5.home).not.toHaveProperty("winPctBefore");
+    // 32.1 before and 32 now is rounding, not a swing: left out.
+    const m1 = plan.facts["m-1"] as Sides;
+    expect(m1.home).not.toHaveProperty("winPctBefore");
+    expect(m1.away).not.toHaveProperty("winPctBefore");
   });
 
   it("opens on the biggest underdog and keeps his matchup paragraph short", () => {

@@ -113,8 +113,9 @@ export async function issueMemory(facts: IssueFacts, ctx: LeagueContext): Promis
         const pre = await getWinProbabilities(facts.week, ctx, { pregame: true });
         const out: Record<number, number> = {};
         for (const m of pre.matchups) {
+          // One decimal, the two sides adding to 100 (the way the issues print win chances).
           out[m.home.team.rosterId] = r1(m.home.winProb * 100);
-          out[m.away.team.rosterId] = r1(m.away.winProb * 100);
+          out[m.away.team.rosterId] = r1(100 - out[m.home.team.rosterId]);
         }
         return out;
       },

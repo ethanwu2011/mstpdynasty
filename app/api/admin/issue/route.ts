@@ -11,9 +11,10 @@
  *         the site's own writer; failed slots fall back to code text and are listed in the
  *         report, so the writer can fix them and post again. dryRun checks without saving.
  *         deliver "now" sends a new issue at once, or emails a rewritten one again when its words
- *         changed (at most twice a day per issue). Only a rewrite=1 brief may replace an issue
- *         that already went out; the Daily stays with the site's writer (its facts move with a
- *         cursor).
+ *         changed and never went out before (at most twice a day per issue). Only a rewrite=1
+ *         brief taken against the issue as it went out may replace it; a queued reply that lands
+ *         after the morning job came by is sent at once. The Daily stays with the site's writer
+ *         (its facts move with a cursor).
  *
  * Bearer ADMIN_SECRET (or CRON_SECRET), through the admin limiter like every admin route. The
  * brief holds the private lore, so nothing here is public.

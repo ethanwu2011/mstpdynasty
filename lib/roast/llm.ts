@@ -206,7 +206,7 @@ export function buildRoastRequest(userContent: string, kind: RoastKind = "issue"
 
 export type RoastCallResult =
   | { ok: true; text: string; model: string; usage: RoastUsage; stopReason: string | null }
-  | { ok: false; reason: "not_configured" | "refusal" | "error" | "empty"; detail: string; model: string | null; usage: RoastUsage | null };
+  | { ok: false; reason: "not_configured" | "refusal" | "error" | "empty" | "budget"; detail: string; model: string | null; usage: RoastUsage | null };
 
 function usageOf(msg: BetaMessage): RoastUsage {
   const u = msg.usage;
@@ -248,13 +248,13 @@ export async function callRoastModel(userContent: string, label: string, kind: R
   if (!(await withinBudget(kind))) {
     const detail = `daily writer budget reached for ${kind} (spent $${(await spentTodayUsd()).toFixed(2)} of $${dailyBudgetUsd().toFixed(2)})`;
     console.warn(`[roast] ${label}: ${detail}`);
-    return { ok: false, reason: "error", detail, model: null, usage: null };
+    return { ok: false, reason: "budget", detail, model: null, usage: null };
   }
   if (!(await withinDailyCap())) {
     const detail = `daily cap of ${MAX_WRITER_CALLS_PER_DAY} writer calls reached`;
     console.warn(`[roast] ${label}: ${detail}`);
     await recordWriterStatus({ ok: false, at: Date.now(), reason: "error", detail });
-    return { ok: false, reason: "error", detail, model: null, usage: null };
+    return { ok: false, reason: "budget", detail, model: null, usage: null };
   }
   let msg: BetaMessage;
   try {

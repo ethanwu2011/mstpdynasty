@@ -578,8 +578,8 @@ export function planThursday(f: ThursdayFalloutFacts, mem: PayloadMemory = EMPTY
     teams: tnf.teams.map((t) => ({ ...who(t.team), banked: t.banked, projected: t.projected, delta: t.delta })),
     // Win % at one decimal, like the table (99.6 is not "locked in"), with the pre-kickoff number to show the swing.
     matchups: f.winProbs.matchups.map((m) => ({
-      home: { ...who(m.home.team), points: r2(m.home.actual), mean: r1(m.home.mean), winPct: r1(m.home.winProb * 100), ...winBefore(m.home.team.rosterId, mem) },
-      away: { ...who(m.away.team), points: r2(m.away.actual), mean: r1(m.away.mean), winPct: r1(m.away.winProb * 100), ...winBefore(m.away.team.rosterId, mem) },
+      home: { ...who(m.home.team), points: r2(m.home.actual), mean: r1(m.home.mean), winPct: sidePct1(m, m.home), ...winBefore(m.home.team.rosterId, mem) },
+      away: { ...who(m.away.team), points: r2(m.away.actual), mean: r1(m.away.mean), winPct: sidePct1(m, m.away), ...winBefore(m.away.team.rosterId, mem) },
     })),
   };
   const history = historyPayload(tnf.teams.map((t) => t.team), mem);
@@ -643,7 +643,7 @@ export function planThursday(f: ThursdayFalloutFacts, mem: PayloadMemory = EMPTY
         {
           type: "table",
           columns: ["Team", "Win %", "Team", "Win %"],
-          rows: f.winProbs.matchups.map((m) => [m.home.team.teamName, r1(m.home.winProb * 100), m.away.team.teamName, r1(m.away.winProb * 100)]),
+          rows: f.winProbs.matchups.map((m) => [m.home.team.teamName, sidePct1(m, m.home), m.away.team.teamName, sidePct1(m, m.away)]),
         },
       ],
     });
@@ -675,9 +675,12 @@ const p1 = (n: number) => Math.round(n * 10) / 10;
 const isPlayer = (p: StarterLine) => Boolean(p.playerId) && p.playerId !== "0";
 const projectedLine = (p: StarterLine) => ({ name: p.name, pos: p.position, projected: p1(p.projected) });
 
-/** A side's two highest-projected starters and its lowest (stars, weakest). */
-export function lineupEdges(t: TeamWinProb): { stars?: ReturnType<typeof projectedLine>[]; weakest?: ReturnType<typeof projectedLine> } {
-  const byProj = t.starters.filter(isPlayer).sort((a, b) => b.projected - a.projected);
+/** A side's two highest-projected starters and its lowest (stars, weakest), among those `only` keeps. */
+export function lineupEdges(
+  t: TeamWinProb,
+  only: (p: StarterLine) => boolean = () => true,
+): { stars?: ReturnType<typeof projectedLine>[]; weakest?: ReturnType<typeof projectedLine> } {
+  const byProj = t.starters.filter((p) => isPlayer(p) && only(p)).sort((a, b) => b.projected - a.projected);
   return byProj.length ? { stars: byProj.slice(0, 2).map(projectedLine), weakest: projectedLine(byProj[byProj.length - 1]) } : {};
 }
 
@@ -688,18 +691,33 @@ export function sidePct(m: { home: TeamWinProb; away: TeamWinProb }, t: TeamWinP
   const home = Math.round(m.home.winProb * 100);
   return t === m.home ? home : 100 - home;
 }
+
+/** The same at one decimal (37.6 and 62.4, never 62.5). */
+export function sidePct1(m: { home: TeamWinProb; away: TeamWinProb }, t: TeamWinProb): number {
+  const home = r1(m.home.winProb * 100);
+  return t === m.home ? home : r1(100 - home);
+}
 const vs = (a: TeamRef, b: TeamRef) => `${label(a)} vs ${label(b)}`;
 
 export function planSundayPreview(f: SundayPreviewFacts, mem: PayloadMemory = EMPTY_MEMORY): IssuePlan {
   const ms = f.winProbs.matchups;
   const sides = ms.flatMap((m) => [m.home, m.away]);
+  // Before kickoff, at the same precision as winPct (whole, adding to 100), and only when it
+  // moved: a rounding difference is not a swing.
+  const before = (m: (typeof ms)[number], t: TeamWinProb) => {
+    const home = mem.winPctBefore[m.home.team.rosterId];
+    if (home === undefined) return {};
+    const b = t === m.home ? Math.round(home) : 100 - Math.round(home);
+    return b === sidePct(m, t) ? {} : { winPctBefore: b };
+  };
   const side = (m: (typeof ms)[number], t: TeamWinProb) => ({
     ...who(t.team),
     projected: p1(t.projected),
     winPct: sidePct(m, t),
-    ...winBefore(t.team.rosterId, mem),
+    ...before(m, t),
     ...(t.actual > 0 ? { banked: r2(t.actual) } : {}),
-    ...lineupEdges(t),
+    // Stars and the weak link among the starters still to play (a Thursday player is done).
+    ...lineupEdges(t, (p) => p.fractionRemaining > 0),
   });
   const facts: Record<string, unknown> = { week: f.week, ...commissionerFact(mem) };
   for (const m of ms) facts[matchupSlotId(m)] = { home: side(m, m.home), away: side(m, m.away) };
@@ -775,12 +793,14 @@ export function planSundayRecap(f: SundayRecapFacts, mem: PayloadMemory = EMPTY_
     const played = real.filter((p) => p.fractionRemaining === 0 && (p.status === "final" || p.actual !== 0));
     const left = real.filter((p) => p.fractionRemaining > 0);
     const top = [...played].sort((a, b) => b.actual - a.actual)[0];
-    const worst = [...played].sort((a, b) => a.actual - a.projected - (b.actual - b.projected))[0];
+    // The worst is the one furthest below his projection, and only a starter who fell short.
+    const worst = played.filter((p) => p.actual < p.projected).sort((a, b) => a.actual - a.projected - (b.actual - b.projected))[0];
+    const m = ms.find((x) => x.home === t || x.away === t)!;
     return {
       ...who(t.team),
       points: r2(t.actual),
       mean: r1(t.mean),
-      winPct: r1(t.winProb * 100),
+      winPct: sidePct1(m, t),
       ...winBefore(t.team.rosterId, mem),
       ...(top ? { topStarter: { name: top.name, pos: top.position, points: r2(top.actual) } } : {}),
       ...(worst && worst !== top ? { worstStarter: { name: worst.name, pos: worst.position, points: r2(worst.actual), projected: p1(worst.projected) } } : {}),
@@ -812,13 +832,13 @@ export function planSundayRecap(f: SundayRecapFacts, mem: PayloadMemory = EMPTY_
       id,
       brief: `${hasVictim ? "1 or 2 sentences" : "2 or 3 sentences"} on matchup ${id} after Sunday: both managers hit, points so far, the win chance now against before kickoff, the starter who carried or sank him, and who he still has left for Monday night.${hasVictim ? ` ${victim.team.managerName} already got the cold open.` : ""}`,
     });
-    const fb = `${m.home.team.managerName} ${r2(m.home.actual)}, ${m.away.team.managerName} ${r2(m.away.actual)}. Win chance: ${r1(m.home.winProb * 100)}% to ${r1(m.away.winProb * 100)}%.`;
+    const fb = `${m.home.team.managerName} ${r2(m.home.actual)}, ${m.away.team.managerName} ${r2(m.away.actual)}. Win chance: ${sidePct1(m, m.home)}% to ${sidePct1(m, m.away)}%.`;
     blocks.push({ type: "heading", text: vs(m.home.team, m.away.team) }, slot(id, [para(fb)]));
   }
   blocks.push({
     type: "table",
     columns: ["Team", "Points", "Left to play", "Win %"],
-    rows: sides.map((t) => [label(t.team), r2(t.actual), t.starters.filter((p) => isPlayer(p) && p.fractionRemaining > 0).map((p) => p.name).join(", ") || "Done", `${r1(t.winProb * 100)}%`]),
+    rows: ms.flatMap((m) => [m.home, m.away].map((t) => [label(t.team), r2(t.actual), t.starters.filter((p) => isPlayer(p) && p.fractionRemaining > 0).map((p) => p.name).join(", ") || "Done", `${sidePct1(m, t)}%`])),
   });
   slots.push(closerSlot("Predict Monday night for one named manager, and come back to the cold-open history one last time."));
   return {

@@ -294,12 +294,28 @@ async function sendToLeague(issue: Issue, transport: EmailTransport): Promise<Se
       : [];
     const sentAt = Date.now();
     await saveIssue({ ...current, status: "sent", sentAt, recipientCount: messages.length });
+    await recordEmailedWords(current);
     await markDone(l, name, { at: sentAt, recipients: messages.length });
     return { status: "sent", recipients: messages.length, messageIds: ids };
   } catch (err) {
     await releaseClaim(l, name);
     throw err;
   }
+}
+
+/** The words of an issue as emailed (dek and sections), hashed. */
+export const issueWordsHash = (i: Pick<Issue, "dek" | "sections">) => shortHash(JSON.stringify([i.dek, i.sections]));
+const emailedKey = (leagueId: string, slug: string) => store.keys.snapshot(leagueId, `emailed-words:${slug}`);
+
+/** Every version of an issue's words that went to the league. */
+export async function emailedWords(leagueId: string, slug: string): Promise<string[]> {
+  return (await store.get<string[]>(emailedKey(leagueId, slug)).catch(() => null)) ?? [];
+}
+
+async function recordEmailedWords(issue: Issue): Promise<void> {
+  const seen = await emailedWords(issue.leagueId, issue.slug);
+  const h = issueWordsHash(issue);
+  if (!seen.includes(h)) await store.set(emailedKey(issue.leagueId, issue.slug), [...seen, h], { ttlSeconds: 400 * 86_400 }).catch(() => undefined);
 }
 
 /** Resends of one issue per day, so a looping writer cannot spam the league. */
@@ -331,11 +347,13 @@ export async function resendIssue(issue: Issue): Promise<SendResult> {
       if (!unsub) throw new Error("Could not sign unsubscribe links.");
       messages.push({ to: email, ...renderIssueEmail(current, { unsubscribeUrl: unsub, webUrl }), headers: unsubscribeHeaders(unsub) });
     }
-    const words = shortHash(JSON.stringify([current.dek, current.sections]));
+    const words = issueWordsHash(current);
+    if ((await emailedWords(l, current.slug)).includes(words)) return skipped("These exact words already went to the league.");
     const ids = messages.length
       ? (await transport.send(messages, { idempotencyKey: `resend/${l}/${current.slug}/${words}/${shortHash(to.join(","))}` })).ids
       : [];
     await saveIssue({ ...current, status: "sent", sentAt: Date.now(), recipientCount: messages.length });
+    await recordEmailedWords(current);
     result = { status: "sent", recipients: messages.length, messageIds: ids };
   } catch (err) {
     result = { status: "error", recipients: 0, messageIds: [], error: errText(err) };

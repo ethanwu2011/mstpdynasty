@@ -13,7 +13,7 @@
  *   review, email not set up   stays a draft (nobody can approve it yet)
  */
 import { getIssue, saveIssue } from "@/lib/archive";
-import { resendIssue, sendIssue } from "@/lib/email";
+import { emailedWords, issueWordsHash, resendIssue, sendIssue } from "@/lib/email";
 import { newsletterMode } from "@/lib/env";
 import { draftFacts, tnfFacts, weeklyFacts } from "@/lib/facts";
 import { backfillOddsHistory, getPowerRankings, getWinProbabilities, runSeasonSim } from "@/lib/models";
@@ -137,13 +137,27 @@ export function legacyJobKey(key: string): string | null {
   return null;
 }
 
+/** Pause between claim retries in runIssueJob (tests shorten it). */
+let CLAIM_RETRY_MS = 1500;
+export function setClaimRetryMsForTests(ms: number): void {
+  CLAIM_RETRY_MS = ms;
+}
+
 export async function runIssueJob(job: PlannedJob, ctx: LeagueContext, now: number, schedule: NflGame[]): Promise<JobOutcome> {
   const l = ctx.leagueId;
   const legacy = legacyJobKey(job.key);
   if (legacy && (await getDone(l, legacy).catch(() => null))) {
     return { job: job.job, status: "skipped", detail: "Already done for this period (before the issue rename)." };
   }
-  const claim = await claimOnce(l, job.key).catch(() => "busy" as const);
+  // Mark the period seen before claiming: a writer's reply that lands after this run (which may
+  // skip or fail) is then sent at once instead of waiting for a run that never comes.
+  await store.set(seenKey(l, job.key), Date.now(), { ttlSeconds: 8 * 86_400 }).catch(() => undefined);
+  let claim = await claimOnce(l, job.key).catch(() => "busy" as const);
+  // An external writer holds the claim only for the few store writes of a save: wait it out.
+  for (let i = 0; claim === "busy" && i < 4; i++) {
+    await new Promise((r) => setTimeout(r, CLAIM_RETRY_MS));
+    claim = await claimOnce(l, job.key).catch(() => "busy" as const);
+  }
   if (claim === "done") return { job: job.job, status: "skipped", detail: "Already done for this period." };
   if (claim === "busy") return { job: job.job, status: "skipped", detail: "Another run is working on it." };
 
@@ -213,9 +227,17 @@ interface StoredBrief {
   job: PlannedJob;
   facts: IssueFacts;
   now: number;
-  /** Briefed with rewrite=1: its reply may replace an issue that already went out. */
-  rewrite?: boolean;
+  /**
+   * Briefed with rewrite=1 against an issue that had already gone out: the words it may replace
+   * (issueWordsHash). A reply is refused ("stale") once the issue's words have moved on to
+   * anything but the reply's own, and a rewrite brief taken before the issue went out is an
+   * ordinary brief.
+   */
+  rewriteOf?: string;
 }
+
+/** Set by runIssueJob when the day's job has come by for a period: a reply that arrives later is sent at once. */
+const seenKey = (leagueId: string, key: string) => store.keys.snapshot(leagueId, `job-seen:${key}`);
 
 const briefKey = (leagueId: string, slug: string) => store.keys.snapshot(leagueId, `ext-brief:${slug}`);
 const BRIEF_TTL_SECONDS = 6 * 3600;
@@ -266,7 +288,8 @@ export async function externalBriefs(
     }
     const b = await issueBrief(step.facts, ctx, now);
     const existing = await getIssue(l, b.slug);
-    await store.set<StoredBrief>(briefKey(l, b.slug), { job, facts: step.facts, now, rewrite: Boolean(opts.rewrite) }, { ttlSeconds: BRIEF_TTL_SECONDS });
+    const rewriteOf = opts.rewrite && existing && published(existing) ? issueWordsHash(existing) : undefined;
+    await store.set<StoredBrief>(briefKey(l, b.slug), { job, facts: step.facts, now, ...(rewriteOf !== undefined ? { rewriteOf } : {}) }, { ttlSeconds: BRIEF_TTL_SECONDS });
     briefs.push({ job: job.job, key: job.key, slug: b.slug, kind: b.kind, date: b.date, published: Boolean(existing && published(existing)), system: b.system, user: b.user, slots: b.slots });
   }
   return { briefs, skipped };
@@ -323,14 +346,23 @@ export async function publishExternal(
 
   const existing = await getIssue(l, built.slug);
   if (existing && published(existing)) {
-    // Only a rewrite brief may replace words that already went out; a late reply to an older
-    // brief would put older, thinner facts over what the league was sent.
-    if (!brief.rewrite) return { status: "stale", detail: "This issue already went out. Get a rewrite brief (rewrite=1) to replace it.", slug, report, preview };
+    // Only a rewrite brief taken against this very version may replace words that went out; a
+    // late reply to an older brief would put older, thinner facts over what the league was sent.
     const kept: Issue = { ...built, status: existing.status, sentAt: existing.sentAt, recipientCount: existing.recipientCount, createdAt: existing.createdAt };
+    const onSite = issueWordsHash(existing);
+    if (brief.rewriteOf === undefined || (onSite !== brief.rewriteOf && onSite !== issueWordsHash(kept))) {
+      return { status: "stale", detail: "This issue already went out (or changed since this brief). Get a new rewrite brief (rewrite=1) to replace it.", slug, report, preview };
+    }
     const changed = wordsOf(kept) !== wordsOf(existing);
     if (changed) await saveIssue(kept);
-    if (opts.deliver !== "now" || !changed || existing.status !== "sent") {
-      return { status: "updated", detail: changed ? "Replaced on the site. Nobody was emailed again." : "Same words as the issue that went out: nothing changed, nobody emailed.", slug, report, preview };
+    const alreadyEmailed = (await emailedWords(l, kept.slug)).includes(issueWordsHash(kept));
+    if (opts.deliver !== "now" || existing.status !== "sent" || alreadyEmailed) {
+      const detail = !changed
+        ? "Same words as the issue on the site: nothing changed."
+        : alreadyEmailed
+          ? "Replaced on the site. These exact words already went to the league, so nobody was emailed."
+          : "Replaced on the site. Nobody was emailed again.";
+      return { status: "updated", detail, slug, report, preview };
     }
     const res = await resendIssue(kept);
     return res.status === "sent"
@@ -346,9 +378,13 @@ export async function publishExternal(
   try {
     await saveIssue(built);
     await store.set(builtKey(l, brief.job.key), built.slug, { ttlSeconds: 30 * 24 * 3600 });
-    if (opts.deliver !== "now") {
+    // The day's job runs once, and each weekly issue is planned on one weekday only: if it has
+    // already come by for this period (and skipped or failed), nobody else will send this, so
+    // send it now.
+    const jobCameBy = Boolean(await store.get(seenKey(l, brief.job.key)).catch(() => null));
+    if (opts.deliver !== "now" && !jobCameBy) {
       await releaseClaim(l, brief.job.key);
-      return { status: "queued", detail: "Stored. The 8 AM job sends it.", slug, report, preview };
+      return { status: "queued", detail: "Stored. The morning job sends it.", slug, report, preview };
     }
     const d = await deliverIssue(built, ctx);
     if (!d.ok) {

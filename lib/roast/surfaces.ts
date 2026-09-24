@@ -355,8 +355,9 @@ async function writeChunk(surface: RoastSurface, rows: SurfaceRow[], notes: Reco
     out.usage = addUsage(out.usage, res.usage);
     out.model = res.model ?? out.model;
     if (!res.ok) {
-      // An outage is not the rows' fault; a refusal or an empty answer is.
-      if (attempt === 0 && (res.reason === "error" || res.reason === "not_configured")) {
+      // An outage or the budget is not the rows' fault (on the first call or the retry); a
+      // refusal or an empty answer is.
+      if (res.reason === "error" || res.reason === "not_configured" || res.reason === "budget") {
         out.unavailable = pending.map((p) => p.row.id);
         return out;
       }
@@ -609,7 +610,7 @@ const escapeRe = (x: string) => x.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
  */
 function factNumbers(value: unknown, out: number[] = []): number[] {
   if (typeof value === "number" && Number.isFinite(value)) out.push(value);
-  else if (typeof value === "string") for (const m of value.matchAll(/\d+(?:\.\d+)?/g)) out.push(Number(m[0]));
+  else if (typeof value === "string") for (const m of value.matchAll(/\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?/g)) out.push(Number(m[0].replace(/,/g, "")));
   else if (Array.isArray(value)) for (const v of value) factNumbers(v, out);
   else if (value && typeof value === "object") for (const v of Object.values(value)) factNumbers(v, out);
   return out;
@@ -640,14 +641,16 @@ export function currentLines(lines: SurfaceLineMap, rows: SurfaceRow[]): Surface
     const known = named.flatMap((r) => factNumbers(r.facts));
     let fresh = true;
     // Numbers as written: "47.7%", "12%", "170.1", "8th", "4.08". Years and pick labels are skipped.
-    for (const m of line.matchAll(/(\d+(?:\.\d+)?)(\s*%|(?:st|nd|rd|th)\b)?/g)) {
-      const raw = m[1];
+    for (const m of line.matchAll(/(\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?)(\s*%|(?:st|nd|rd|th)\b)?/g)) {
+      const raw = m[1].replace(/,/g, "");
       const n = Number(raw);
       const pct = Boolean(m[2] && m[2].includes("%"));
       if (!pct && /^\d\.\d\d$/.test(raw)) continue; // a pick label like 4.08
       if (!pct && n >= 1900 && n <= 2100) continue; // a year
       const tol = tolerance(n, pct);
-      if (!known.some((v) => Math.abs(v - n) <= tol || (pct && Math.abs(v * 100 - n) <= tol))) {
+      // The post-check lets a line round a decimal fact to a whole number (612.34 as 612).
+      const rounded = (v: number) => !pct && Number.isInteger(n) && !Number.isInteger(v) && Math.round(v) === n;
+      if (!known.some((v) => Math.abs(v - n) <= tol || (pct && Math.abs(v * 100 - n) <= tol) || rounded(v))) {
         fresh = false;
         break;
       }

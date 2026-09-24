@@ -194,11 +194,14 @@ export async function tickOutcomes(ctx: LeagueContext, now: number): Promise<Job
   const updates: RoastIndex = {};
   const results = await mapLimit(selected, ROAST_CONCURRENCY, async (c) => {
     // Checked again per item: earlier items in this tick may have spent the rest of the budget,
-    // and a refused call must not be saved as a failed attempt.
-    if (!(await withinBudget("item", Date.now()))) return "budget" as const;
+    // and a refused call must not be saved as a failed attempt. (No writer: nothing to spend.)
+    if (writer && !(await withinBudget("item", Date.now()))) return "budget" as const;
     const claim = store.keys.lock(l, `roast:${c.id}`);
     if (!(await store.lock(claim, ROAST_CLAIM_SECONDS).catch(() => false))) return "busy" as const;
     try {
+      // A page may have written this item since the index was read: never pay for it twice.
+      const fresh = await store.get<RoastIndex>(indexKey(l)).catch(() => null);
+      if (fresh && !wants(fresh, c.id, Date.now(), writer, recent.has(c.id))) return "busy" as const;
       // Pick roasts reuse the draft facts computed above instead of one draftFacts() call per pick.
       const r = await roastItem(c.kind, c.fact, ctx, { now, draftPicks });
       if (r.source === "placeholder") return "placeholder" as const;
@@ -267,38 +270,41 @@ export async function ensurePickRoast(
     if (!writer || existing?.source === "llm") return existing;
     const index = await loadIndex(l);
     const deadline = Date.now() + budgetMs;
-    const wanted = wants(index, id, Date.now(), writer);
-    // Out of today's budget: nobody will write this pick today, so do not wait for one.
-    if (wanted && !(await withinBudget("item"))) return existing;
-    if (wanted) {
-      const claim = store.keys.lock(l, `roast:${id}`);
-      if (await store.lock(claim, ROAST_CLAIM_SECONDS).catch(() => false)) {
-        const now = Date.now();
-        try {
-          const frozen = await freezeDraftPickRanks(l, pick.draftId, picks).catch(() => null);
-          const draftPicks = frozen ? picks.map((p) => withFrozenRank(p, frozen.get(p.pickNo))) : picks;
-          const fact = draftPicks.find((p) => p.pickNo === pick.pickNo) ?? pick;
-          const r = await roastItem("draft_pick", fact, ctx, { now, draftPicks });
-          if (r.source === "placeholder") return existing;
-          const saved: Roast = { ...r, id };
-          await saveRoast(saved);
-          const latest = (await store.get<RoastIndex>(indexKey(l)).catch(() => null)) ?? index;
-          const prevN = latest[id]?.n ?? 0;
-          await store.set(indexKey(l), {
-            ...latest,
-            [id]: { s: r.source, t: now, w: writer, n: r.source !== "llm" ? prevN + 1 : prevN, v: ROAST_VOICE },
-          });
-          return saved;
-        } finally {
-          await store.unlock(claim).catch(() => {});
-        }
+    // Nothing to wait for unless this pick is wanted and some run is (or is about to be) writing
+    // it: a pick the writer gave up on, one retried later, or one the budget cannot pay for today.
+    if (!wants(index, id, Date.now(), writer)) return existing;
+    if (!(await withinBudget("item"))) return existing;
+    const claim = store.keys.lock(l, `roast:${id}`);
+    if (await store.lock(claim, ROAST_CLAIM_SECONDS).catch(() => false)) {
+      const now = Date.now();
+      try {
+        const frozen = await freezeDraftPickRanks(l, pick.draftId, picks).catch(() => null);
+        const draftPicks = frozen ? picks.map((p) => withFrozenRank(p, frozen.get(p.pickNo))) : picks;
+        const fact = draftPicks.find((p) => p.pickNo === pick.pickNo) ?? pick;
+        const r = await roastItem("draft_pick", fact, ctx, { now, draftPicks });
+        if (r.source === "placeholder") return existing;
+        const saved: Roast = { ...r, id };
+        await saveRoast(saved);
+        const latest = (await store.get<RoastIndex>(indexKey(l)).catch(() => null)) ?? index;
+        const prevN = latest[id]?.n ?? 0;
+        await store.set(indexKey(l), {
+          ...latest,
+          [id]: { s: r.source, t: now, w: writer, n: r.source !== "llm" ? prevN + 1 : prevN, v: ROAST_VOICE },
+        });
+        return saved;
+      } finally {
+        await store.unlock(claim).catch(() => {});
       }
     }
-    // Someone else is writing it (the tick or another viewer): wait for their result.
+    // Someone else holds the claim (the tick or another viewer): wait for their result, and stop
+    // as soon as they record one, whatever it is.
+    const waitingSince = Date.now();
     while (Date.now() < deadline) {
       await new Promise((r) => setTimeout(r, 1500));
       const got = await getRoast(l, id).catch(() => null);
       if (got?.source === "llm") return got;
+      const entry = (await store.get<RoastIndex>(indexKey(l)).catch(() => null))?.[id];
+      if (entry && entry.t >= waitingSince - ROAST_CLAIM_SECONDS * 1000 && entry.t !== index[id]?.t) return got ?? existing;
     }
     return (await getRoast(l, id).catch(() => null)) ?? existing;
   } catch {

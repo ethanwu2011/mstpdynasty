@@ -24,7 +24,7 @@ import type {
 } from "@/lib/types";
 import { r1, r2, who } from "./format";
 import type { DraftContext } from "./memory-shape";
-import { assetPayload, matchupPayload, pickPayload } from "./plan";
+import { assetPayload, matchupPayload, pickPayload, sidePct } from "./plan";
 
 const record = (w: number, l: number, t = 0) => (t ? `${w}-${l}-${t}` : `${w}-${l}`);
 const rowOf = (team: TeamRef, facts: Record<string, unknown>, hashKey?: string): SurfaceRow => ({
@@ -61,23 +61,30 @@ export function standingsRows(rows: StandingRow[], lastWeek: StandingRow[] | nul
 /* ------------------------------------------------------------------ */
 
 /** In-season odds (id = rosterId), in the sim's order (title odds, then playoff odds). */
+/** Percent the way it is stable enough to quote: whole numbers from 10 up, one decimal below. */
+const stablePct = (n: number) => (n >= 10 ? Math.round(n) : r1(n));
+
+/**
+ * Season odds (id = rosterId). The sim reruns on fresh projections all week, so the row hashes
+ * only its stable numbers: the line is rewritten when a quoted number really moves, not on every
+ * projection update (which would spend the lines budget all week).
+ */
 export function oddsRows(sim: SimResult): SurfaceRow[] {
-  return sim.teams.map((t, i) =>
-    rowOf(t.team, {
+  return sim.teams.map((t, i) => {
+    const facts = {
       rank: i + 1,
-      playoffPct: r1(t.playoffPct),
-      titlePct: r1(t.titlePct),
-      byePct: r1(t.byePct),
-      lastPct: r1(t.lastPlacePct),
+      playoffPct: stablePct(t.playoffPct),
+      titlePct: stablePct(t.titlePct),
+      byePct: stablePct(t.byePct),
+      lastPct: stablePct(t.lastPlacePct),
       expectedWins: r1(t.expectedWins),
       record: record(t.wins, t.losses, t.ties),
       asOf: sim.asOfWeek > 0 ? `week ${sim.asOfWeek}` : "before the season",
-    }),
-  );
+    };
+    const { expectedWins, ...stable } = facts;
+    return rowOf(t.team, facts, JSON.stringify([stable, Math.round(expectedWins)]));
+  });
 }
-
-/** Percent the way it is stable enough to quote: whole numbers from 10 up, one decimal below. */
-const stablePct = (n: number) => (n >= 10 ? Math.round(n) : r1(n));
 
 /**
  * "If the season started today" odds (id = rosterId; stored under surfaceKeys.odds(season, 0)).
@@ -103,9 +110,10 @@ export function draftOddsRows(d: DraftOdds): SurfaceRow[] {
 /* power rankings                                                      */
 /* ------------------------------------------------------------------ */
 
+/** Power rankings (id = rosterId). Hashed on everything but the projection, which moves all week, rounded. */
 export function powerRows(p: PowerRankings): SurfaceRow[] {
-  return p.rows.map((r) =>
-    rowOf(r.team, {
+  return p.rows.map((r) => {
+    const facts = {
       rank: r.rank,
       ...(r.previousRank !== null ? { lastWeekRank: r.previousRank } : {}),
       record: record(r.wins, r.losses),
@@ -114,8 +122,10 @@ export function powerRows(p: PowerRankings): SurfaceRow[] {
       projected: r1(r.projectedStrength),
       luck: r1(r.luck),
       asOf: `week ${p.asOfWeek}`,
-    }),
-  );
+    };
+    const { projected, ...stable } = facts;
+    return rowOf(r.team, facts, JSON.stringify([stable, Math.round(projected)]));
+  });
 }
 
 /* ------------------------------------------------------------------ */
@@ -139,7 +149,8 @@ export function pregameMatchupRows(wp: WinProbWeek): SurfaceRow[] {
     facts: {
       week: wp.week,
       asOf: "before kickoff",
-      teams: [m.home, m.away].map((t) => ({ ...who(t.team), projected: r1(t.projected), winPct: Math.round(t.winProb * 100) })),
+      // Whole percentages that add to 100, the way the card beside the line prints them.
+      teams: [m.home, m.away].map((t) => ({ ...who(t.team), projected: r1(t.projected), winPct: sidePct(m, t) })),
     },
   }));
 }
