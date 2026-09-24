@@ -4,7 +4,7 @@
  */
 import { describe, expect, it } from "vitest";
 import { EMPTY_MEMORY, type PayloadMemory } from "@/lib/roast/memory-shape";
-import { planSundayPreview, planSundayRecap, type IssuePlan } from "@/lib/roast/plan";
+import { planSundayPreview, planSundayRecap, sidePct, type IssuePlan } from "@/lib/roast/plan";
 import type { LineupAlertFact, StarterLine, SundayPreviewFacts, SundayRecapFacts, TeamRef, TeamWinProb, WinProb, WinProbWeek } from "@/lib/types";
 
 const team = (rosterId: number, managerName: string, teamName = managerName): TeamRef => ({ rosterId, managerName, teamName, managerKey: managerName.toLowerCase() });
@@ -129,6 +129,46 @@ describe("planSundayPreview", () => {
     expect(lineup?.blocks.find((b) => b.type === "list")).toEqual({ type: "list", items: ["Shough and Fhough (Justin): Hurt Guy (WR) is ruled out", "Peter: FLEX slot is empty"] });
     expect(plan.sections.map((s) => s.heading)).toEqual(["Week 3, Sunday", "The matchups", "Fix your lineup", "Kickoff"]);
     expectSlotsPrinted(plan);
+  });
+});
+
+describe("Sunday Preview win chances", () => {
+  // Both sides would round up on their own: 37.5 and 62.5, 87.5 and 12.5.
+  const plan = planSundayPreview({
+    kind: "sunday_preview",
+    week: 3,
+    winProbs: week([matchup(1, side(JUSTIN, 150, 0.375), side(BRANDON, 160, 0.625)), matchup(5, side(PETER, 170, 0.875), side(ANISH, 120, 0.125))]),
+    lineupAlerts: [],
+  });
+
+  it("add to 100 for each matchup, in the facts and the table", () => {
+    const pct = (id: string) => {
+      const m = plan.facts[id] as Sides;
+      return [m.home.winPct, m.away.winPct];
+    };
+    expect(pct("m-1")).toEqual([38, 62]);
+    expect(pct("m-5")).toEqual([88, 12]);
+    expect(plan.sections[1].blocks.find((b) => b.type === "table")).toMatchObject({
+      rows: [
+        ["Shough and Fhough (Justin)", 0, "150.0", "38%"],
+        ["Brandon", 0, "160.0", "62%"],
+        ["Peter", 0, "170.0", "88%"],
+        ["Anish", 0, "120.0", "12%"],
+      ],
+    });
+  });
+
+  it("the fallback paragraph and headline print the same numbers", () => {
+    const fallback = plan.sections[1].blocks.flatMap((b) => (b.type === "slot" && b.slot === "m-5" ? b.fallback : []));
+    expect(fallback).toEqual([{ type: "paragraph", text: "Peter 170 projected (88%), Anish 120 (12%)." }]);
+    expect(plan.fallbackDek).toBe("Week 3: Anish is 12% to win.");
+  });
+
+  it("sidePct: the away side is 100 minus the home side, for any win probability", () => {
+    for (let k = 0; k <= 1000; k++) {
+      const m = matchup(1, side(JUSTIN, 150, k / 1000), side(BRANDON, 160, 1 - k / 1000));
+      expect(sidePct(m, m.home) + sidePct(m, m.away), `home ${k / 1000}`).toBe(100);
+    }
   });
 });
 

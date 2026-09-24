@@ -58,6 +58,23 @@ describe("the Daily on a week's first game day", () => {
     expect(plan.slots.find((s) => s.id === "cold-open")?.brief).toMatch(/about Justin, the biggest underdog of week 3\./);
   });
 
+  it("a matchup's two win chances add to 100, even when both would round up (37.5 and 62.5)", () => {
+    const plan = planDaily(quiet({ week: 3, first: false, matchups: [matchup(1, side(team(1, "Justin"), 150, 0.375), side(team(2, "Brandon"), 160, 0.625))] }), 100);
+    const m = (plan.facts.matchups as Array<{ home: Record<string, unknown>; away: Record<string, unknown> }>)[0];
+    expect([m.home.winPct, m.away.winPct]).toEqual([38, 62]);
+    const section = plan.sections.find((s) => s.heading === "Week 3: the slate");
+    expect(section?.blocks.find((b) => b.type === "table")).toMatchObject({ rows: [["Justin", "150.0", "38%", "Brandon", "160.0", "62%"]] });
+  });
+
+  it("every matchup's win chances add to 100", () => {
+    for (let k = 0; k <= 200; k++) {
+      const p = k / 200;
+      const plan = planDaily(quiet({ week: 3, first: false, matchups: [matchup(1, side(team(1, "Justin"), 150, p), side(team(2, "Brandon"), 160, 1 - p))] }), 100);
+      const m = (plan.facts.matchups as Array<{ home: { winPct: number }; away: { winPct: number } }>)[0];
+      expect(m.home.winPct + m.away.winPct, `home ${p}`).toBe(100);
+    }
+  });
+
   it("leaves the Daily as it was without a slate", () => {
     const plan = planDaily(quiet(null), 100);
     expect(plan.facts.matchups).toBeUndefined();
