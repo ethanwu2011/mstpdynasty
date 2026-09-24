@@ -269,7 +269,8 @@ describe("the batched writer", () => {
     setRoastClient(client);
     await store.set(store.keys.rate(`writer-calls:${etDate(Date.now())}`), MAX_WRITER_CALLS_PER_DAY);
     const res = await refreshSurfaceLines("standings", surfaceKeys.standings("2026", 5), table(), fakeCtx());
-    expect(res.status).toBe("skipped");
+    // The lines' share of the call cap is checked before any call: the rows wait, no call is made.
+    expect(res.status).toBe("throttled");
     expect(calls).toHaveLength(0);
   });
 

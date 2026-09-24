@@ -89,7 +89,9 @@ function wants(idx: RoastIndex, id: string, now: number, writerConfigured: boole
   if (!e) return true;
   if (e.s === "error") return now - e.t > RETRY_ERROR_AFTER_MS;
   if (!writerConfigured) return false;
-  if (e.s === "llm") return revoice && (e.v ?? 1) < ROAST_VOICE;
+  // A written post is rewritten only for a new voice, and a failed rewrite waits and gives up
+  // like any other attempt (the written post stays up meanwhile).
+  if (e.s === "llm") return revoice && (e.v ?? 1) < ROAST_VOICE && (e.n ?? 0) < MAX_WRITER_ATTEMPTS && now - e.t > (e.n ? REROAST_AFTER_MS : 0);
   // Written before the writer existed (for example before the API key was added): redo it now.
   if (!e.w) return true;
   // Gave up on the writer: a new voice (and its new checks) gets one more try.
@@ -202,24 +204,41 @@ export async function tickOutcomes(ctx: LeagueContext, now: number): Promise<Job
       // A page may have written this item since the index was read: never pay for it twice.
       const fresh = await store.get<RoastIndex>(indexKey(l)).catch(() => null);
       if (fresh && !wants(fresh, c.id, Date.now(), writer, recent.has(c.id))) return "busy" as const;
+      const prev = (fresh ?? index)[c.id];
       // Pick roasts reuse the draft facts computed above instead of one draftFacts() call per pick.
-      const r = await roastItem(c.kind, c.fact, ctx, { now, draftPicks });
-      if (r.source === "placeholder") return "placeholder" as const;
-      await saveRoast({ ...r, id: c.id });
-      const prevN = index[c.id]?.n ?? 0;
-      updates[c.id] = { s: r.source, t: now, w: writer, n: writer && r.source !== "llm" ? prevN + 1 : prevN, v: ROAST_VOICE };
-      return "roasted" as const;
-    } catch {
-      updates[c.id] = { s: "error", t: now };
-      return "error" as const;
+      let entry: IndexEntry;
+      let result: "roasted" | "placeholder" | "error";
+      try {
+        const r = await roastItem(c.kind, c.fact, ctx, { now, draftPicks });
+        if (r.source === "placeholder") return "placeholder" as const;
+        const prevN = prev?.n ?? 0;
+        if (r.source !== "llm" && prev?.s === "llm") {
+          // A failed rewrite of a written post: keep the post, count the attempt.
+          entry = { ...prev, t: now, n: prevN + 1 };
+        } else {
+          await saveRoast({ ...r, id: c.id });
+          entry = { s: r.source, t: now, w: writer, n: r.source === "llm" ? 0 : writer ? prevN + 1 : prevN, v: ROAST_VOICE };
+        }
+        result = "roasted";
+      } catch {
+        entry = { s: "error", t: now };
+        result = "error";
+      }
+      // Recorded while the claim is still held, so a page never writes this item again meanwhile.
+      updates[c.id] = entry;
+      const latest = (await store.get<RoastIndex>(indexKey(l)).catch(() => null)) ?? index;
+      await store.set(indexKey(l), { ...latest, [c.id]: entry });
+      return result;
     } finally {
       await store.unlock(claim).catch(() => {});
     }
   });
   if (Object.keys(updates).length) {
-    // Merge onto the latest index: another run may have written entries since we read it.
+    // Merge once more onto the latest index (concurrent items in this tick can race each other's
+    // writes above), never over an entry another run recorded after ours.
     const latest = (await store.get<RoastIndex>(indexKey(l)).catch(() => null)) ?? index;
-    await store.set(indexKey(l), { ...latest, ...updates });
+    const mine = Object.fromEntries(Object.entries(updates).filter(([id, e]) => !latest[id] || latest[id].t <= e.t));
+    await store.set(indexKey(l), { ...latest, ...mine });
   }
 
   const outcomes: JobOutcome[] = [];
@@ -278,6 +297,11 @@ export async function ensurePickRoast(
     if (await store.lock(claim, ROAST_CLAIM_SECONDS).catch(() => false)) {
       const now = Date.now();
       try {
+        // Someone may have finished this pick between our first read and the claim.
+        const again = await getRoast(l, id).catch(() => null);
+        if (again?.source === "llm") return again;
+        const idxNow = (await store.get<RoastIndex>(indexKey(l)).catch(() => null)) ?? index;
+        if (idxNow[id]?.t !== index[id]?.t && !wants(idxNow, id, now, writer)) return again ?? existing;
         const frozen = await freezeDraftPickRanks(l, pick.draftId, picks).catch(() => null);
         const draftPicks = frozen ? picks.map((p) => withFrozenRank(p, frozen.get(p.pickNo))) : picks;
         const fact = draftPicks.find((p) => p.pickNo === pick.pickNo) ?? pick;
@@ -289,7 +313,7 @@ export async function ensurePickRoast(
         const prevN = latest[id]?.n ?? 0;
         await store.set(indexKey(l), {
           ...latest,
-          [id]: { s: r.source, t: now, w: writer, n: r.source !== "llm" ? prevN + 1 : prevN, v: ROAST_VOICE },
+          [id]: { s: r.source, t: now, w: writer, n: r.source === "llm" ? 0 : prevN + 1, v: ROAST_VOICE },
         });
         return saved;
       } finally {
@@ -298,13 +322,17 @@ export async function ensurePickRoast(
     }
     // Someone else holds the claim (the tick or another viewer): wait for their result, and stop
     // as soon as they record one, whatever it is.
-    const waitingSince = Date.now();
     while (Date.now() < deadline) {
       await new Promise((r) => setTimeout(r, 1500));
       const got = await getRoast(l, id).catch(() => null);
       if (got?.source === "llm") return got;
       const entry = (await store.get<RoastIndex>(indexKey(l)).catch(() => null))?.[id];
-      if (entry && entry.t >= waitingSince - ROAST_CLAIM_SECONDS * 1000 && entry.t !== index[id]?.t) return got ?? existing;
+      if (entry && entry.t !== index[id]?.t) return got ?? existing;
+      // The holder let go without recording anything (a refused call): stop waiting.
+      if (await store.lock(claim, 5).catch(() => false)) {
+        await store.unlock(claim).catch(() => {});
+        return got ?? existing;
+      }
     }
     return (await getRoast(l, id).catch(() => null)) ?? existing;
   } catch {

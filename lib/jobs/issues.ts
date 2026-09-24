@@ -13,7 +13,7 @@
  *   review, email not set up   stays a draft (nobody can approve it yet)
  */
 import { getIssue, saveIssue } from "@/lib/archive";
-import { emailedWords, issueWordsHash, resendIssue, sendIssue } from "@/lib/email";
+import { issueWordsHash, markEmailed, resendIssue, sendIssue, wasEmailed } from "@/lib/email";
 import { newsletterMode } from "@/lib/env";
 import { draftFacts, tnfFacts, weeklyFacts } from "@/lib/facts";
 import { backfillOddsHistory, getPowerRankings, getWinProbabilities, runSeasonSim } from "@/lib/models";
@@ -289,6 +289,8 @@ export async function externalBriefs(
     const b = await issueBrief(step.facts, ctx, now);
     const existing = await getIssue(l, b.slug);
     const rewriteOf = opts.rewrite && existing && published(existing) ? issueWordsHash(existing) : undefined;
+    // An issue emailed before the emailed-words record existed: the league holds these words.
+    if (rewriteOf && existing?.status === "sent") await markEmailed(l, existing.slug, rewriteOf).catch(() => undefined);
     await store.set<StoredBrief>(briefKey(l, b.slug), { job, facts: step.facts, now, ...(rewriteOf !== undefined ? { rewriteOf } : {}) }, { ttlSeconds: BRIEF_TTL_SECONDS });
     briefs.push({ job: job.job, key: job.key, slug: b.slug, kind: b.kind, date: b.date, published: Boolean(existing && published(existing)), system: b.system, user: b.user, slots: b.slots });
   }
@@ -355,7 +357,8 @@ export async function publishExternal(
     }
     const changed = wordsOf(kept) !== wordsOf(existing);
     if (changed) await saveIssue(kept);
-    const alreadyEmailed = (await emailedWords(l, kept.slug)).includes(issueWordsHash(kept));
+    // A store that cannot say counts as "already emailed": never risk a second send.
+    const alreadyEmailed = await wasEmailed(l, kept.slug, issueWordsHash(kept)).catch(() => true);
     if (opts.deliver !== "now" || existing.status !== "sent" || alreadyEmailed) {
       const detail = !changed
         ? "Same words as the issue on the site: nothing changed."
@@ -374,7 +377,7 @@ export async function publishExternal(
   // both write or both send.
   const claim = await claimOnce(l, brief.job.key).catch(() => "busy" as const);
   if (claim === "done") return { status: "stale", detail: "This period's job already ran (a review copy may be waiting for approval).", slug, report, preview };
-  if (claim === "busy") return { status: "busy", detail: "The 8 AM job is writing this issue right now.", slug, report, preview };
+  if (claim === "busy") return { status: "busy", detail: "The morning job is working on this issue right now. Post again in a few minutes: if it skipped, your reply goes out then.", slug, report, preview };
   try {
     await saveIssue(built);
     await store.set(builtKey(l, brief.job.key), built.slug, { ttlSeconds: 30 * 24 * 3600 });

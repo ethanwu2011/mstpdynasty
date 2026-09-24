@@ -147,6 +147,7 @@ describe("sending", () => {
   });
 
   it("resendIssue never emails the words the league already got from the first send; new words go once", async () => {
+    vi.stubEnv("NEWSLETTER_MODE", "auto");
     leagueList("a");
     const issue = makeIssue({ factsOnly: false });
     await saveIssue(issue);
@@ -161,6 +162,14 @@ describe("sending", () => {
     expect(await resendIssue(rewritten)).toMatchObject({ status: "sent", recipients: 1 });
     expect(t.sent).toHaveLength(2);
     expect(t.sent[1].messages[0].text).toContain("Week 3, reviewed again.");
+  });
+
+  it("resendIssue never goes around review mode: new words wait for the approve link", async () => {
+    leagueList("a");
+    const issue = makeIssue({ factsOnly: false, status: "sent", sentAt: 1 });
+    await saveIssue(issue);
+    expect(await resendIssue({ ...issue, dek: "Unreviewed words." })).toMatchObject({ status: "skipped", error: "Review mode: a rewritten issue is not sent again without approval." });
+    expect(t.sent).toHaveLength(0);
   });
 });
 

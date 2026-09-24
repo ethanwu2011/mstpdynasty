@@ -305,17 +305,27 @@ async function sendToLeague(issue: Issue, transport: EmailTransport): Promise<Se
 
 /** The words of an issue as emailed (dek and sections), hashed. */
 export const issueWordsHash = (i: Pick<Issue, "dek" | "sections">) => shortHash(JSON.stringify([i.dek, i.sections]));
-const emailedKey = (leagueId: string, slug: string) => store.keys.snapshot(leagueId, `emailed-words:${slug}`);
+/** One key per emailed version, so no write can drop an earlier one. */
+const emailedKey = (leagueId: string, slug: string, words: string) => store.keys.snapshot(leagueId, `emailed-words:${slug}:${words}`);
+const EMAILED_TTL_SECONDS = 400 * 86_400;
 
-/** Every version of an issue's words that went to the league. */
-export async function emailedWords(leagueId: string, slug: string): Promise<string[]> {
-  return (await store.get<string[]>(emailedKey(leagueId, slug)).catch(() => null)) ?? [];
+/**
+ * Whether these exact words already went to the league. Throws when the store cannot answer:
+ * callers treat that as "do not send", never as "not sent yet".
+ */
+export async function wasEmailed(leagueId: string, slug: string, words: string): Promise<boolean> {
+  return Boolean(await store.get(emailedKey(leagueId, slug, words)));
+}
+
+/** Record a version the league holds (sent here, or sent before this record existed). */
+export async function markEmailed(leagueId: string, slug: string, words: string): Promise<void> {
+  await store.set(emailedKey(leagueId, slug, words), 1, { ttlSeconds: EMAILED_TTL_SECONDS });
 }
 
 async function recordEmailedWords(issue: Issue): Promise<void> {
-  const seen = await emailedWords(issue.leagueId, issue.slug);
-  const h = issueWordsHash(issue);
-  if (!seen.includes(h)) await store.set(emailedKey(issue.leagueId, issue.slug), [...seen, h], { ttlSeconds: 400 * 86_400 }).catch(() => undefined);
+  await markEmailed(issue.leagueId, issue.slug, issueWordsHash(issue)).catch((err) =>
+    console.warn(`[email] could not record the words emailed for ${issue.slug}: ${errText(err)}`),
+  );
 }
 
 /** Resends of one issue per day, so a looping writer cannot spam the league. */
@@ -333,6 +343,8 @@ export async function resendIssue(issue: Issue): Promise<SendResult> {
   if (isDevLeague(issue.leagueId)) return skipped("Dev league: never emailed.");
   if (issue.placeholder || issue.factsOnly) return skipped("Only a written issue is sent again.");
   if (perInstanceStore()) return notConfigured(KV_MISSING);
+  // Review mode: nothing reaches the league without the commissioner's approve link.
+  if (newsletterMode() === "review") return skipped("Review mode: a rewritten issue is not sent again without approval.");
   const l = issue.leagueId;
   let result: SendResult;
   try {
@@ -348,7 +360,7 @@ export async function resendIssue(issue: Issue): Promise<SendResult> {
       messages.push({ to: email, ...renderIssueEmail(current, { unsubscribeUrl: unsub, webUrl }), headers: unsubscribeHeaders(unsub) });
     }
     const words = issueWordsHash(current);
-    if ((await emailedWords(l, current.slug)).includes(words)) return skipped("These exact words already went to the league.");
+    if (await wasEmailed(l, current.slug, words)) return skipped("These exact words already went to the league.");
     const ids = messages.length
       ? (await transport.send(messages, { idempotencyKey: `resend/${l}/${current.slug}/${words}/${shortHash(to.join(","))}` })).ids
       : [];

@@ -52,12 +52,13 @@ describe("Thursday Night Fallout", () => {
 });
 
 describe("the pre-kickoff odds in the league memory", () => {
-  it("are one decimal and add to 100", async () => {
+  it("are exact (two decimals) and add to 100", async () => {
     vi.mocked(getWinProbabilities).mockResolvedValue(DECIMAL);
     const f: ThursdayFalloutFacts = { kind: "thursday_fallout", week: 4, tnf: { week: 4, games: [], players: [], teams: [], placeholder: false }, winProbs: DECIMAL };
     const mem = await issueMemory(f, fakeCtx());
     expect(getWinProbabilities).toHaveBeenCalledWith(4, expect.anything(), { pregame: true });
-    expect(mem.winPctBefore).toEqual({ 1: 37.6, 2: 62.4 });
+    // Exact (two decimals, adding to 100): the issues round when they print, from the home side.
+    expect(mem.winPctBefore).toEqual({ 1: 37.55, 2: 62.45 });
   });
 });
 

@@ -80,6 +80,8 @@ export const MAX_WRITER_CALLS_PER_DAY = 400;
 export const DEFAULT_DAILY_BUDGET_USD = 1.5;
 /** The share of the day's budget each kind may have spent before it starts a call. */
 export const BUDGET_SHARE: Record<RoastKind, number> = { lines: 0.4, item: 0.85, issue: 1 };
+/** The same for the daily call cap, so item and line volume can never use the newsletter's calls. */
+export const CALL_SHARE: Record<RoastKind, number> = { lines: 0.6, item: 0.85, issue: 1 };
 
 /** Dollars per million tokens, [input, output], by model id prefix. Unknown models price as the dearest. */
 const PRICES: Array<[string, number, number]> = [
@@ -116,11 +118,15 @@ export async function spentTodayUsd(now = Date.now()): Promise<number> {
  */
 export async function withinBudget(kind: RoastKind, now = Date.now()): Promise<boolean> {
   try {
-    return (await spentTodayUsd(now)) < dailyBudgetUsd() * BUDGET_SHARE[kind];
+    if ((await spentTodayUsd(now)) >= dailyBudgetUsd() * BUDGET_SHARE[kind]) return false;
+    const calls = Number((await store.get<number>(callsKey(now))) ?? 0) || 0;
+    return calls < MAX_WRITER_CALLS_PER_DAY * CALL_SHARE[kind];
   } catch {
     return false;
   }
 }
+
+const callsKey = (now: number) => store.keys.rate(`writer-calls:${etDate(now)}`);
 
 async function recordSpend(model: string | null, usage: RoastUsage | null, now = Date.now()): Promise<void> {
   const micro = Math.round(costUsd(model, usage) * 1e6);
@@ -136,9 +142,9 @@ export function sharedStoreMissing(): boolean {
 }
 
 /** Count one call against today's cap. Fails closed: a store that cannot count cannot store the result either. */
-async function withinDailyCap(now = Date.now()): Promise<boolean> {
+async function withinDailyCap(kind: RoastKind, now = Date.now()): Promise<boolean> {
   try {
-    return (await store.incr(store.keys.rate(`writer-calls:${etDate(now)}`), 86_400)) <= MAX_WRITER_CALLS_PER_DAY;
+    return (await store.incr(callsKey(now), 86_400)) <= MAX_WRITER_CALLS_PER_DAY * CALL_SHARE[kind];
   } catch {
     return false;
   }
@@ -250,8 +256,8 @@ export async function callRoastModel(userContent: string, label: string, kind: R
     console.warn(`[roast] ${label}: ${detail}`);
     return { ok: false, reason: "budget", detail, model: null, usage: null };
   }
-  if (!(await withinDailyCap())) {
-    const detail = `daily cap of ${MAX_WRITER_CALLS_PER_DAY} writer calls reached`;
+  if (!(await withinDailyCap(kind))) {
+    const detail = `daily cap of ${MAX_WRITER_CALLS_PER_DAY} writer calls reached${kind === "issue" ? "" : ` (${kind} share)`}`;
     console.warn(`[roast] ${label}: ${detail}`);
     await recordWriterStatus({ ok: false, at: Date.now(), reason: "error", detail });
     return { ok: false, reason: "budget", detail, model: null, usage: null };

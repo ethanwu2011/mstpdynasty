@@ -555,8 +555,16 @@ export function planWeekly(f: WeeklyRecapFacts, mem: PayloadMemory = EMPTY_MEMOR
 /* Thursday Night Fallout                                              */
 /* ------------------------------------------------------------------ */
 
-const winBefore = (rosterId: number, mem: PayloadMemory) =>
-  mem.winPctBefore[rosterId] !== undefined ? { winPctBefore: mem.winPctBefore[rosterId] } : {};
+/**
+ * A side's pre-kickoff win chance at one decimal, the two sides adding to 100. The memory holds
+ * the exact percentage (two decimals) per roster; the pair is printed from the home side.
+ */
+const winBefore = (m: { home: TeamWinProb; away: TeamWinProb }, t: TeamWinProb, mem: PayloadMemory) => {
+  const home = mem.winPctBefore[m.home.team.rosterId];
+  if (home === undefined) return {};
+  const h = r1(home);
+  return { winPctBefore: t === m.home ? h : r1(100 - h) };
+};
 
 export function planThursday(f: ThursdayFalloutFacts, mem: PayloadMemory = EMPTY_MEMORY): IssuePlan {
   const tnf = f.tnf;
@@ -578,8 +586,8 @@ export function planThursday(f: ThursdayFalloutFacts, mem: PayloadMemory = EMPTY
     teams: tnf.teams.map((t) => ({ ...who(t.team), banked: t.banked, projected: t.projected, delta: t.delta })),
     // Win % at one decimal, like the table (99.6 is not "locked in"), with the pre-kickoff number to show the swing.
     matchups: f.winProbs.matchups.map((m) => ({
-      home: { ...who(m.home.team), points: r2(m.home.actual), mean: r1(m.home.mean), winPct: sidePct1(m, m.home), ...winBefore(m.home.team.rosterId, mem) },
-      away: { ...who(m.away.team), points: r2(m.away.actual), mean: r1(m.away.mean), winPct: sidePct1(m, m.away), ...winBefore(m.away.team.rosterId, mem) },
+      home: { ...who(m.home.team), points: r2(m.home.actual), mean: r1(m.home.mean), winPct: sidePct1(m, m.home), ...winBefore(m, m.home, mem) },
+      away: { ...who(m.away.team), points: r2(m.away.actual), mean: r1(m.away.mean), winPct: sidePct1(m, m.away), ...winBefore(m, m.away, mem) },
     })),
   };
   const history = historyPayload(tnf.teams.map((t) => t.team), mem);
@@ -713,6 +721,8 @@ export function planSundayPreview(f: SundayPreviewFacts, mem: PayloadMemory = EM
   const side = (m: (typeof ms)[number], t: TeamWinProb) => ({
     ...who(t.team),
     projected: p1(t.projected),
+    // What the win chance is built on: Thursday points banked plus what the rest should score.
+    mean: r1(t.mean),
     winPct: sidePct(m, t),
     ...before(m, t),
     ...(t.actual > 0 ? { banked: r2(t.actual) } : {}),
@@ -730,7 +740,7 @@ export function planSundayPreview(f: SundayPreviewFacts, mem: PayloadMemory = EM
     {
       id: "cold-open",
       brief: dog
-        ? `4 to 8 sentences in one or two paragraphs about ${dog.team.managerName}, the biggest underdog of week ${f.week}. ${EPIC_OPEN} on ${dog.team.managerName}. Then the facts that prove it (his projection, win chance, stars and weakest starter against his opponent's), ${EPIC_RETURN}.`
+        ? `4 to 8 sentences in one or two paragraphs about ${dog.team.managerName}, the biggest underdog of week ${f.week}. ${EPIC_OPEN} on ${dog.team.managerName}. Then the facts that prove it (his expected total, win chance, stars and weakest starter against his opponent's), ${EPIC_RETURN}.`
         : "3 to 5 sentences. A short fake epic about the Sunday ahead.",
     },
   ];
@@ -740,15 +750,15 @@ export function planSundayPreview(f: SundayPreviewFacts, mem: PayloadMemory = EM
     const hasDog = dog && (m.home === dog || m.away === dog);
     slots.push({
       id,
-      brief: `${hasDog ? "1 or 2 sentences" : "2 or 3 sentences"} on matchup ${id} before the Sunday games: both managers hit, the favorite's projection and win chance against the underdog's, their stars and weakest starters, and any Thursday points already banked.${hasDog ? ` ${dog.team.managerName} already got the cold open.` : ""}`,
+      brief: `${hasDog ? "1 or 2 sentences" : "2 or 3 sentences"} on matchup ${id} before the Sunday games: both managers hit, the favorite's expected total (mean, Thursday points included) and win chance against the underdog's, their stars and weakest starters, and any Thursday points already banked.${hasDog ? ` ${dog.team.managerName} already got the cold open.` : ""}`,
     });
     const fb = `${m.home.team.managerName} ${p1(m.home.projected)} projected (${sidePct(m, m.home)}%), ${m.away.team.managerName} ${p1(m.away.projected)} (${sidePct(m, m.away)}%).`;
     blocks.push({ type: "heading", text: vs(m.home.team, m.away.team) }, slot(id, [para(fb)]));
   }
   blocks.push({
     type: "table",
-    columns: ["Team", "Banked", "Proj", "Win %"],
-    rows: ms.flatMap((m) => [m.home, m.away].map((t) => [label(t.team), r2(t.actual), p1(t.projected).toFixed(1), `${sidePct(m, t)}%`])),
+    columns: ["Team", "Banked", "Expected", "Win %"],
+    rows: ms.flatMap((m) => [m.home, m.away].map((t) => [label(t.team), r2(t.actual), r1(t.mean).toFixed(1), `${sidePct(m, t)}%`])),
   });
   const sections: PlannedSection[] = [
     { heading: `Week ${f.week}, Sunday`, blocks: [slot("cold-open", [])] },
@@ -801,7 +811,7 @@ export function planSundayRecap(f: SundayRecapFacts, mem: PayloadMemory = EMPTY_
       points: r2(t.actual),
       mean: r1(t.mean),
       winPct: sidePct1(m, t),
-      ...winBefore(t.team.rosterId, mem),
+      ...winBefore(m, t, mem),
       ...(top ? { topStarter: { name: top.name, pos: top.position, points: r2(top.actual) } } : {}),
       ...(worst && worst !== top ? { worstStarter: { name: worst.name, pos: worst.position, points: r2(worst.actual), projected: p1(worst.projected) } } : {}),
       ...(left.length ? { left: left.map(projectedLine) } : {}),

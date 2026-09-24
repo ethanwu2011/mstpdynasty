@@ -250,7 +250,9 @@ describe("odds and power rows hash on the numbers a line quotes", () => {
   it("odds: a sim rerun on fresh projections keeps the hash; a quoted number moving changes it", () => {
     expect(oddsHash({ expectedWins: 8.31, playoffPct: 55.4, byePct: 11.6, titlePct: 4.64 })).toBe(oddsHash());
     expect(oddsHash({ playoffPct: 58.1 })).not.toBe(oddsHash());
-    expect(oddsHash({ titlePct: 4.82 })).not.toBe(oddsHash());
+    // As coarse as the line check (whole points): 4.61 to 4.82 is drift, 4.61 to 6.2 is news.
+    expect(oddsHash({ titlePct: 4.82 })).toBe(oddsHash());
+    expect(oddsHash({ titlePct: 6.2 })).not.toBe(oddsHash());
     expect(oddsHash({ expectedWins: 8.61 })).not.toBe(oddsHash());
   });
 

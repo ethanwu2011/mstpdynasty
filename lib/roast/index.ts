@@ -56,6 +56,7 @@ import { SYSTEM_PROMPT } from "./persona";
 export { draftContext, issueMemory } from "./memory";
 export {
   buildRoastRequest,
+  CALL_SHARE,
   dailyBudgetUsd,
   hasRoastClient,
   MAX_WRITER_CALLS_PER_DAY,
@@ -500,7 +501,11 @@ async function recentBlock(leagueId: string, plan: ItemPlan): Promise<string> {
   }
 }
 
-async function writeItem(plan: ItemPlan, lore: Record<string, string>, recent: string): Promise<{ text: string | null; model: string | null; usage: RoastUsage | null; refused?: boolean }> {
+async function writeItem(
+  plan: ItemPlan,
+  lore: Record<string, string>,
+  recent: string,
+): Promise<{ text: string | null; model: string | null; usage: RoastUsage | null; refused?: boolean; outage?: string }> {
   const { allowed, exempt } = numberSources(plan, lore);
   // RECENT goes after FACTS and LORE, so everything before it stays the same request to request.
   const message = userMessage(plan, lore) + recent;
@@ -513,7 +518,12 @@ async function writeItem(plan: ItemPlan, lore: Record<string, string>, recent: s
     model = res.model ?? model;
     // Out of budget (or the daily cap): not the item's fault, so no facts-only result that
     // would count as a failed attempt or replace a written post.
-    if (!res.ok) return { text: null, model, usage, refused: res.reason === "budget" };
+    if (!res.ok) {
+      if (res.reason === "budget") return { text: null, model, usage, refused: true };
+      // The API is down, overloaded or not configured: not the item's fault either.
+      if (res.reason === "error" || res.reason === "not_configured") return { text: null, model, usage, outage: res.detail };
+      return { text: null, model, usage };
+    }
     const slots = parseSlots(res.text, "roast");
     const raw = slots.get("roast") ?? [...slots.values()][0] ?? "";
     const checked = checkText(raw, allowed, exempt);
@@ -567,6 +577,8 @@ export async function roastItem(kind: RoastItemKind, fact: RoastItemFact, ctx?: 
   const out = await writeItem(plan, lore, await recentBlock(c.leagueId, plan));
   // A placeholder is never saved: the tick and the page leave the item for the next run.
   if (out.refused) return { ...base, source: "placeholder", model: out.model, usage: out.usage };
+  // An outage throws, so the tick records an error (retried in an hour) and saves nothing.
+  if (out.outage) throw new Error(`writer unavailable: ${out.outage}`);
   if (!out.text) return { ...base, model: out.model, usage: out.usage };
   return { ...base, text: out.text, source: "llm", model: out.model, usage: out.usage };
 }

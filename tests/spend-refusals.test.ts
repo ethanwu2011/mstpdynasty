@@ -24,7 +24,7 @@ vi.mock("@/lib/fantasycalc", async (importOriginal) => {
 import { getRoast, saveRoast } from "@/lib/archive";
 import { transactionFacts } from "@/lib/facts";
 import { ROAST_VOICE, tickOutcomes } from "@/lib/jobs/tick";
-import { getStoredSurfaceLines, MAX_WRITER_CALLS_PER_DAY, refreshSurfaceLines, roastItem, setRoastClient, surfaceKeys } from "@/lib/roast";
+import { getStoredSurfaceLines, MAX_WRITER_CALLS_PER_DAY, refreshSurfaceLines, roastItem, setRoastClient, surfaceKeys, CALL_SHARE } from "@/lib/roast";
 import type { RoastClient } from "@/lib/roast/llm";
 import * as store from "@/lib/store";
 import { etDate } from "@/lib/time";
@@ -107,7 +107,8 @@ describe("roastItem when the writer is refused", () => {
   });
 
   it("a retry refused by the daily call cap comes back as a placeholder too", async () => {
-    await store.set(store.keys.rate(`writer-calls:${etDate(Date.now())}`), MAX_WRITER_CALLS_PER_DAY - 1);
+    // Items stop at their share of the cap (CALL_SHARE.item), leaving the rest for the newsletter.
+    await store.set(store.keys.rate(`writer-calls:${etDate(Date.now())}`), Math.floor(MAX_WRITER_CALLS_PER_DAY * CALL_SHARE.item) - 1);
     const { client, calls } = spendingClient(INVENTED);
     setRoastClient(client);
     const r = await roastItem("trade", trade("t1", 0), ctx);

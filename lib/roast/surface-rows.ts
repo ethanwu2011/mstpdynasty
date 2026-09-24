@@ -62,7 +62,9 @@ export function standingsRows(rows: StandingRow[], lastWeek: StandingRow[] | nul
 
 /** In-season odds (id = rosterId), in the sim's order (title odds, then playoff odds). */
 /** Percent the way it is stable enough to quote: whole numbers from 10 up, one decimal below. */
-const stablePct = (n: number) => (n >= 10 ? Math.round(n) : r1(n));
+const stablePct = (n: number) => ((n >= 10 && n < 99.5) || n === 100 ? Math.round(n) : r1(n));
+/** A percentage as coarse as the line check tolerates (whole points), for hashing only; 0 and "above 0" stay apart. */
+const hashPct = (n: number) => (n > 0 && n < 0.5 ? 0.5 : n < 100 && n >= 99.5 ? 99.5 : Math.round(n));
 
 /**
  * Season odds (id = rosterId). The sim reruns on fresh projections all week, so the row hashes
@@ -71,18 +73,20 @@ const stablePct = (n: number) => (n >= 10 ? Math.round(n) : r1(n));
  */
 export function oddsRows(sim: SimResult): SurfaceRow[] {
   return sim.teams.map((t, i) => {
+    // The facts at the precision the odds table prints, so a line never quotes a number the page
+    // does not (99.7 stays 99.7, never a certain 100).
     const facts = {
       rank: i + 1,
-      playoffPct: stablePct(t.playoffPct),
-      titlePct: stablePct(t.titlePct),
-      byePct: stablePct(t.byePct),
-      lastPct: stablePct(t.lastPlacePct),
+      playoffPct: r1(t.playoffPct),
+      titlePct: r1(t.titlePct),
+      byePct: r1(t.byePct),
+      lastPct: r1(t.lastPlacePct),
       expectedWins: r1(t.expectedWins),
       record: record(t.wins, t.losses, t.ties),
       asOf: sim.asOfWeek > 0 ? `week ${sim.asOfWeek}` : "before the season",
     };
-    const { expectedWins, ...stable } = facts;
-    return rowOf(t.team, facts, JSON.stringify([stable, Math.round(expectedWins)]));
+    const hash = [facts.rank, facts.record, facts.asOf, hashPct(t.playoffPct), hashPct(t.titlePct), hashPct(t.byePct), hashPct(t.lastPlacePct), Math.round(t.expectedWins)];
+    return rowOf(t.team, facts, JSON.stringify(hash));
   });
 }
 

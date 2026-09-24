@@ -649,7 +649,8 @@ export function currentLines(lines: SurfaceLineMap, rows: SurfaceRow[]): Surface
       if (!pct && n >= 1900 && n <= 2100) continue; // a year
       const tol = tolerance(n, pct);
       // The post-check lets a line round a decimal fact to a whole number (612.34 as 612).
-      const rounded = (v: number) => !pct && Number.isInteger(n) && !Number.isInteger(v) && Math.round(v) === n;
+      // Only for real amounts (612 for 612.34): never a rank or ordinal, which must match exactly.
+      const rounded = (v: number) => !pct && !m[2] && n >= 10 && Number.isInteger(n) && !Number.isInteger(v) && Math.round(v) === n;
       if (!known.some((v) => Math.abs(v - n) <= tol || (pct && Math.abs(v * 100 - n) <= tol) || rounded(v))) {
         fresh = false;
         break;

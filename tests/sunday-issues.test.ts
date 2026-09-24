@@ -64,6 +64,7 @@ describe("planSundayPreview", () => {
       manager: "Justin",
       team: "Shough and Fhough",
       projected: 161.1,
+      mean: 161.1,
       winPct: 32,
       stars: [
         { name: "Ace", pos: "QB", projected: 22.4 },
@@ -77,7 +78,7 @@ describe("planSundayPreview", () => {
     expect((m1.away.stars as unknown[]).length).toBe(1);
     // No Thursday points, no "banked"; no starters, no stars or weakest.
     expect(m1.home).not.toHaveProperty("banked");
-    expect(plan.facts["m-5"]).toEqual({ home: { manager: "Peter", team: "Peter", projected: 189.6, winPct: 77 }, away: { manager: "Anish", team: "Anish", projected: 155.8, winPct: 23 } });
+    expect(plan.facts["m-5"]).toEqual({ home: { manager: "Peter", team: "Peter", projected: 189.6, mean: 189.6, winPct: 77 }, away: { manager: "Anish", team: "Anish", projected: 155.8, mean: 155.8, winPct: 23 } });
     expect(plan.managers.sort()).toEqual(["Anish", "Brandon", "Justin", "Peter"]);
   });
 
@@ -108,7 +109,7 @@ describe("planSundayPreview", () => {
     expect(plan.slots.map((s) => s.id)).toEqual(["dek", "cold-open", "m-1", "m-5", "closer"]);
     expect(plan.sections.map((s) => s.heading)).toEqual(["Week 3, Sunday", "The matchups", "Kickoff"]);
     expect(plan.sections[1].blocks.find((b) => b.type === "table")).toMatchObject({
-      columns: ["Team", "Banked", "Proj", "Win %"],
+      columns: ["Team", "Banked", "Expected", "Win %"],
       rows: [
         ["Shough and Fhough (Justin)", 0, "161.1", "32%"],
         ["Brandon", 18.62, "183.1", "68%"],

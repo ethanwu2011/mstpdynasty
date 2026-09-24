@@ -526,13 +526,13 @@ describe("roastItem", () => {
     expect(r).toMatchObject({ source: "llm", text: "Rory lost 1830 in value on a deal nobody forced him to make." });
   });
 
-  it("refusal and errors fall back to facts only", async () => {
-    for (const reply of [{ stop: "refusal", contentTrap: true }, { throws: new Error("boom") }] satisfies FakeReply[]) {
-      const { client } = fakeClient([reply]);
-      setRoastClient(client);
-      const r = await roastItem("trade", TRADE, ctx);
-      expect(r.source).toBe("facts_only");
-    }
+  it("a refusal falls back to facts only; an API outage throws, so the caller retries later and saves nothing", async () => {
+    const refused = fakeClient([{ stop: "refusal", contentTrap: true }]);
+    setRoastClient(refused.client);
+    expect((await roastItem("trade", TRADE, ctx)).source).toBe("facts_only");
+    const down = fakeClient([{ throws: new Error("boom") }]);
+    setRoastClient(down.client);
+    await expect(roastItem("trade", TRADE, ctx)).rejects.toThrow(/writer unavailable: .*boom/);
   });
 
   it("a priority league never gets bids in FACTS or '$0' in the facts line", async () => {
