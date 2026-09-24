@@ -132,7 +132,10 @@ export function dropPreStartWeeks(league: SleeperLeague, rosters: SleeperRoster[
   const start = leagueStartWeek(league);
   if (start <= 1) return { league, rosters };
   const scored = league.settings.last_scored_leg ?? 0;
-  const realWeeks = Math.max(0, scored - start + 1);
+  // Sleeper stops counting roster W/L after the regular season, so playoff weeks are not games here.
+  const playoffStart = league.settings.playoff_week_start;
+  const lastRegular = typeof playoffStart === "number" && playoffStart > start ? playoffStart - 1 : scored;
+  const realWeeks = Math.max(0, Math.min(scored, lastRegular) - start + 1);
   const cleanLeague = scored > 0 && scored < start ? { ...league, settings: { ...league.settings, last_scored_leg: 0 } } : league;
   const cleanRosters = rosters.map((r) => {
     const st = r.settings;

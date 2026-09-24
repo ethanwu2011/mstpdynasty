@@ -278,5 +278,25 @@ export async function buildDailyFacts(ctx: LeagueContext, now: number, schedule:
   };
 }
 
+/**
+ * Lineup holes for `week` as of `now` (the Sunday Preview's "Fix your lineup"): starters on a
+ * bye, out, on IR or doubtful whose game is today or tomorrow and has not kicked off. Not
+ * deduped against the Daily's alerts, which do not run in season. Empty on any failure.
+ */
+export async function lineupAlertsNow(ctx: LeagueContext, schedule: NflGame[], week: number, now: number): Promise<LineupAlertFact[]> {
+  try {
+    const [players, fc, clocks] = await Promise.all([getPlayers(), getFantasyCalc().catch(() => null), getGameClocks({ season: ctx.season, week }).catch(() => [])]);
+    const kickoffs: Record<string, KickoffInfo> = {};
+    for (const c of clocks) {
+      const k = { kickoff: c.kickoff, started: c.state !== "pre" };
+      kickoffs[c.home] = k;
+      kickoffs[c.away] = k;
+    }
+    return lineupAlerts(ctx, players, fc, schedule, week, etDate(now), kickoffs, new Set()).alerts;
+  } catch {
+    return [];
+  }
+}
+
 /** @deprecated Renamed to buildDailyFacts. */
 export const buildDailyRoastFacts = buildDailyFacts;

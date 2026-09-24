@@ -3,7 +3,7 @@
  * have flipped a loss, zero-point starters, projected vs actual, all-play, robbed / fraud,
  * streaks and standings as of the week.
  */
-import { teamRef } from "@/lib/league";
+import { leagueStartWeek, teamRef } from "@/lib/league";
 import { pointsFromStats } from "@/lib/scoring";
 import { byeTeams } from "@/lib/sleeper";
 import type {
@@ -90,7 +90,7 @@ export async function standingsThrough(week: number, loader: FactsLoader): Promi
   const last = Math.min(week, ctx.lastRegularSeasonWeek);
   const acc = new Map<RosterId, { wins: number; losses: number; ties: number; pf: number; pa: number; results: WeekResult[] }>();
   for (const r of ctx.rosters) acc.set(r.roster_id, { wins: 0, losses: 0, ties: 0, pf: 0, pa: 0, results: [] });
-  for (let w = 1; w <= last; w++) {
+  for (let w = leagueStartWeek(ctx.league); w <= last; w++) {
     const ms = await loader.matchups(w);
     if (!weekHasScores(ms)) continue;
     for (const res of weekResults(ms).values()) {

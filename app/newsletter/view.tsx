@@ -1,4 +1,4 @@
-/** The newsletter archive: the latest issue up top, the four issues, then every issue by month. */
+/** The newsletter archive: the latest issue up top, the issues, then every issue by month. */
 import Link from "next/link";
 import { Button, PixelArrow } from "@/components/Button";
 import { cx } from "@/components/cx";
@@ -57,11 +57,11 @@ function leadBlock(issue: Issue): RoastBlockData {
   };
 }
 
-/* ------------------------------ the four issues ------------------------------ */
+/* -------------------------------- the issues -------------------------------- */
 
 function Masthead({ issues, kind, recapWeek }: { issues: Issue[]; kind: IssueKind | null; recapWeek: number }) {
   return (
-    <Panel label="The four issues" span={4} pad={false}>
+    <Panel label="The issues" span={4} pad={false}>
       <ul className="m-0 list-none p-0">
         {ISSUE_ORDER.map((k) => {
           const mine = issues.filter((i) => i.kind === k);

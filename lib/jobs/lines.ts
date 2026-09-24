@@ -151,7 +151,8 @@ function tableJobs(ctx: LeagueContext): SurfaceJob[] {
     build: async () => {
       const rows = await standings();
       if (!rows || !hasGames(rows)) return null;
-      const before = lcw > 1 ? await standingsAsOf(lcw - 1, ctx).catch(() => null) : null;
+      // No "last week" before the league's first week (its pre-start table is all 0-0).
+      const before = lcw > Math.max(1, ctx.league.settings.start_week ?? 1) ? await standingsAsOf(lcw - 1, ctx).catch(() => null) : null;
       return { key: surfaceKeys.standings(ctx.season, lcw), rows: standingsRows(rows, before) };
     },
   });

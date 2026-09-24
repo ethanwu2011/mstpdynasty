@@ -17,7 +17,7 @@ import { draftFacts, shameEntries, standingsAsOf, tnfFacts, tradeHindsight, tran
 import { getLeagueContext, teamRef } from "@/lib/league";
 import { getWinProbabilities } from "@/lib/models";
 import { rankedValues, type DraftContext, type PayloadMemory } from "@/lib/roast/memory";
-import { planDaily, planDraftGrades, planThursday, planWeekly } from "@/lib/roast/plan";
+import { planDaily, planDraftGrades, planSundayPreview, planSundayRecap, planThursday, planWeekly } from "@/lib/roast/plan";
 import { checkLine, LINES_GLOSSARY, linesFacts, linesMessage, parseLinesReply } from "@/lib/roast/surfaces";
 import {
   draftOddsRows,
@@ -35,7 +35,7 @@ import type { DailyFacts, DraftOdds, PowerRankings, SimResult, SurfaceRow, Trade
 import { hasFixtures, loadManifest, rtLeagueId } from "./helpers/fixtures";
 import { ref } from "./facts-synthetic";
 
-const PROMPT_SHA256 = "91bc7188300aa84dafe1b9f291cc0e6781852c07ee30006d6c65af6323b770b5";
+const PROMPT_SHA256 = "7cb7c64e56fc876d8016581f962414f515d66e02100772415b0effa69152ab9c";
 
 const trade = (id: string, net: number): TradeFact => ({
   kind: "trade",
@@ -293,6 +293,8 @@ describe.skipIf(!hasFixtures())("the FACTS glossary", () => {
       planDaily(daily, 250, memory, "faab").facts,
       planDaily(daily, 250, memory, "priority").facts,
       planDraftGrades({ kind: "draft_grades", draft: { ...draft, picks }, odds }, memory).facts,
+      planSundayPreview({ kind: "sunday_preview", week: 5, winProbs, lineupAlerts: daily.lineupAlerts }, memory).facts,
+      planSundayRecap({ kind: "sunday_recap", week: 5, winProbs }, memory).facts,
       planItem("trade", tx.trades[0], 250, { draftSlots: memory.draftSlots }).facts,
       planItem("waiver", tx.waivers.slice(0, 3), 250, { waiverMode: "priority" }).facts,
       planItem("draft_pick", picks[12], 250, { picks: picks.slice(0, 13), draft: dctx, starters: memory.starters, commissioner: picks[12].team.managerName }).facts,

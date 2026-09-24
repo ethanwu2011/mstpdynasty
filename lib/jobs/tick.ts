@@ -193,6 +193,9 @@ export async function tickOutcomes(ctx: LeagueContext, now: number): Promise<Job
 
   const updates: RoastIndex = {};
   const results = await mapLimit(selected, ROAST_CONCURRENCY, async (c) => {
+    // Checked again per item: earlier items in this tick may have spent the rest of the budget,
+    // and a refused call must not be saved as a failed attempt.
+    if (!(await withinBudget("item", Date.now()))) return "budget" as const;
     const claim = store.keys.lock(l, `roast:${c.id}`);
     if (!(await store.lock(claim, ROAST_CLAIM_SECONDS).catch(() => false))) return "busy" as const;
     try {
@@ -228,12 +231,14 @@ export async function tickOutcomes(ctx: LeagueContext, now: number): Promise<Job
     const failed = mine.filter((x) => x.r === "error").length;
     const placeholders = mine.filter((x) => x.r === "placeholder").length;
     const busy = mine.filter((x) => x.r === "busy").length;
+    const broke = mine.filter((x) => x.r === "budget").length;
     const waiting = wanted.filter((c) => c.group === group).length - mine.length;
     const parts: string[] = [];
     if (roasted) parts.push(`Wrote up ${roasted} ${roasted === 1 ? one : many}.`);
     if (failed) parts.push(`${failed} failed.`);
     if (placeholders) parts.push(`${placeholders} came back as placeholders (not saved).`);
     if (busy) parts.push(`${busy} already being written by another run.`);
+    if (broke) parts.push(`${broke} waiting for tomorrow's writer budget.`);
     if (waiting > 0) parts.push(affordable ? `${waiting} more next tick.` : `${waiting} waiting for tomorrow's writer budget.`);
     const status: JobOutcome["status"] = failed && !roasted ? "error" : roasted ? "ran" : "skipped";
     outcomes.push({ job: group, status, detail: parts.join(" ") || `No new ${many}.` });
@@ -262,7 +267,10 @@ export async function ensurePickRoast(
     if (!writer || existing?.source === "llm") return existing;
     const index = await loadIndex(l);
     const deadline = Date.now() + budgetMs;
-    if (wants(index, id, Date.now(), writer) && (await withinBudget("item"))) {
+    const wanted = wants(index, id, Date.now(), writer);
+    // Out of today's budget: nobody will write this pick today, so do not wait for one.
+    if (wanted && !(await withinBudget("item"))) return existing;
+    if (wanted) {
       const claim = store.keys.lock(l, `roast:${id}`);
       if (await store.lock(claim, ROAST_CLAIM_SECONDS).catch(() => false)) {
         const now = Date.now();

@@ -82,7 +82,7 @@ export async function issueMemory(facts: IssueFacts, ctx: LeagueContext): Promis
   const picks = df?.picks ?? [];
   mem.draftSlots = slotsOf(picks);
 
-  if (facts.kind === "weekly_recap" || facts.kind === "thursday_fallout") {
+  if (facts.kind === "weekly_recap" || facts.kind === "thursday_fallout" || facts.kind === "sunday_preview" || facts.kind === "sunday_recap") {
     const week = facts.week;
     mem.rapSheet = await safe("rap sheets", async () => rapSheets((await shameEntries(ctx)).entries, ctx.season), {});
     // Crowns before this week, plus this week's when the recap has one.
@@ -106,7 +106,7 @@ export async function issueMemory(facts: IssueFacts, ctx: LeagueContext): Promis
     );
   }
 
-  if (facts.kind === "thursday_fallout") {
+  if (facts.kind === "thursday_fallout" || facts.kind === "sunday_preview" || facts.kind === "sunday_recap") {
     mem.winPctBefore = await safe(
       "pre-game odds",
       async () => {

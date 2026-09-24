@@ -12,7 +12,7 @@ export default function Loading() {
           <DotMatrixFill state="loading" label="Pulling the archive." rows={10} />
         </div>
       </Panel>
-      <Panel label="The four issues" span={4}>
+      <Panel label="The issues" span={4}>
         <DotMatrixFill state="loading" label="Counting issues." rows={12} ramp="ttb" />
       </Panel>
     </Board>

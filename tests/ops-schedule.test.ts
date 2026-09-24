@@ -53,24 +53,41 @@ describe("date helpers", () => {
 });
 
 describe("planDaily", () => {
-  it("Tuesday in season: Week N Recap for the week that just ended, plus The Daily", () => {
+  it("Tuesday in season: Week N Recap for the week that just ended, and no Daily", () => {
     const plan = planDaily(input("2026-09-29"));
     expect(plan.weekday).toBe(2);
-    expect(jobs(input("2026-09-29"))).toEqual(["weekly_recap:3", "daily"]);
+    expect(jobs(input("2026-09-29"))).toEqual(["weekly_recap:3"]);
     expect(plan.jobs.find((j) => j.job === "weekly_recap")?.key).toBe("weekly_recap:2026:3");
-    expect(plan.skipped.map((s) => s.job)).toEqual(["draft_grades", "thursday_fallout"]);
+    expect(plan.skipped.map((s) => s.job)).toEqual(["draft_grades", "sunday_recap", "sunday_preview", "thursday_fallout", "daily"]);
+    expect(plan.skipped.find((s) => s.job === "daily")?.detail).toBe("In season the weekly issues replace it.");
   });
 
-  it("Friday in season: Thursday Night Fallout for this week, plus The Daily", () => {
-    expect(jobs(input("2026-09-25"))).toEqual(["thursday_fallout:3", "daily"]);
+  it("Friday in season: Thursday Night Fallout for this week", () => {
+    expect(jobs(input("2026-09-25"))).toEqual(["thursday_fallout:3"]);
     expect(planDaily(input("2026-09-25")).jobs[0].key).toBe("thursday_fallout:2026:3");
   });
 
-  it("a quiet Wednesday in season: only The Daily (which sends nothing without material)", () => {
+  it("Sunday in season: the Sunday Preview for the week played today", () => {
+    expect(jobs(input("2026-09-27"))).toEqual(["sunday_preview:3"]);
+    expect(planDaily(input("2026-09-27")).jobs[0].key).toBe("sunday_preview:2026:3");
+  });
+
+  it("Monday in season: the Sunday Recap for the week played yesterday", () => {
+    expect(jobs(input("2026-09-28"))).toEqual(["sunday_recap:3"]);
+    expect(planDaily(input("2026-09-28")).jobs[0].key).toBe("sunday_recap:2026:3");
+  });
+
+  it("a quiet Wednesday in season: nothing", () => {
     const plan = planDaily(input("2026-09-30"));
-    expect(jobs(input("2026-09-30"))).toEqual(["daily"]);
-    expect(plan.jobs[0].key).toBe("daily:2026-09-30");
+    expect(jobs(input("2026-09-30"))).toEqual([]);
     expect(plan.skipped.find((s) => s.job === "weekly_recap")?.detail).toBe("Only on Tuesdays.");
+    expect(plan.skipped.find((s) => s.job === "sunday_preview")?.detail).toBe("Only on Sundays.");
+  });
+
+  it("the Sunday issues skip weeks that are not league weeks and the offseason", () => {
+    expect(jobs(input("2026-09-20", { startWeek: 3 }))).toEqual([]);
+    expect(planDaily(input("2026-09-20", { startWeek: 3 })).skipped.find((s) => s.job === "sunday_preview")?.detail).toBe("Week 2 is not a league week.");
+    expect(jobs(input("2026-09-28", { phase: "offseason" }))).toEqual(["daily"]);
   });
 
   it("pre-draft: no weekly or Thursday issues even on Tuesday and Friday", () => {
@@ -88,12 +105,12 @@ describe("planDaily", () => {
 
   it("the morning after the startup draft completes: Draft Grades once", () => {
     const done = { phase: "in_season" as const, draft: { draftId: "draft-1", status: "complete" as const, isStartup: true, lastPicked: at("2026-09-23") - 3600_000 } };
-    expect(jobs(input("2026-09-24", done))).toEqual(["draft_grades", "daily"]);
+    expect(jobs(input("2026-09-24", done))).toEqual(["draft_grades"]);
     expect(planDaily(input("2026-09-24", done)).jobs[0].key).toBe("draft_grades:draft-1");
     // a rookie draft never gets Draft Grades, and a long-finished startup draft is not re-graded
-    expect(jobs(input("2026-09-24", { draft: { ...done.draft, isStartup: false } }))).toEqual(["daily"]);
+    expect(jobs(input("2026-09-24", { draft: { ...done.draft, isStartup: false } }))).toEqual([]);
     const late = planDaily(input("2026-11-25", done));
-    expect(late.jobs.map((j) => j.job)).toEqual(["daily"]);
+    expect(late.jobs.map((j) => j.job)).toEqual([]);
     expect(late.skipped.find((s) => s.job === "draft_grades")?.detail).toBe("Draft finished more than 21 days ago.");
   });
 
@@ -103,12 +120,13 @@ describe("planDaily", () => {
   });
 
   it("weeks before the league's start week are skipped", () => {
-    expect(jobs(input("2026-09-22", { startWeek: 3 }))).toEqual(["daily"]);
-    expect(jobs(input("2026-09-29", { startWeek: 3 }))).toEqual(["weekly_recap:3", "daily"]);
+    expect(jobs(input("2026-09-22", { startWeek: 3 }))).toEqual([]);
+    expect(jobs(input("2026-09-29", { startWeek: 3 }))).toEqual(["weekly_recap:3"]);
   });
 
   it("falls back to the league's current week when the schedule is unavailable", () => {
-    expect(jobs(input("2026-09-29", { schedule: [], currentWeek: 3 }))).toEqual(["weekly_recap:3", "daily"]);
-    expect(jobs(input("2026-09-25", { schedule: [], currentWeek: 3 }))).toEqual(["thursday_fallout:3", "daily"]);
+    expect(jobs(input("2026-09-29", { schedule: [], currentWeek: 3 }))).toEqual(["weekly_recap:3"]);
+    expect(jobs(input("2026-09-25", { schedule: [], currentWeek: 3 }))).toEqual(["thursday_fallout:3"]);
+    expect(jobs(input("2026-09-27", { schedule: [], currentWeek: 3 }))).toEqual(["sunday_preview:3"]);
   });
 });

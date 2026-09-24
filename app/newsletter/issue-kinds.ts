@@ -1,28 +1,32 @@
-/** The four issues: names come from lib/roast, cadence and URL slugs live here. */
+/** The issues: names come from lib/roast, cadence and URL slugs live here. In season, four a week. */
 import { ISSUE_TITLES, issueTitle } from "@/lib/roast";
 import { formatEt } from "@/lib/time";
 import type { Issue, IssueKind, LeagueContext } from "@/lib/types";
 
-export const ISSUE_ORDER: readonly IssueKind[] = ["daily", "thursday_fallout", "weekly_recap", "draft_grades"];
+export const ISSUE_ORDER: readonly IssueKind[] = ["thursday_fallout", "sunday_preview", "sunday_recap", "weekly_recap", "daily", "draft_grades"];
 
 /** When each issue goes out, as a line under its name (the home page and /newsletter share it). */
 export const CADENCE: Record<IssueKind, string> = {
-  daily: "8 AM ET, only on mornings when something happened",
+  daily: "Outside the season, 8 AM ET on mornings when something happened",
   thursday_fallout: "Fridays in season, after the Thursday game",
+  sunday_preview: "Sunday mornings in season, before kickoff",
+  sunday_recap: "Monday mornings in season, after the Sunday games",
   weekly_recap: "Tuesdays in season",
   draft_grades: "Once, when the startup draft ends",
 };
 
 /** Cadence inside a sentence: "Week 5 Recap goes out every Tuesday in season." */
 export const WHEN: Record<IssueKind, string> = {
-  daily: "at 8 AM ET on any morning when something happened",
+  daily: "outside the season, at 8 AM ET on any morning when something happened",
   thursday_fallout: "on Fridays in season, after the Thursday game",
+  sunday_preview: "on Sunday mornings in season, before kickoff",
+  sunday_recap: "on Monday mornings in season, after the Sunday games",
   weekly_recap: "every Tuesday in season",
   draft_grades: "once, the day the startup draft ends",
 };
 
 /**
- * The recap to name wherever the four issues are listed: the newest recap's week, else the week
+ * The recap to name wherever the issues are listed: the newest recap's week, else the week
  * being played, else Week 1. Never the bare "Week N Recap" template.
  */
 export function recapWeek(ctx: Pick<LeagueContext, "phase" | "week">, issues: Issue[] = []): number {
@@ -38,6 +42,8 @@ export const issueLabel = (k: IssueKind, week: number) => (k === "weekly_recap" 
 export const KIND_PLURAL: Record<IssueKind, string> = {
   daily: "The Daily",
   thursday_fallout: "Thursday Night Fallout",
+  sunday_preview: "Sunday Previews",
+  sunday_recap: "Sunday Recaps",
   weekly_recap: "Recaps",
   draft_grades: "Draft Grades",
 };

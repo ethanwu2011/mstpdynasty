@@ -887,11 +887,13 @@ export interface Roast {
 }
 
 /**
- * The four newsletters: "The Daily", "Thursday Night Fallout", "Week N Recap", "Draft Grades"
- * (titles in `ISSUE_TITLES` / `issueTitle()` from lib/roast). The kind is also the slug suffix
+ * The newsletters. In season, four a week: "Thursday Night Fallout" (Friday), "Sunday Preview"
+ * (Sunday morning), "Sunday Recap" (Monday morning) and "Week N Recap" (Tuesday). "The Daily"
+ * runs outside the season only (drafts, offseason trades); "Draft Grades" once. Titles in
+ * `ISSUE_TITLES` / `issueTitle()` from lib/roast. The kind is also the slug suffix
  * ("2026-09-19-daily", "2026-09-29-weekly-recap").
  */
-export type IssueKind = "daily" | "thursday_fallout" | "weekly_recap" | "draft_grades";
+export type IssueKind = "daily" | "thursday_fallout" | "sunday_preview" | "sunday_recap" | "weekly_recap" | "draft_grades";
 
 /**
  * Kinds stored before the 2026-09-18 rename. `lib/archive` upgrades them on read
@@ -991,7 +993,22 @@ export interface DraftGradesFacts {
   odds: SimResult;
 }
 
-export type IssueFacts = DailyFacts | ThursdayFalloutFacts | WeeklyRecapFacts | DraftGradesFacts;
+/** Sunday morning: the week's matchups before the Sunday games (Thursday points banked), and lineup holes. */
+export interface SundayPreviewFacts {
+  kind: "sunday_preview";
+  week: number;
+  winProbs: WinProbWeek;
+  lineupAlerts: LineupAlertFact[];
+}
+
+/** Monday morning: where every matchup stands after Sunday, with who is left for Monday night. */
+export interface SundayRecapFacts {
+  kind: "sunday_recap";
+  week: number;
+  winProbs: WinProbWeek;
+}
+
+export type IssueFacts = DailyFacts | ThursdayFalloutFacts | SundayPreviewFacts | SundayRecapFacts | WeeklyRecapFacts | DraftGradesFacts;
 
 /** @deprecated Renamed to DailyFacts (kind "daily"). */
 export type DailyRoastFacts = DailyFacts;

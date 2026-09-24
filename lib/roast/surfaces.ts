@@ -68,10 +68,12 @@ const DAY_MS = 24 * 3600_000;
  */
 export const SURFACE_MAX_AGE_MS: Record<RoastSurface, number> = {
   standings: DAY_MS,
-  odds: 6 * 3600_000,
-  power: 6 * 3600_000,
+  // "Still true" only means every number is near some number in the row, so do not trust it long.
+  odds: 2 * 3600_000,
+  power: 2 * 3600_000,
   matchups: DAY_MS,
-  team: 6 * 3600_000,
+  // Team pages show their lines without the render-time check, so keep them fresh.
+  team: 3600_000,
   shame: DAY_MS,
   trades: DAY_MS,
   draft: DAY_MS,
@@ -88,7 +90,7 @@ export const SURFACE_STALE_REWRITE_MS: Record<RoastSurface, number> = {
   odds: 20 * 60_000,
   power: 30 * 60_000,
   matchups: 30 * 60_000,
-  team: 30 * 60_000,
+  team: 10 * 60_000,
   shame: 30 * 60_000,
   trades: 30 * 60_000,
   draft: 30 * 60_000,
@@ -600,9 +602,14 @@ export async function refreshSurfaceLines(
 
 const escapeRe = (x: string) => x.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
-/** Every number anywhere in a row's facts (nested objects and arrays included). */
+/**
+ * Every number anywhere in a row's facts (nested objects and arrays included), and the digits
+ * inside strings too ("5-2", "week 7"), the way the post-check reads them, so a line quoting a
+ * record is not taken for stale the moment it is written.
+ */
 function factNumbers(value: unknown, out: number[] = []): number[] {
   if (typeof value === "number" && Number.isFinite(value)) out.push(value);
+  else if (typeof value === "string") for (const m of value.matchAll(/\d+(?:\.\d+)?/g)) out.push(Number(m[0]));
   else if (Array.isArray(value)) for (const v of value) factNumbers(v, out);
   else if (value && typeof value === "object") for (const v of Object.values(value)) factNumbers(v, out);
   return out;

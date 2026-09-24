@@ -3,7 +3,7 @@
  * THESIS: The league newsletter's back catalog, filed like a stadium's program stack. The latest
  *   issue leads at full pixel volume; the rest are rows you can scan by date, name and dek.
  * FIRST VIEWPORT: Left 8, the latest issue (title in Jersey, dek, opening lines, read link).
- *   Right 4, the four issues with cadence and counts.
+ *   Right 4, the issues with cadence and counts.
  */
 import type { Metadata } from "next";
 import { listIssues } from "@/lib/archive";
@@ -22,7 +22,7 @@ export async function generateMetadata(): Promise<Metadata> {
   }
   return {
     title: "Every issue",
-    description: `Every issue of The Daily, Thursday Night Fallout, ${recap} and Draft Grades for the MSTP Dynasty league.`,
+    description: `Every issue of Thursday Night Fallout, the Sunday Preview, the Sunday Recap, ${recap}, The Daily and Draft Grades for the MSTP Dynasty league.`,
   };
 }
 

@@ -18,10 +18,14 @@ import type {
   IssueKind,
   MatchupFact,
   SimResult,
+  StarterLine,
   StarterPerformance,
+  SundayPreviewFacts,
+  SundayRecapFacts,
   SwapFact,
   TeamRef,
   TeamWeekFact,
+  TeamWinProb,
   ThursdayFalloutFacts,
   TradeFact,
   WaiverFact,
@@ -34,6 +38,8 @@ import { EMPTY_MEMORY, type DraftContext, type PayloadMemory } from "./memory-sh
 export const ISSUE_TITLES: Record<IssueKind, string> = {
   daily: "The Daily",
   thursday_fallout: "Thursday Night Fallout",
+  sunday_preview: "Sunday Preview",
+  sunday_recap: "Sunday Recap",
   weekly_recap: "Weekly Recap",
   draft_grades: "Draft Grades",
 };
@@ -662,6 +668,179 @@ export function planThursday(f: ThursdayFalloutFacts, mem: PayloadMemory = EMPTY
 }
 
 /* ------------------------------------------------------------------ */
+/* Sunday Preview and Sunday Recap                                     */
+/* ------------------------------------------------------------------ */
+
+const p1 = (n: number) => Math.round(n * 10) / 10;
+const isPlayer = (p: StarterLine) => Boolean(p.playerId) && p.playerId !== "0";
+const projectedLine = (p: StarterLine) => ({ name: p.name, pos: p.position, projected: p1(p.projected) });
+
+/** A side's two highest-projected starters and its lowest (stars, weakest). */
+export function lineupEdges(t: TeamWinProb): { stars?: ReturnType<typeof projectedLine>[]; weakest?: ReturnType<typeof projectedLine> } {
+  const byProj = t.starters.filter(isPlayer).sort((a, b) => b.projected - a.projected);
+  return byProj.length ? { stars: byProj.slice(0, 2).map(projectedLine), weakest: projectedLine(byProj[byProj.length - 1]) } : {};
+}
+
+const matchupSlotId = (m: { matchupId: number }) => `m-${m.matchupId}`;
+
+/** A side's whole-number win %: the away side is 100 minus the home side, so a matchup never adds to 101. */
+export function sidePct(m: { home: TeamWinProb; away: TeamWinProb }, t: TeamWinProb): number {
+  const home = Math.round(m.home.winProb * 100);
+  return t === m.home ? home : 100 - home;
+}
+const vs = (a: TeamRef, b: TeamRef) => `${label(a)} vs ${label(b)}`;
+
+export function planSundayPreview(f: SundayPreviewFacts, mem: PayloadMemory = EMPTY_MEMORY): IssuePlan {
+  const ms = f.winProbs.matchups;
+  const sides = ms.flatMap((m) => [m.home, m.away]);
+  const side = (m: (typeof ms)[number], t: TeamWinProb) => ({
+    ...who(t.team),
+    projected: p1(t.projected),
+    winPct: sidePct(m, t),
+    ...winBefore(t.team.rosterId, mem),
+    ...(t.actual > 0 ? { banked: r2(t.actual) } : {}),
+    ...lineupEdges(t),
+  });
+  const facts: Record<string, unknown> = { week: f.week, ...commissionerFact(mem) };
+  for (const m of ms) facts[matchupSlotId(m)] = { home: side(m, m.home), away: side(m, m.away) };
+  const history = historyPayload(sides.map((t) => t.team), mem);
+  if (history.length) facts.history = history;
+
+  const dog = [...sides].sort((a, b) => a.winProb - b.winProb)[0];
+  const slots: SlotSpec[] = [
+    DEK_SLOT,
+    {
+      id: "cold-open",
+      brief: dog
+        ? `4 to 8 sentences in one or two paragraphs about ${dog.team.managerName}, the biggest underdog of week ${f.week}. ${EPIC_OPEN} on ${dog.team.managerName}. Then the facts that prove it (his projection, win chance, stars and weakest starter against his opponent's), ${EPIC_RETURN}.`
+        : "3 to 5 sentences. A short fake epic about the Sunday ahead.",
+    },
+  ];
+  const blocks: PlannedBlock[] = [];
+  for (const m of ms) {
+    const id = matchupSlotId(m);
+    const hasDog = dog && (m.home === dog || m.away === dog);
+    slots.push({
+      id,
+      brief: `${hasDog ? "1 or 2 sentences" : "2 or 3 sentences"} on matchup ${id} before the Sunday games: both managers hit, the favorite's projection and win chance against the underdog's, their stars and weakest starters, and any Thursday points already banked.${hasDog ? ` ${dog.team.managerName} already got the cold open.` : ""}`,
+    });
+    const fb = `${m.home.team.managerName} ${p1(m.home.projected)} projected (${sidePct(m, m.home)}%), ${m.away.team.managerName} ${p1(m.away.projected)} (${sidePct(m, m.away)}%).`;
+    blocks.push({ type: "heading", text: vs(m.home.team, m.away.team) }, slot(id, [para(fb)]));
+  }
+  blocks.push({
+    type: "table",
+    columns: ["Team", "Banked", "Proj", "Win %"],
+    rows: ms.flatMap((m) => [m.home, m.away].map((t) => [label(t.team), r2(t.actual), p1(t.projected).toFixed(1), `${sidePct(m, t)}%`])),
+  });
+  const sections: PlannedSection[] = [
+    { heading: `Week ${f.week}, Sunday`, blocks: [slot("cold-open", [])] },
+    { heading: "The matchups", blocks },
+  ];
+  const managers = sides.map((t) => t.team.managerName);
+  if (f.lineupAlerts.length) {
+    const why = { bye: "on a bye", out: "ruled out", ir: "on IR", doubtful: "doubtful", empty_slot: "nobody in the slot" } as const;
+    facts.lineupAlerts = f.lineupAlerts.map((a) => ({ ...who(a.team), player: a.player.name, pos: a.player.position, slot: a.slot, why: a.reason }));
+    const negligent = [...new Set(f.lineupAlerts.map((a) => a.team.managerName))];
+    slots.push({ id: "lineup", brief: `${perManager(negligent.length, 8)}, one short hit per manager with a hole in his lineup before kickoff (${nameList(negligent)}).` });
+    sections.push({
+      heading: "Fix your lineup",
+      blocks: [
+        slot("lineup", []),
+        { type: "list", items: f.lineupAlerts.map((a) => `${label(a.team)}: ${a.reason === "empty_slot" ? `${a.slot} slot is empty` : `${a.player.name} (${a.slot}) is ${why[a.reason]}`}`) },
+      ],
+    });
+  }
+  slots.push(closerSlot("Predict how Sunday ends for one named manager, and come back to the cold-open history one last time."));
+  sections.push({ heading: "Kickoff", blocks: [slot("closer", [])] });
+  return {
+    kind: "sunday_preview",
+    title: ISSUE_TITLES.sunday_preview,
+    header: `ISSUE: ${ISSUE_TITLES.sunday_preview}, week ${f.week}`,
+    task: `Write the Sunday Preview for week ${f.week}: headline, cold open, one short paragraph per matchup before the Sunday games${f.lineupAlerts.length ? ", the lineup holes" : ""}, then the closer. Only what is in FACTS.`,
+    slots,
+    facts,
+    sections,
+    fallbackDek: dog ? `Week ${f.week}: ${dog.team.managerName} is ${sidePct(ms.find((m) => m.home === dog || m.away === dog)!, dog)}% to win.` : `Week ${f.week}, Sunday.`,
+    week: f.week,
+    managers,
+    placeholder: f.winProbs.placeholder,
+  };
+}
+
+export function planSundayRecap(f: SundayRecapFacts, mem: PayloadMemory = EMPTY_MEMORY): IssuePlan {
+  const ms = f.winProbs.matchups;
+  const sides = ms.flatMap((m) => [m.home, m.away]);
+  const side = (t: TeamWinProb) => {
+    const real = t.starters.filter(isPlayer);
+    const played = real.filter((p) => p.fractionRemaining === 0 && (p.status === "final" || p.actual !== 0));
+    const left = real.filter((p) => p.fractionRemaining > 0);
+    const top = [...played].sort((a, b) => b.actual - a.actual)[0];
+    const worst = [...played].sort((a, b) => a.actual - a.projected - (b.actual - b.projected))[0];
+    return {
+      ...who(t.team),
+      points: r2(t.actual),
+      mean: r1(t.mean),
+      winPct: r1(t.winProb * 100),
+      ...winBefore(t.team.rosterId, mem),
+      ...(top ? { topStarter: { name: top.name, pos: top.position, points: r2(top.actual) } } : {}),
+      ...(worst && worst !== top ? { worstStarter: { name: worst.name, pos: worst.position, points: r2(worst.actual), projected: p1(worst.projected) } } : {}),
+      ...(left.length ? { left: left.map(projectedLine) } : {}),
+    };
+  };
+  const facts: Record<string, unknown> = { week: f.week, ...commissionerFact(mem) };
+  for (const m of ms) facts[matchupSlotId(m)] = { home: side(m.home), away: side(m.away) };
+  const history = historyPayload(sides.map((t) => t.team), mem);
+  if (history.length) facts.history = history;
+
+  // The cold open: the biggest fall from the pre-kickoff odds, else the lowest score.
+  const fall = (t: TeamWinProb) => (mem.winPctBefore[t.team.rosterId] ?? t.winProb * 100) - t.winProb * 100;
+  const victim = [...sides].sort((a, b) => fall(b) - fall(a) || a.actual - b.actual)[0];
+  const slots: SlotSpec[] = [
+    DEK_SLOT,
+    {
+      id: "cold-open",
+      brief: victim
+        ? `4 to 8 sentences in one or two paragraphs about ${victim.team.managerName}, whose Sunday went worst (his winPct against winPctBefore, his points). ${EPIC_OPEN} on ${victim.team.managerName}. Then the facts that prove it (who scored, who did not, who he has left for Monday night), ${EPIC_RETURN}.`
+        : "3 to 5 sentences. A short fake epic about what Sunday did to this league.",
+    },
+  ];
+  const blocks: PlannedBlock[] = [];
+  for (const m of ms) {
+    const id = matchupSlotId(m);
+    const hasVictim = victim && (m.home === victim || m.away === victim);
+    slots.push({
+      id,
+      brief: `${hasVictim ? "1 or 2 sentences" : "2 or 3 sentences"} on matchup ${id} after Sunday: both managers hit, points so far, the win chance now against before kickoff, the starter who carried or sank him, and who he still has left for Monday night.${hasVictim ? ` ${victim.team.managerName} already got the cold open.` : ""}`,
+    });
+    const fb = `${m.home.team.managerName} ${r2(m.home.actual)}, ${m.away.team.managerName} ${r2(m.away.actual)}. Win chance: ${r1(m.home.winProb * 100)}% to ${r1(m.away.winProb * 100)}%.`;
+    blocks.push({ type: "heading", text: vs(m.home.team, m.away.team) }, slot(id, [para(fb)]));
+  }
+  blocks.push({
+    type: "table",
+    columns: ["Team", "Points", "Left to play", "Win %"],
+    rows: sides.map((t) => [label(t.team), r2(t.actual), t.starters.filter((p) => isPlayer(p) && p.fractionRemaining > 0).map((p) => p.name).join(", ") || "Done", `${r1(t.winProb * 100)}%`]),
+  });
+  slots.push(closerSlot("Predict Monday night for one named manager, and come back to the cold-open history one last time."));
+  return {
+    kind: "sunday_recap",
+    title: ISSUE_TITLES.sunday_recap,
+    header: `ISSUE: ${ISSUE_TITLES.sunday_recap}, week ${f.week}`,
+    task: `Write the Sunday Recap for week ${f.week}: headline, cold open, one short paragraph per matchup on where it stands after Sunday and who is left for Monday night, then the closer. Only what is in FACTS.`,
+    slots,
+    facts,
+    sections: [
+      { heading: `Week ${f.week}, Sunday`, blocks: [slot("cold-open", [])] },
+      { heading: "Where it stands", blocks },
+      { heading: "Monday night", blocks: [slot("closer", [])] },
+    ],
+    fallbackDek: victim ? `${victim.team.managerName} has ${r2(victim.actual)} after Sunday.` : `Week ${f.week}, after Sunday.`,
+    week: f.week,
+    managers: sides.map((t) => t.team.managerName),
+    placeholder: f.winProbs.placeholder,
+  };
+}
+
+/* ------------------------------------------------------------------ */
 /* The Daily                                                           */
 /* ------------------------------------------------------------------ */
 
@@ -973,17 +1152,15 @@ export function planDaily(f: DailyFacts, faabBudget: number, mem: PayloadMemory 
   if (slate) {
     sides.forEach((t) => managers.add(t.team.managerName));
     const tonight = new Set(slate.tonight ?? []);
-    const player = (p: (typeof sides)[number]["starters"][number]) => ({ name: p.name, pos: p.position, projected: Math.round(p.projected * 10) / 10 });
+    const pctOf = (t: (typeof sides)[number]) => sidePct(slate.matchups.find((x) => x.home === t || x.away === t)!, t);
     const side = (t: (typeof sides)[number]) => {
-      const real = t.starters.filter((p) => p.playerId && p.playerId !== "0");
-      const byProj = [...real].sort((a, b) => b.projected - a.projected);
-      const playing = real.filter((p) => p.nflTeam && tonight.has(p.nflTeam));
+      const playing = t.starters.filter((p) => isPlayer(p) && p.nflTeam && tonight.has(p.nflTeam));
       return {
         ...who(t.team),
-        projected: Math.round(t.projected * 10) / 10,
-        winPct: Math.round(t.winProb * 100),
-        ...(byProj.length ? { stars: byProj.slice(0, 2).map(player), weakest: player(byProj[byProj.length - 1]) } : {}),
-        ...(playing.length ? { tonight: playing.map(player) } : {}),
+        projected: p1(t.projected),
+        winPct: pctOf(t),
+        ...lineupEdges(t),
+        ...(playing.length ? { tonight: playing.map(projectedLine) } : {}),
       };
     };
     facts.week = slate.week;
@@ -992,7 +1169,7 @@ export function planDaily(f: DailyFacts, faabBudget: number, mem: PayloadMemory 
       id: "slate",
       brief: `One or two sentences per matchup of ${weekName} (${slate.matchups.length} matchups, in matchups), every manager hit: the favorite's projection and win chance against the underdog's, and the worst reading of each side.${dog ? ` ${dog.team.managerName} already got the cold open: one short line for his matchup at most.` : ""}`,
     });
-    const cell = (t: (typeof sides)[number]) => [label(t.team), (Math.round(t.projected * 10) / 10).toFixed(1), `${Math.round(t.winProb * 100)}%`];
+    const cell = (t: (typeof sides)[number]) => [label(t.team), (Math.round(t.projected * 10) / 10).toFixed(1), `${pctOf(t)}%`];
     sections.push({
       heading: `Week ${slate.week}: the slate`,
       blocks: [

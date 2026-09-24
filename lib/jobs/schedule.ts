@@ -18,6 +18,8 @@ export const DAY_MS = 24 * 3600 * 1000;
 /** Draft Grades are only built this long after the last pick (a wiped store must not re-send them months later). */
 export const DRAFT_GRADES_WINDOW_DAYS = 21;
 
+const SUNDAY = 0;
+const MONDAY = 1;
 const TUESDAY = 2;
 const FRIDAY = 5;
 
@@ -69,6 +71,12 @@ export function upcomingWeekFor(schedule: NflGame[], date: string): number | nul
   return best;
 }
 
+/** The week with a game on `date`, or null. */
+export function weekWithGameOn(schedule: NflGame[], date: string): number | null {
+  for (const [week, dates] of datesByWeek(schedule)) if (dates.includes(date)) return week;
+  return null;
+}
+
 /** The first game date of a week (its Thursday, in practice). */
 export function firstDateOfWeek(schedule: NflGame[], week: number): string | null {
   return datesByWeek(schedule).get(week)?.[0] ?? null;
@@ -113,6 +121,8 @@ export type PlannedJob =
   | { job: "draft_grades"; key: string; draftId: string }
   | { job: "weekly_recap"; key: string; week: number }
   | { job: "thursday_fallout"; key: string; week: number }
+  | { job: "sunday_preview"; key: string; week: number }
+  | { job: "sunday_recap"; key: string; week: number }
   | { job: "daily"; key: string };
 
 export interface DailyPlan {
@@ -125,7 +135,7 @@ export interface DailyPlan {
 }
 
 /** Execution and report order. */
-export const JOB_ORDER: IssueKind[] = ["draft_grades", "weekly_recap", "thursday_fallout", "daily"];
+export const JOB_ORDER: IssueKind[] = ["draft_grades", "weekly_recap", "sunday_recap", "sunday_preview", "thursday_fallout", "daily"];
 
 const skip = (job: IssueKind, detail: string): JobOutcome => ({ job, status: "skipped", detail });
 
@@ -166,8 +176,31 @@ export function planDaily(input: PlanInput): DailyPlan {
     else jobs.push({ job: "thursday_fallout", key: `thursday_fallout:${season}:${week}`, week });
   }
 
-  // The Daily: every day, built only when there is material.
-  jobs.push({ job: "daily", key: `daily:${date}` });
+  // Sunday Preview: Sunday mornings in season, for the week whose games are played today.
+  if (weekday !== SUNDAY) skipped.push(skip("sunday_preview", "Only on Sundays."));
+  else if (phase !== "in_season") skipped.push(skip("sunday_preview", "Not in season."));
+  else {
+    const week = schedule.length ? weekWithGameOn(schedule, date) : input.currentWeek || null;
+    if (!week) skipped.push(skip("sunday_preview", "No games today."));
+    else if (!inRange(week)) skipped.push(skip("sunday_preview", `Week ${week} is not a league week.`));
+    else jobs.push({ job: "sunday_preview", key: `sunday_preview:${season}:${week}`, week });
+  }
+
+  // Sunday Recap: Monday mornings in season, for the week whose games were played yesterday.
+  if (weekday !== MONDAY) skipped.push(skip("sunday_recap", "Only on Mondays."));
+  else if (phase !== "in_season") skipped.push(skip("sunday_recap", "Not in season."));
+  else {
+    const week = schedule.length ? weekWithGameOn(schedule, addDays(date, -1)) : input.currentWeek || null;
+    if (!week) skipped.push(skip("sunday_recap", "No games yesterday."));
+    else if (!inRange(week)) skipped.push(skip("sunday_recap", `Week ${week} is not a league week.`));
+    else jobs.push({ job: "sunday_recap", key: `sunday_recap:${season}:${week}`, week });
+  }
+
+  // The Daily: outside the season only (drafts, offseason moves), built only when there is
+  // material. In season the four weekly issues carry the league, and trades and waivers get
+  // their instant posts on the site.
+  if (phase === "in_season") skipped.push(skip("daily", "In season the weekly issues replace it."));
+  else jobs.push({ job: "daily", key: `daily:${date}` });
 
   const order = (k: string) => JOB_ORDER.indexOf(k as IssueKind);
   jobs.sort((a, b) => order(a.job) - order(b.job));

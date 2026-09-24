@@ -48,7 +48,7 @@ afterEach(() => {
 describe("issue names", () => {
   it("never announce the roast", () => {
     // The recap is always named with its week ("Week 5 Recap"); "Weekly Recap" is only the kind's generic label.
-    expect(ISSUE_TITLES).toEqual({ daily: "The Daily", thursday_fallout: "Thursday Night Fallout", weekly_recap: "Weekly Recap", draft_grades: "Draft Grades" });
+    expect(ISSUE_TITLES).toEqual({ daily: "The Daily", thursday_fallout: "Thursday Night Fallout", sunday_preview: "Sunday Preview", sunday_recap: "Sunday Recap", weekly_recap: "Weekly Recap", draft_grades: "Draft Grades" });
     expect(issueTitle("weekly_recap", 5)).toBe("Week 5 Recap");
     expect(issueTitle("daily", 5)).toBe("The Daily");
     for (const t of Object.values(ISSUE_TITLES)) expect(t).not.toMatch(/roast|burn|cooked/i);

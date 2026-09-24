@@ -45,11 +45,13 @@ import { MSTP_LEAGUE_ID } from "@/lib/env";
 import { draftFacts, tnfFacts, transactionFacts, weeklyFacts } from "@/lib/facts";
 import { diffInjuries, lineupAlerts } from "@/lib/jobs/daily-facts";
 import { listJobRuns, readDraftPickTimes, runDaily, runTick } from "@/lib/jobs";
+import { getDone } from "@/lib/jobs/once";
 import { backfillOddsHistory, getPowerRankings, getWinProbabilities, runSeasonSim } from "@/lib/models";
 import { isRoastConfigured, roastIssue, roastItem, withinBudget } from "@/lib/roast";
 import { ROAST_VOICE } from "@/lib/jobs/tick";
 import { getDraftPicks, getPlayers } from "@/lib/sleeper";
 import * as store from "@/lib/store";
+import { etDate } from "@/lib/time";
 import type {
   DailyFacts,
   DraftFacts,
@@ -62,10 +64,13 @@ import type {
   RoastItemFact,
   RoastItemKind,
   SleeperDraftPick,
+  SundayPreviewFacts,
   TeamRef,
   TeamWeekFact,
+  TeamWinProb,
   TradeFact,
   WaiverFact,
+  WinProbWeek,
 } from "@/lib/types";
 import { addr, fakeCtx, fakeDraft, fakeSchedule, fakeTransport, makeIssue, type FakeTransport } from "./ops-helpers";
 
@@ -74,6 +79,13 @@ const TUE = new Date("2026-09-29T12:00:00Z");
 const WED = new Date("2026-09-30T12:00:00Z");
 const THU = new Date("2026-10-01T12:00:00Z");
 const FRI = new Date("2026-10-02T12:00:00Z");
+const SUN = new Date("2026-10-04T12:00:00Z");
+const MON = new Date("2026-10-05T12:00:00Z");
+
+/** In season the four weekly issues replace The Daily; it runs only outside the season. */
+const NO_DAILY = "In season the weekly issues replace it.";
+/** A league outside the season, where The Daily still runs every day. */
+const offseason = (over: Parameters<typeof fakeCtx>[0] = {}) => fakeCtx({ phase: "offseason", ...over });
 
 const team = (id: number): TeamRef => ({ rosterId: id, teamName: `Team ${id}`, managerName: `Manager ${id}`, managerKey: `m${id}` });
 
@@ -114,6 +126,22 @@ function draftFactsWith(picks: DraftPickFact[], over: Partial<DraftFacts> = {}):
 
 function teamWeek(id: number, points: number): TeamWeekFact {
   return { team: team(id), points, projected: null, optimalPoints: points, benchPointsLeft: 0, opponentRosterId: null, result: null, allPlayWins: 0, allPlayLosses: 0, scoreRank: id, robbed: false, fraud: false, zeroStarters: [], streak: "" };
+}
+
+/** Week `week` for the Sunday issues: Team 1 v Team 2 and Team 3 v Team 4, with or without points on the board. */
+function winProbWeek(week: number, withPoints: boolean): WinProbWeek {
+  const wp = (id: number, projected: number, winProb: number, actual: number): TeamWinProb => ({ team: team(id), actual: withPoints ? actual : 0, projected, mean: projected, sd: 20, winProb, starters: [] });
+  return {
+    week,
+    season: "2026",
+    generatedAt: 0,
+    basis: withPoints ? "live" : "projections",
+    matchups: [
+      { week, matchupId: 1, home: wp(1, 120, 0.62, 101.4), away: wp(2, 110, 0.38, 88.2), isFinal: false },
+      { week, matchupId: 2, home: wp(3, 105, 0.45, 97), away: wp(4, 108, 0.55, 112.6), isFinal: false },
+    ],
+    placeholder: false,
+  };
 }
 
 function players(): PlayersMap {
@@ -199,30 +227,54 @@ describe("runDaily", () => {
     const ctx = fakeCtx();
     const r1 = await runDaily(TUE, { ctx, schedule });
     expect(outcome(r1, "weekly_recap")).toMatchObject({ status: "ran", issueSlug: "w3-weekly-recap" });
-    expect(outcome(r1, "daily")).toMatchObject({ status: "ran", issueSlug: "2026-09-29-daily" });
+    expect(outcome(r1, "daily")).toMatchObject({ status: "skipped", detail: NO_DAILY });
     expect(outcome(r1, "thursday_fallout")?.status).toBe("skipped");
+    expect(outcome(r1, "sunday_preview")?.status).toBe("skipped");
+    expect(outcome(r1, "sunday_recap")?.status).toBe("skipped");
     expect(outcome(r1, "draft_grades")?.status).toBe("skipped");
-    expect(roastIssue).toHaveBeenCalledTimes(2);
+    expect(roastIssue).toHaveBeenCalledTimes(1);
     // Odds and power rankings are pinned to the recapped week, and missing snapshots get backfilled.
     expect(runSeasonSim).toHaveBeenCalledWith(expect.objectContaining({ persist: true, fromWeek: 4 }));
     expect(getPowerRankings).toHaveBeenCalledWith(ctx, { asOfWeek: 3 });
     expect(backfillOddsHistory).toHaveBeenCalledTimes(1);
     expect(vi.mocked(weeklyFacts).mock.calls[0][0]).toBe(3);
-    // review mode, no email configured: stored as drafts, not published
-    expect((await listIssues(ctx.leagueId, { includeUnsent: true })).map((i) => i.status)).toEqual(["draft", "draft"]);
+    // review mode, no email configured: stored as a draft, not published
+    expect((await listIssues(ctx.leagueId, { includeUnsent: true })).map((i) => i.status)).toEqual(["draft"]);
     expect(await listIssues(ctx.leagueId)).toHaveLength(0);
 
     const r2 = await runDaily(TUE, { ctx, schedule });
     expect(outcome(r2, "weekly_recap")).toMatchObject({ status: "skipped", detail: "Already done for this period." });
+    expect(outcome(r2, "daily")).toMatchObject({ status: "skipped", detail: NO_DAILY });
+    expect(roastIssue).toHaveBeenCalledTimes(1);
+
+    // Wednesday in season: no issue is due, so nothing is built and The Daily never reads transactions
+    const r3 = await runDaily(WED, { ctx, schedule });
+    expect(r3.outcomes.filter((o) => o.status === "ran" && o.issueSlug)).toEqual([]);
+    expect(outcome(r3, "daily")).toMatchObject({ status: "skipped", detail: NO_DAILY });
+    expect(transactionFacts).not.toHaveBeenCalled();
+    expect(roastIssue).toHaveBeenCalledTimes(1);
+
+    expect((await listJobRuns(ctx.leagueId)).length).toBe(3);
+  });
+
+  it("outside the season, builds The Daily once per day, stays quiet without news, and looks back to the last run", async () => {
+    const ctx = offseason();
+    const r1 = await runDaily(TUE, { ctx, schedule });
+    expect(outcome(r1, "daily")).toMatchObject({ status: "ran", issueSlug: "2026-09-29-daily" });
+    expect(outcome(r1, "weekly_recap")).toMatchObject({ status: "skipped", detail: "Not in season." });
+    expect(roastIssue).toHaveBeenCalledTimes(1);
+    expect((await listIssues(ctx.leagueId, { includeUnsent: true })).map((i) => i.status)).toEqual(["draft"]);
+
+    const r2 = await runDaily(TUE, { ctx, schedule });
     expect(outcome(r2, "daily")).toMatchObject({ status: "skipped", detail: "Already done for this period." });
-    expect(roastIssue).toHaveBeenCalledTimes(2);
+    expect(roastIssue).toHaveBeenCalledTimes(1);
 
     // Wednesday: nothing new, so The Daily stays quiet and sends nothing
     txNow = { trades: [], waivers: [], placeholder: false };
     const r3 = await runDaily(WED, { ctx, schedule });
     expect(outcome(r3, "daily")).toMatchObject({ status: "skipped", detail: "Quiet day: nothing happened, nothing sent." });
     expect((await runDaily(WED, { ctx, schedule })).outcomes.find((o) => o.job === "daily")?.detail).toBe("Already done for this period.");
-    expect(roastIssue).toHaveBeenCalledTimes(2);
+    expect(roastIssue).toHaveBeenCalledTimes(1);
 
     // Thursday looks back to Wednesday's run, not a fixed 24 hours
     await runDaily(THU, { ctx, schedule });
@@ -232,7 +284,7 @@ describe("runDaily", () => {
   });
 
   it("never builds from placeholder facts, and retries once real facts arrive", async () => {
-    const ctx = fakeCtx();
+    const ctx = offseason();
     txNow = { ...txNow, placeholder: true };
     const r1 = await runDaily(WED, { ctx, schedule });
     expect(outcome(r1, "daily")).toMatchObject({ status: "skipped", detail: "Facts are still placeholder data, so nothing was built." });
@@ -246,24 +298,24 @@ describe("runDaily", () => {
     const ctx = fakeCtx();
     const r1 = await runDaily(TUE, { ctx, schedule });
     expect(outcome(r1, "weekly_recap")?.detail).toContain("Review copy sent to the commissioner");
-    expect(t.sent).toHaveLength(2);
+    expect(t.sent).toHaveLength(1);
     expect(t.sent.every((s) => s.messages[0].to === addr("commish"))).toBe(true);
     await runDaily(TUE, { ctx, schedule });
-    expect(t.sent).toHaveLength(2);
+    expect(t.sent).toHaveLength(1);
   });
 
-  it("auto mode: Friday sends Thursday Night Fallout and The Daily to the league list, once", async () => {
+  it("auto mode: Friday sends Thursday Night Fallout to the league list, once, and no Daily", async () => {
     vi.stubEnv("NEWSLETTER_MODE", "auto");
     vi.stubEnv("LEAGUE_EMAILS", addr("fan"));
     setEmailTransportForTests(t);
     const ctx = fakeCtx();
     const r1 = await runDaily(FRI, { ctx, schedule });
     expect(outcome(r1, "thursday_fallout")).toMatchObject({ status: "ran", issueSlug: "w4-thursday-fallout" });
-    expect(outcome(r1, "daily")?.status).toBe("ran");
-    expect(t.sent).toHaveLength(2);
+    expect(outcome(r1, "daily")).toMatchObject({ status: "skipped", detail: NO_DAILY });
+    expect(t.sent).toHaveLength(1);
     expect((await getIssue(ctx.leagueId, "w4-thursday-fallout"))?.status).toBe("sent");
     await runDaily(FRI, { ctx, schedule });
-    expect(t.sent).toHaveLength(2);
+    expect(t.sent).toHaveLength(1);
   });
 
   it("a failed email is retried with the same issue (no second LLM call)", async () => {
@@ -272,24 +324,25 @@ describe("runDaily", () => {
     setEmailTransportForTests(t);
     const ctx = fakeCtx();
     t.fail = true;
-    expect(outcome(await runDaily(WED, { ctx, schedule }), "daily")?.status).toBe("error");
+    expect(outcome(await runDaily(TUE, { ctx, schedule }), "weekly_recap")).toMatchObject({ status: "error", issueSlug: "w3-weekly-recap" });
     t.fail = false;
-    expect(outcome(await runDaily(WED, { ctx, schedule }), "daily")?.status).toBe("ran");
+    expect(outcome(await runDaily(TUE, { ctx, schedule }), "weekly_recap")).toMatchObject({ status: "ran", issueSlug: "w3-weekly-recap" });
     expect(roastIssue).toHaveBeenCalledTimes(1);
+    expect(weeklyFacts).toHaveBeenCalledTimes(1);
     expect(t.sent).toHaveLength(1);
   });
 
   it("auto mode without email publishes on the site; a dev league is never emailed or published", async () => {
     vi.stubEnv("NEWSLETTER_MODE", "auto");
     const ctx = fakeCtx();
-    await runDaily(WED, { ctx, schedule });
+    await runDaily(TUE, { ctx, schedule });
     expect((await listIssues(ctx.leagueId)).map((i) => i.status)).toEqual(["approved"]);
 
     setEmailTransportForTests(t);
     const dev = fakeCtx({ leagueId: "dev-league-1" });
     expect(dev.isDevLeague).toBe(true);
-    const r = await runDaily(WED, { ctx: dev, schedule });
-    expect(outcome(r, "daily")?.detail).toContain("Dev league");
+    const r = await runDaily(TUE, { ctx: dev, schedule });
+    expect(outcome(r, "weekly_recap")?.detail).toContain("Dev league");
     expect(t.sent).toHaveLength(0);
     expect((await listIssues(dev.leagueId, { includeUnsent: true })).map((i) => i.status)).toEqual(["draft"]);
   });
@@ -313,7 +366,7 @@ describe("runDaily", () => {
   });
 
   it("reports The Daily material through DailyFacts", async () => {
-    const ctx = fakeCtx();
+    const ctx = offseason();
     await runDaily(TUE, { ctx, schedule });
     const facts = vi.mocked(roastIssue).mock.calls.find((c) => c[0] === "daily")?.[1] as DailyFacts;
     expect(facts).toMatchObject({ kind: "daily", date: "2026-09-29", hasMaterial: true });
@@ -321,7 +374,7 @@ describe("runDaily", () => {
   });
 
   it("leaves plain cuts out of The Daily (a quiet day stays quiet)", async () => {
-    const ctx = fakeCtx();
+    const ctx = offseason();
     const at = TUE.getTime() - 3600_000;
     const cut = waiver("cut", "fa-cut", "free_agent", at);
     const add = { ...waiver("add", "fa-add", "free_agent", at), added: [{ playerId: "p9", name: "Player 9", position: "WR", nflTeam: "DAL", age: 24, value: null, overallRank: null }] };
@@ -335,6 +388,74 @@ describe("runDaily", () => {
     txNow = { trades: [], waivers: [cut], placeholder: false };
     const r = await runDaily(new Date(TUE.getTime() + 24 * 3600_000), { ctx, schedule });
     expect(outcome(r, "daily")).toMatchObject({ status: "skipped", detail: "Quiet day: nothing happened, nothing sent." });
+  });
+
+  describe("the Sunday issues", () => {
+    beforeEach(() => {
+      // The real slug rule ("<date>-<kind>"), so the Sunday issues are pinned to the day they run.
+      vi.mocked(roastIssue).mockImplementation(async (kind: IssueKind, facts: IssueFacts, ctx?: LeagueContext, opts?: { now?: number }) => {
+        const date = etDate(opts?.now ?? Date.now());
+        return makeIssue({ kind, slug: `${date}-${kind.replace(/_/g, "-")}`, date, week: "week" in facts ? facts.week : null, leagueId: ctx!.leagueId, title: kind, createdAt: Date.now() });
+      });
+    });
+
+    it("Sunday in season: builds the Sunday Preview once, with the lineup holes, and no Daily", async () => {
+      vi.mocked(getWinProbabilities).mockImplementation(async (week) => winProbWeek(week, false));
+      const ctx = fakeCtx();
+      const r1 = await runDaily(SUN, { ctx, schedule });
+      expect(outcome(r1, "sunday_preview")).toMatchObject({ status: "ran", issueSlug: "2026-10-04-sunday-preview" });
+      expect(outcome(r1, "sunday_recap")).toMatchObject({ status: "skipped", detail: "Only on Mondays." });
+      expect(outcome(r1, "daily")).toMatchObject({ status: "skipped", detail: NO_DAILY });
+      expect(getWinProbabilities).toHaveBeenCalledWith(4, ctx);
+      expect(roastIssue).toHaveBeenCalledTimes(1);
+      const facts = vi.mocked(roastIssue).mock.calls[0][1] as SundayPreviewFacts;
+      expect(facts).toMatchObject({ kind: "sunday_preview", week: 4, winProbs: { week: 4 } });
+      expect(facts.winProbs.matchups.map((m) => m.matchupId)).toEqual([1, 2]);
+      // Every fake roster starts nobody at RB: one hole per team, before kickoff.
+      expect(facts.lineupAlerts.map((a) => [a.team.rosterId, a.reason, a.slot])).toEqual([
+        [1, "empty_slot", "RB"],
+        [2, "empty_slot", "RB"],
+        [3, "empty_slot", "RB"],
+        [4, "empty_slot", "RB"],
+      ]);
+      expect(await getIssue(ctx.leagueId, "2026-10-04-sunday-preview")).toMatchObject({ kind: "sunday_preview", week: 4 });
+
+      const r2 = await runDaily(SUN, { ctx, schedule });
+      expect(outcome(r2, "sunday_preview")).toMatchObject({ status: "skipped", detail: "Already done for this period." });
+      expect(roastIssue).toHaveBeenCalledTimes(1);
+    });
+
+    it("Monday in season: builds the Sunday Recap once, for the week played yesterday", async () => {
+      vi.mocked(getWinProbabilities).mockImplementation(async (week) => winProbWeek(week, true));
+      const ctx = fakeCtx();
+      const r1 = await runDaily(MON, { ctx, schedule });
+      expect(outcome(r1, "sunday_recap")).toMatchObject({ status: "ran", issueSlug: "2026-10-05-sunday-recap" });
+      expect(outcome(r1, "sunday_preview")).toMatchObject({ status: "skipped", detail: "Only on Sundays." });
+      expect(outcome(r1, "daily")).toMatchObject({ status: "skipped", detail: NO_DAILY });
+      expect(getWinProbabilities).toHaveBeenCalledWith(4, ctx);
+      expect(roastIssue).toHaveBeenCalledTimes(1);
+      expect(vi.mocked(roastIssue).mock.calls[0][1]).toMatchObject({ kind: "sunday_recap", week: 4, winProbs: { week: 4 } });
+      expect(await getIssue(ctx.leagueId, "2026-10-05-sunday-recap")).toMatchObject({ kind: "sunday_recap", week: 4 });
+
+      const r2 = await runDaily(MON, { ctx, schedule });
+      expect(outcome(r2, "sunday_recap")).toMatchObject({ status: "skipped", detail: "Already done for this period." });
+      expect(roastIssue).toHaveBeenCalledTimes(1);
+    });
+
+    it("the Monday recap waits, not marked done, while no matchup has points yet", async () => {
+      vi.mocked(getWinProbabilities).mockImplementation(async (week) => winProbWeek(week, false));
+      const ctx = fakeCtx();
+      expect(outcome(await runDaily(MON, { ctx, schedule }), "sunday_recap")).toMatchObject({ status: "skipped", detail: "No points in week 4 yet." });
+      expect(await getDone(ctx.leagueId, "sunday_recap:2026:4")).toBeNull();
+      // A later run the same morning looks again instead of calling it done.
+      expect(outcome(await runDaily(MON, { ctx, schedule }), "sunday_recap")).toMatchObject({ status: "skipped", detail: "No points in week 4 yet." });
+      expect(getWinProbabilities).toHaveBeenCalledTimes(2);
+      expect(roastIssue).not.toHaveBeenCalled();
+
+      vi.mocked(getWinProbabilities).mockImplementation(async (week) => winProbWeek(week, true));
+      expect(outcome(await runDaily(MON, { ctx, schedule }), "sunday_recap")).toMatchObject({ status: "ran", issueSlug: "2026-10-05-sunday-recap" });
+      expect(roastIssue).toHaveBeenCalledTimes(1);
+    });
   });
 });
 

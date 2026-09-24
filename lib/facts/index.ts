@@ -20,7 +20,7 @@
  * The Daily's injuries and lineup alerts are assembled by the ops agent
  * (lib/jobs/daily-facts.ts) from these facts plus its own snapshots.
  */
-import { getLeagueContext } from "@/lib/league";
+import { getLeagueContext, leagueStartWeek } from "@/lib/league";
 import * as store from "@/lib/store";
 import type {
   DraftFacts,
@@ -100,7 +100,8 @@ export async function loserOfTheWeekCounts(throughWeek: number, ctx?: LeagueCont
   const loader = await loaderFor(ctx);
   const last = Math.min(throughWeek, lastCompletedWeek(loader.ctx));
   const out: Record<number, number> = {};
-  for (let w = 1; w <= last; w++) {
+  // Weeks before the league's start week were never played (see dropPreStartWeeks).
+  for (let w = leagueStartWeek(loader.ctx.league); w <= last; w++) {
     const loser = (await finalWeekFacts(w, loader)).loserOfTheWeek;
     if (loser) out[loser.team.rosterId] = (out[loser.team.rosterId] ?? 0) + 1;
   }
@@ -113,7 +114,8 @@ export async function shameEntries(ctx?: LeagueContext): Promise<ShameBoard> {
   const c = loader.ctx;
   const last = lastCompletedWeek(c);
   const weeks: WeeklyFacts[] = [];
-  for (let w = 1; w <= last; w++) weeks.push(await finalWeekFacts(w, loader));
+  // Weeks before the league's start week were never played: their empty lineups are not shame.
+  for (let w = leagueStartWeek(c.league); w <= last; w++) weeks.push(await finalWeekFacts(w, loader));
   const [tx, draft] = await Promise.all([computeTransactionFacts(0, loader), computeDraftFacts(loader)]);
   return assembleShame([
     ...weeklyShame(weeks),
