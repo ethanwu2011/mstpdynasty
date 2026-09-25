@@ -281,6 +281,12 @@ export async function externalBriefs(
       skipped.push({ job: job.job, detail: "Already done for this period (pass rewrite=1 to rewrite it)." });
       continue;
     }
+    // Already written and queued for the morning send (a reply posted the night before): leave
+    // it, unless asked to rewrite it.
+    if (!opts.rewrite && (await store.get<string>(builtKey(l, job.key)).catch(() => null))) {
+      skipped.push({ job: job.job, detail: "Already written and queued for the morning send (pass rewrite=1 to replace it)." });
+      continue;
+    }
     const step = await factsFor(job, ctx, now, schedule);
     if (step.kind === "skip") {
       skipped.push({ job: job.job, detail: step.detail });

@@ -3,7 +3,8 @@
  * the site's API writer (see lib/jobs/issues.ts, externalBriefs and publishExternal).
  *
  *   GET   ?kind=daily (optional; default every issue due today) &rewrite=1 (optional: brief an
- *         issue that already went out, to replace its words on the site)
+ *         issue that already went out, or one already queued, to replace its words)
+ *         &at=<epoch ms> (optional, up to 24 hours ahead: plan as of that morning)
  *         -> { briefs: [{ slug, kind, published, system, user, slots }], skipped }
  *   POST  { slug, text, model?, deliver?: "queue" | "now", dryRun? }
  *         -> { status: checked | queued | sent | updated | resent | rejected | missing | stale | busy | error, report, preview }
@@ -55,8 +56,15 @@ export async function GET(req: Request) {
   const kind = url.searchParams.get("kind") as IssueKind | null;
   if (kind && !KINDS.includes(kind)) return Response.json({ error: `kind must be one of ${KINDS.join(", ")}` }, { status: 400, headers: NO_STORE });
   const rewrite = url.searchParams.get("rewrite") === "1";
+  // at=<epoch ms>: plan as of a moment up to a day ahead (write Friday's issue the night the
+  // Thursday game ends). Never in the past.
+  const atRaw = url.searchParams.get("at");
+  const at = atRaw === null ? null : Number(atRaw);
+  if (at !== null && (!Number.isFinite(at) || at < Date.now() - 60_000 || at > Date.now() + 86_400_000)) {
+    return Response.json({ error: "at must be epoch milliseconds within the next 24 hours." }, { status: 400, headers: NO_STORE });
+  }
   const { ctx, schedule } = await setup();
-  const now = Date.now();
+  const now = at ?? Date.now();
   const plan = todaysPlan(ctx, now, schedule);
   const jobs = plan.jobs.filter((j) => !kind || j.job === kind);
   const out = await externalBriefs(jobs, ctx, now, schedule, { rewrite });

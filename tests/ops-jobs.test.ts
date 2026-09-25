@@ -535,6 +535,23 @@ describe("the external writer (publishExternal)", () => {
   };
   const post = (ctx: LeagueContext, text: string, deliver: "queue" | "now" = "queue") => publishExternal(SLUG, text, "claude-code", ctx, schedule, { deliver });
 
+  it("an issue written the night before and queued is left alone by the morning run, unless it asks to rewrite it", async () => {
+    autoMode();
+    const ctx = fakeCtx();
+    await brief(ctx);
+    expect(await post(ctx, WORDS)).toMatchObject({ status: "queued" });
+    const morning = await externalBriefs(todaysPlan(ctx, TUE.getTime(), schedule).jobs, ctx, TUE.getTime(), schedule);
+    expect(morning.briefs).toEqual([]);
+    expect(morning.skipped.find((x) => x.job === "weekly_recap")?.detail).toBe("Already written and queued for the morning send (pass rewrite=1 to replace it).");
+    // A rewrite brief replaces the queued words, still queued for the same send.
+    await brief(ctx, true);
+    expect(await post(ctx, NEW_WORDS)).toMatchObject({ status: "queued" });
+    const r = await runDaily(TUE, { ctx, schedule });
+    expect(outcome(r, "weekly_recap")).toMatchObject({ status: "ran", issueSlug: SLUG });
+    expect(t.sent).toHaveLength(1);
+    expect(await getIssue(ctx.leagueId, SLUG)).toMatchObject({ status: "sent", dek: "Week 3, and Manager 2 folded first, again." });
+  });
+
   it("a late reply to an ordinary brief never replaces an issue that went out, and emails nobody", async () => {
     autoMode();
     const ctx = fakeCtx();
