@@ -24,8 +24,8 @@ vi.mock("@/lib/fantasycalc", async (importOriginal) => {
 import { getRoast, saveRoast } from "@/lib/archive";
 import { transactionFacts } from "@/lib/facts";
 import { ROAST_VOICE, tickOutcomes } from "@/lib/jobs/tick";
-import { getStoredSurfaceLines, MAX_WRITER_CALLS_PER_DAY, refreshSurfaceLines, roastItem, setRoastClient, surfaceKeys, CALL_SHARE } from "@/lib/roast";
-import type { RoastClient } from "@/lib/roast/llm";
+import { getStoredSurfaceLines, MAX_WRITER_CALLS_PER_DAY, refreshSurfaceLines, roastItem, setRoastClient, surfaceKeys, CALL_SHARE, withinBudget } from "@/lib/roast";
+import { callRoastModel, type RoastClient } from "@/lib/roast/llm";
 import * as store from "@/lib/store";
 import { etDate } from "@/lib/time";
 import type { Roast, SurfaceRow, TeamRef, TradeFact } from "@/lib/types";
@@ -174,5 +174,136 @@ describe("stat lines when the retry is refused", () => {
     const stored = await getStoredSurfaceLines("standings", key, ctx);
     expect(stored?.lines).toEqual({ "1": "Manager 1 is exactly where his decisions put him.", "2": null });
     expect(stored?.failures?.["2"]).toMatchObject({ n: 0, at: now });
+  });
+});
+
+/** A writer that is down: every call throws, as an overloaded or unreachable API does. */
+function downClient() {
+  const calls: Params[] = [];
+  const client: RoastClient = {
+    beta: {
+      messages: {
+        async create(p: Params) {
+          calls.push(p);
+          throw new Error("overloaded (529)");
+        },
+      },
+    },
+  };
+  return { client, calls };
+}
+
+/** Passes the post-check: no number, and the one manager it names is in the trade. */
+const CLEAN = "@@roast\nManager 2 handed over the better receiver and called it a plan.";
+
+describe("the tick when the writer is down or keeps failing a rewrite", () => {
+  const ctx = fakeCtx();
+  const indexKey = store.keys.snapshot(ctx.leagueId, "roast-index");
+  const MIN = 60_000;
+  const HOUR = 60 * MIN;
+  // Noon Eastern: every tick below falls on the same writer day.
+  const T0 = Date.UTC(2026, 9, 1, 16);
+  const written: Roast = { id: "trade:t1", kind: "trade", leagueId: ctx.leagueId, rosterIds: [1, 2], text: "Manager 2 paid for the privilege.", facts: trade("t1", 0), source: "llm", model: "claude-sonnet-5", createdAt: T0 - HOUR, usage: null };
+  const entry = async () => (await store.get<Record<string, unknown>>(indexKey))?.["trade:t1"];
+  /** The tick at time `ms` (the clock moves with it, so the tick's own per-item checks agree). */
+  const tickAt = (ms: number) => {
+    vi.setSystemTime(ms);
+    return tickOutcomes(ctx, ms);
+  };
+
+  beforeEach(async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(T0);
+    vi.mocked(transactionFacts).mockImplementation(async () => ({ sinceMs: 0, untilMs: Date.now(), trades: [trade("t1", T0 - MIN)], waivers: [], placeholder: false }));
+    // A post written in an older voice: the tick rewrites it.
+    await saveRoast(written);
+    await store.set(indexKey, { "trade:t1": { s: "llm", t: T0 - HOUR, w: true, n: 0, v: ROAST_VOICE - 1 } });
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("an outage on an older-voice written post keeps the post, records an error without counting an attempt, and retries after an hour", async () => {
+    const down = downClient();
+    setRoastClient(down.client);
+    const out = await tickAt(T0);
+    expect(down.calls).toHaveLength(1);
+    expect(out.find((o) => o.job === "roast_trades")).toEqual({ job: "roast_trades", status: "error", detail: "1 failed." });
+    expect(await getRoast(ctx.leagueId, "trade:t1")).toEqual(written);
+    expect(await entry()).toEqual({ s: "error", t: T0 });
+
+    // Not again within the hour, even with the writer back.
+    const up = spendingClient(CLEAN);
+    setRoastClient(up.client);
+    await tickAt(T0 + 59 * MIN);
+    expect(up.calls).toHaveLength(0);
+    expect(await getRoast(ctx.leagueId, "trade:t1")).toEqual(written);
+
+    // After the hour it is written again, in the current voice.
+    await tickAt(T0 + 61 * MIN);
+    expect(up.calls).toHaveLength(1);
+    expect(await getRoast(ctx.leagueId, "trade:t1")).toMatchObject({ source: "llm", text: "Manager 2 handed over the better receiver and called it a plan." });
+    expect(await entry()).toEqual({ s: "llm", t: T0 + 61 * MIN, w: true, n: 0, v: ROAST_VOICE });
+  });
+
+  it("a failed rewrite of a written post keeps the post, and the writer gives up after three attempts", async () => {
+    // Every reply quotes a number the facts do not have: the reply and its retry both fail the post-check.
+    const { client, calls } = spendingClient(INVENTED);
+    setRoastClient(client);
+    await tickAt(T0);
+    expect(calls).toHaveLength(2);
+    expect(await getRoast(ctx.leagueId, "trade:t1")).toEqual(written);
+    expect(await entry()).toEqual({ s: "llm", t: T0, w: true, n: 1, v: ROAST_VOICE - 1 });
+
+    // A failed attempt waits half an hour, like any other.
+    await tickAt(T0 + 10 * MIN);
+    expect(calls).toHaveLength(2);
+    await tickAt(T0 + 41 * MIN);
+    expect(calls).toHaveLength(4);
+    await tickAt(T0 + 72 * MIN);
+    expect(calls).toHaveLength(6);
+    expect(await entry()).toEqual({ s: "llm", t: T0 + 72 * MIN, w: true, n: 3, v: ROAST_VOICE - 1 });
+
+    // Three failed attempts: the writer leaves this item alone, and the written post stays up.
+    const out = await tickAt(T0 + 5 * HOUR);
+    expect(calls).toHaveLength(6);
+    expect(out.find((o) => o.job === "roast_trades")).toEqual({ job: "roast_trades", status: "skipped", detail: "No new trades." });
+    expect(await getRoast(ctx.leagueId, "trade:t1")).toEqual(written);
+  });
+});
+
+describe("the daily call cap keeps a share for the newsletter", () => {
+  const ctx = fakeCtx();
+  const callsKey = () => store.keys.rate(`writer-calls:${etDate(Date.now())}`);
+
+  it("items stop at 85% of the call cap, and the newsletter still gets its calls", async () => {
+    const itemShare = Math.floor(MAX_WRITER_CALLS_PER_DAY * 0.85);
+    await store.set(callsKey(), itemShare - 1);
+    const { client, calls } = spendingClient(CLEAN);
+    setRoastClient(client);
+    // The last item call inside the share goes through.
+    expect((await roastItem("trade", trade("t1", 0), ctx)).source).toBe("llm");
+    expect(calls).toHaveLength(1);
+
+    // At the share: items are refused before any call, the newsletter is not.
+    expect(await withinBudget("item")).toBe(false);
+    expect(await withinBudget("issue")).toBe(true);
+    expect((await roastItem("trade", trade("t2", 0), ctx)).source).toBe("placeholder");
+    expect(calls).toHaveLength(1);
+    expect(await callRoastModel("Write the dek.", "weekly recap", "issue")).toMatchObject({ ok: true });
+    expect(calls).toHaveLength(2);
+  });
+
+  it("stat lines stop at 60% of the call cap, while items still get theirs", async () => {
+    await store.set(callsKey(), Math.floor(MAX_WRITER_CALLS_PER_DAY * 0.6));
+    const { client, calls } = spendingClient(JSON.stringify({ r1: "Manager 1 is exactly where his decisions put him." }));
+    setRoastClient(client);
+    expect(await withinBudget("lines")).toBe(false);
+    expect(await withinBudget("item")).toBe(true);
+    const rows: SurfaceRow[] = [{ id: "1", managers: ["Manager 1"], facts: { manager: "Manager 1", rank: 1, record: "4-0" } }];
+    const r = await refreshSurfaceLines("standings", surfaceKeys.standings("2026", 4), rows, ctx, { now: Date.now() });
+    expect(r).toMatchObject({ status: "throttled", asked: 0 });
+    expect(calls).toHaveLength(0);
   });
 });

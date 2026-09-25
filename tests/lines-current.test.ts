@@ -56,3 +56,20 @@ describe("currentLines reads numbers the way lines write them", () => {
     expect(currentLines({ "1": "Carlos has scored 611 points and has nothing to show for it." }, rows)["1"]).toBeUndefined();
   });
 });
+
+describe("currentLines rounds only amounts of 10 and up, never a rank", () => {
+  const rows = [row("1", "Carlos", { luck: 2.6, pointsPerGame: 10.4, pointsFor: 612.34 })];
+
+  it('"3rd" is not kept by a 2.6 luck value, while "612" for 612.34 is', () => {
+    expect(currentLines({ "1": "Carlos is 3rd in luck and still complains about it." }, rows)["1"]).toBeUndefined();
+    expect(currentLines({ "1": "Carlos has scored 612 points and has nothing to show for it." }, rows)["1"]).toBeTruthy();
+  });
+
+  it("an ordinal of 10 or more is not a rounded amount either (10th is not 10.4)", () => {
+    expect(currentLines({ "1": "Carlos is 10th and acting like a contender." }, rows)["1"]).toBeUndefined();
+  });
+
+  it("a small whole number is not taken for a rounded decimal (3 is not 2.6)", () => {
+    expect(currentLines({ "1": "Carlos has 3 wins of pure luck." }, rows)["1"]).toBeUndefined();
+  });
+});

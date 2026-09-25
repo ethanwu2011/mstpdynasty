@@ -173,6 +173,74 @@ describe("sending", () => {
   });
 });
 
+describe("the record of emailed words (third review round)", () => {
+  /** The per-issue resend counter, cleared so a test can ask again without hitting the daily limit. */
+  const clearResends = (slug: string) => store.del(store.keys.rate(`resend:${MSTP_LEAGUE_ID}:${slug}`));
+
+  it("recording a second version never drops the first, even when two resends overlap", async () => {
+    vi.stubEnv("NEWSLETTER_MODE", "auto");
+    leagueList("a");
+    const issue = makeIssue({ factsOnly: false });
+    await saveIssue(issue);
+    expect((await sendIssue(issue, "auto")).status).toBe("sent");
+    const sent = (await getIssue(MSTP_LEAGUE_ID, issue.slug))!;
+    const v2 = { ...sent, dek: "Week 3, reviewed again." };
+    const v3 = { ...sent, dek: "Week 3, reviewed a third time." };
+
+    // A second resend (new words) runs start to finish while the first is recording its words:
+    // after the first one checked the record, before its own write lands.
+    const s = store.getStore();
+    const set = s.set.bind(s);
+    let raced = false;
+    s.set = async (key, value, opts) => {
+      if (!raced && key.includes("emailed-words")) {
+        raced = true;
+        await saveIssue(v3);
+        expect(await resendIssue(v3)).toMatchObject({ status: "sent" });
+      }
+      return set(key, value, opts);
+    };
+    try {
+      await saveIssue(v2);
+      expect(await resendIssue(v2)).toMatchObject({ status: "sent" });
+    } finally {
+      s.set = set;
+    }
+    expect(raced).toBe(true);
+    expect(t.sent.map((x) => x.messages[0].text.includes("third time"))).toEqual([false, false, true]);
+
+    // Both versions the league got are on record: neither goes out a second time.
+    await clearResends(issue.slug);
+    expect(await resendIssue(v3)).toMatchObject({ status: "skipped", error: "These exact words already went to the league." });
+    await saveIssue(v2);
+    expect(await resendIssue(v2)).toMatchObject({ status: "skipped", error: "These exact words already went to the league." });
+    await clearResends(issue.slug);
+    await saveIssue(sent);
+    expect(await resendIssue(sent)).toMatchObject({ status: "skipped", error: "These exact words already went to the league." });
+    expect(t.sent).toHaveLength(3);
+  });
+
+  it("resendIssue sends nothing when the record of emailed words cannot be read", async () => {
+    vi.stubEnv("NEWSLETTER_MODE", "auto");
+    leagueList("a");
+    const issue = makeIssue({ factsOnly: false });
+    await saveIssue(issue);
+    expect((await sendIssue(issue, "auto")).status).toBe("sent");
+    const rewritten = { ...(await getIssue(MSTP_LEAGUE_ID, issue.slug))!, dek: "Week 3, reviewed again." };
+    await saveIssue(rewritten);
+
+    const s = store.getStore();
+    const get = s.get.bind(s);
+    s.get = async <T>(key: string) => (key.includes("emailed-words") ? Promise.reject(new Error("store timed out")) : get<T>(key));
+    try {
+      expect((await resendIssue(rewritten)).status).not.toBe("sent");
+    } finally {
+      s.get = get;
+    }
+    expect(t.sent).toHaveLength(1);
+  });
+});
+
 describe("review and approve", () => {
   it("review copy goes to the commissioner only, once; the approve link sends to the league once", async () => {
     leagueList("a", "b");

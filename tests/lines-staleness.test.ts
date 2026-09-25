@@ -40,10 +40,10 @@ vi.mock("@/lib/fantasycalc", async (importOriginal) => {
 
 import { standingsAsOf } from "@/lib/facts";
 import { refreshLines } from "@/lib/jobs/lines";
-import { currentLines, oddsRows, powerRows, refreshSurfaceLines, rowHash, setRoastClient, surfaceKeys } from "@/lib/roast";
+import { currentLines, draftOddsRows, oddsRows, powerRows, refreshSurfaceLines, rowHash, setRoastClient, surfaceKeys } from "@/lib/roast";
 import type { RoastClient } from "@/lib/roast/llm";
 import * as store from "@/lib/store";
-import type { LeagueContext, PowerRankings, PowerRow, RoastSurface, SimResult, SimTeamOdds, StandingRow, StoredSurfaceLines, SurfaceRow, TeamRef } from "@/lib/types";
+import type { DraftOdds, LeagueContext, PowerRankings, PowerRow, RoastSurface, SimResult, SimTeamOdds, StandingRow, StoredSurfaceLines, SurfaceRow, TeamRef } from "@/lib/types";
 import { fakeCtx } from "./ops-helpers";
 
 type Params = Parameters<RoastClient["beta"]["messages"]["create"]>[0];
@@ -261,6 +261,42 @@ describe("odds and power rows hash on the numbers a line quotes", () => {
     expect(powerHash({ projectedStrength: 146.2 })).not.toBe(powerHash());
     expect(powerHash({ rank: 1 })).not.toBe(powerHash());
     expect(powerHash({ pointsPerGame: 124.1 })).not.toBe(powerHash());
+  });
+
+  it("odds facts keep the table's one decimal: 99.7 stays 99.7, never a certain 100", () => {
+    const row = oddsRows(sim({ playoffPct: 99.7, byePct: 42.4, titlePct: 23.46, lastPlacePct: 0.3 }))[0];
+    expect(row.facts).toMatchObject({ playoffPct: 99.7, byePct: 42.4, titlePct: 23.5, lastPct: 0.3, expectedWins: 8 });
+  });
+
+  it("odds: the hash ignores a +0.3 point drift but changes on a whole-point move, and keeps 0 and 100 apart", () => {
+    expect(oddsHash({ titlePct: 3.4 })).toBe(oddsHash({ titlePct: 3.1 }));
+    expect(oddsHash({ playoffPct: 55.4 })).toBe(oddsHash({ playoffPct: 55.1 }));
+    expect(oddsHash({ titlePct: 4.2 })).not.toBe(oddsHash({ titlePct: 3.1 }));
+    expect(oddsHash({ playoffPct: 56.2 })).not.toBe(oddsHash({ playoffPct: 55.1 }));
+    // Above 0 is not 0, and short of 100 is not 100 (a line may not call either a sure thing).
+    expect(oddsHash({ lastPlacePct: 0.3 })).not.toBe(oddsHash({ lastPlacePct: 0 }));
+    expect(oddsHash({ playoffPct: 99.6 })).not.toBe(oddsHash({ playoffPct: 100 }));
+    expect(oddsHash({ playoffPct: 99.6 })).toBe(oddsHash({ playoffPct: 99.9 }));
+  });
+
+  it("draft odds never round 99.5 to 99.9 into a certain 100", () => {
+    const odds = (playoffPct: number): DraftOdds => ({
+      season: "2026",
+      available: true,
+      basis: "drafting",
+      draftId: "draft-1",
+      picksMade: 40,
+      totalPicks: 136,
+      runs: 10_000,
+      seed: 1,
+      generatedAt: 0,
+      placeholder: false,
+      teams: [{ team: team1, playersDrafted: 10, projectedPoints: 131.2, projectedRank: 1, playoffPct, titlePct: 41.6, byePct: 80.2, lastPlacePct: 0.2, expectedWins: 11.2 }],
+    });
+    expect(draftOddsRows(odds(99.7))[0].facts).toMatchObject({ playoffPct: 99.7, titlePct: 42, lastPct: 0.2 });
+    expect(draftOddsRows(odds(99.5))[0].facts).toMatchObject({ playoffPct: 99.5 });
+    expect(draftOddsRows(odds(100))[0].facts).toMatchObject({ playoffPct: 100 });
+    expect(draftOddsRows(odds(99.4))[0].facts).toMatchObject({ playoffPct: 99 });
   });
 
   it("an odds line is not rewritten when only the projections drifted", async () => {

@@ -312,3 +312,24 @@ describe("Sunday issues: pre-kickoff odds, the starters named, one-decimal win c
     expect(table?.type === "table" && table.rows.map((r) => r[3])).toEqual(["37.6%", "62.4%"]);
   });
 });
+
+describe("the Sunday Preview's expected totals", () => {
+  it("each side carries its mean (Thursday points included), and the table prints it in an Expected column", () => {
+    // Brandon banked 21.4 on Thursday: his expected total is those points plus what the rest should score.
+    const justin = side(JUSTIN, 150.04, 0.35);
+    const brandon = side(BRANDON, 160, 0.65, { actual: 21.4, mean: 171.43 });
+    const plan = planSundayPreview({ kind: "sunday_preview", week: 3, winProbs: week([matchup(1, justin, brandon)]), lineupAlerts: [] });
+    const m = plan.facts["m-1"] as Sides;
+    expect(m.home).toMatchObject({ projected: 150, mean: 150, winPct: 35 });
+    expect(m.away).toMatchObject({ projected: 160, mean: 171.4, winPct: 65, banked: 21.4 });
+    expect(plan.sections[1].blocks.find((b) => b.type === "table")).toEqual({
+      type: "table",
+      columns: ["Team", "Banked", "Expected", "Win %"],
+      rows: [
+        ["Shough and Fhough (Justin)", 0, "150.0", "35%"],
+        ["Brandon", 21.4, "171.4", "65%"],
+      ],
+    });
+    expect(brief(plan, "m-1")).toContain("expected total (mean, Thursday points included)");
+  });
+});

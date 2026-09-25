@@ -17,9 +17,10 @@ vi.mock("@/lib/facts", async (importOriginal) => {
 
 import { getWinProbabilities } from "@/lib/models";
 import { issueMemory } from "@/lib/roast/memory";
-import { planThursday, sidePct1 } from "@/lib/roast/plan";
+import { EMPTY_MEMORY, type PayloadMemory } from "@/lib/roast/memory-shape";
+import { planSundayPreview, planSundayRecap, planThursday, sidePct1 } from "@/lib/roast/plan";
 import { pregameMatchupRows } from "@/lib/roast/surface-rows";
-import type { TeamRef, TeamWinProb, ThursdayFalloutFacts, WinProb, WinProbWeek } from "@/lib/types";
+import type { SundayPreviewFacts, SundayRecapFacts, TeamRef, TeamWinProb, ThursdayFalloutFacts, WinProb, WinProbWeek } from "@/lib/types";
 import { fakeCtx } from "./ops-helpers";
 
 const team = (id: number): TeamRef => ({ rosterId: id, teamName: `Team ${id}`, managerName: `Manager ${id}`, managerKey: `m${id}` });
@@ -70,5 +71,37 @@ describe("pregame matchup lines", () => {
       ["Manager 1", 38],
       ["Manager 2", 62],
     ]);
+  });
+});
+
+describe("pre-kickoff odds are rounded once, when an issue prints them", () => {
+  type Side = { winPct: number; winPctBefore?: number };
+
+  it("the Sunday Preview leaves winPctBefore out when p = 0.3246 before kickoff and now (no swing, only rounding)", async () => {
+    // Matchup 1 did not move; matchup 2 slid from 45.1 to 32.46, a real swing.
+    const pregame = week([matchup(1, side(1, 0.3246), side(2, 0.6754)), matchup(2, side(3, 0.451), side(4, 0.549))]);
+    const now = week([matchup(1, side(1, 0.3246), side(2, 0.6754)), matchup(2, side(3, 0.3246), side(4, 0.6754))]);
+    vi.mocked(getWinProbabilities).mockResolvedValue(pregame);
+    const f: SundayPreviewFacts = { kind: "sunday_preview", week: 4, winProbs: now, lineupAlerts: [] };
+    const plan = planSundayPreview(f, await issueMemory(f, fakeCtx()));
+    const m1 = plan.facts["m-1"] as { home: Side; away: Side };
+    const m2 = plan.facts["m-2"] as { home: Side; away: Side };
+    expect([m1.home.winPct, m1.away.winPct]).toEqual([32, 68]);
+    expect(m1.home).not.toHaveProperty("winPctBefore");
+    expect(m1.away).not.toHaveProperty("winPctBefore");
+    expect([m2.home.winPctBefore, m2.away.winPctBefore]).toEqual([45, 55]);
+  });
+
+  it("Thursday Night Fallout and the Sunday Recap print the exact memory at one decimal from the home side, the pair adding to 100", () => {
+    // The memory holds 37.25 and 62.75: each rounded on its own would print 37.3 and 62.8.
+    const mem: PayloadMemory = { ...EMPTY_MEMORY, winPctBefore: { 1: 37.25, 2: 62.75 } };
+    const thursday: ThursdayFalloutFacts = { kind: "thursday_fallout", week: 4, tnf: { week: 4, games: [], players: [], teams: [], placeholder: false }, winProbs: DECIMAL };
+    const [t] = planThursday(thursday, mem).facts.matchups as Array<{ home: Side; away: Side }>;
+    const recap: SundayRecapFacts = { kind: "sunday_recap", week: 4, winProbs: DECIMAL };
+    const r = planSundayRecap(recap, mem).facts["m-1"] as { home: Side; away: Side };
+    for (const m of [t, r]) {
+      expect([m.home.winPctBefore, m.away.winPctBefore]).toEqual([37.3, 62.7]);
+      expect(m.home.winPctBefore! + m.away.winPctBefore!).toBeCloseTo(100, 9);
+    }
   });
 });

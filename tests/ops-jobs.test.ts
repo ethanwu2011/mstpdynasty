@@ -763,6 +763,67 @@ describe("the external writer (publishExternal)", () => {
     expect(await getDone(ctx.leagueId, KEY)).toMatchObject({ slug: SLUG });
   });
 
+  /** Every record of the words emailed for an issue, whatever shape it is kept in. */
+  const emailedRecords = async (ctx: LeagueContext) => store.list(store.keys.snapshot(ctx.leagueId, "emailed-words"));
+  /** Store reads of that record fail (a timeout), everything else answers. */
+  const failEmailedReads = () => {
+    const s = store.getStore();
+    const get = s.get.bind(s);
+    s.get = async <T>(key: string) => (key.includes("emailed-words") ? Promise.reject(new Error("store timed out")) : get<T>(key));
+    return () => {
+      s.get = get;
+    };
+  };
+
+  it("an issue sent before the emailed-words record existed gets no second email from a same-words rewrite with deliver now", async () => {
+    autoMode();
+    const ctx = fakeCtx();
+    await brief(ctx);
+    expect(await post(ctx, WORDS, "now")).toMatchObject({ status: "sent" });
+    expect(t.sent).toHaveLength(1);
+    // It went out before the site kept a record of the words it emailed.
+    for (const k of await emailedRecords(ctx)) await store.del(k);
+    expect(await emailedRecords(ctx)).toEqual([]);
+
+    // Taking the rewrite brief records the words the league holds, so the same words are not sent again.
+    expect((await brief(ctx, true)).published).toBe(true);
+    expect(await post(ctx, WORDS, "now")).toMatchObject({ status: "updated", detail: "Same words as the issue on the site: nothing changed." });
+    expect(t.sent).toHaveLength(1);
+    expect(await getIssue(ctx.leagueId, SLUG)).toMatchObject({ status: "sent", dek: "Week 3, and Manager 2 folded first." });
+  });
+
+  it("a rewrite with deliver now emails nobody while the record of emailed words cannot be read", async () => {
+    autoMode();
+    const ctx = fakeCtx();
+    await brief(ctx);
+    expect(await post(ctx, WORDS, "now")).toMatchObject({ status: "sent" });
+    await brief(ctx, true);
+    const restore = failEmailedReads();
+    try {
+      // A store that cannot answer counts as "already emailed": never risk a second send.
+      expect(await post(ctx, NEW_WORDS, "now")).toMatchObject({ status: "updated" });
+    } finally {
+      restore();
+    }
+    expect(t.sent).toHaveLength(1);
+    expect(await getIssue(ctx.leagueId, SLUG)).toMatchObject({ status: "sent", dek: "Week 3, and Manager 2 folded first, again." });
+  });
+
+  it("review mode: a rewrite with deliver now of an issue that went out goes on the site, and nobody is emailed", async () => {
+    autoMode();
+    const ctx = fakeCtx();
+    await brief(ctx);
+    expect(await post(ctx, WORDS, "now")).toMatchObject({ status: "sent" });
+    // The commissioner puts the league back in review mode.
+    vi.stubEnv("NEWSLETTER_MODE", "review");
+    await brief(ctx, true);
+    const r = await post(ctx, NEW_WORDS, "now");
+    expect(r.status).not.toBe("resent");
+    expect(r.detail).toContain("Review mode");
+    expect(t.sent).toHaveLength(1);
+    expect(await getIssue(ctx.leagueId, SLUG)).toMatchObject({ status: "sent", dek: "Week 3, and Manager 2 folded first, again." });
+  });
+
   it("externalBriefs leaves The Daily to the site's own writer", async () => {
     const ctx = offseason();
     const jobs = todaysPlan(ctx, TUE.getTime(), schedule).jobs;
@@ -1028,6 +1089,158 @@ describe("runTick", () => {
       const started = Date.now();
       expect(await ensurePickRoast(ctx, pick(1), [pick(1)], 10_000)).toEqual(written);
       expect(Date.now() - started).toBeLessThan(5_000);
+    } finally {
+      await other;
+      vi.mocked(isRoastConfigured).mockReturnValue(false);
+    }
+    expect(roastItem).not.toHaveBeenCalled();
+  });
+
+  /** Resolves once nobody holds `claim` (the holder finished its writes and let go). */
+  const claimFree = async (claim: string) => {
+    while (!(await store.lock(claim, 1))) await new Promise((r) => setTimeout(r, 5));
+    await store.unlock(claim);
+  };
+
+  it("a page render during a tick never writes an item the tick already recorded", async () => {
+    const now = Date.now();
+    const ctx = liveCtx(now);
+    vi.mocked(isRoastConfigured).mockReturnValue(true);
+    txNow = { trades: [], waivers: [], placeholder: false };
+    vi.mocked(getDraftPicks).mockResolvedValue([1, 2].map(rawPick));
+    vi.mocked(draftFacts).mockResolvedValue(draftFactsWith([1, 2].map(pick), { status: "drafting" }));
+    const id2 = roastIds.pick("draft-1", 2);
+    const base = vi.mocked(roastItem).getMockImplementation()!;
+    let tickWrotePick2!: () => void;
+    const pick2Written = new Promise<void>((r) => (tickWrotePick2 = r));
+    let page: Roast | null = null;
+    vi.mocked(roastItem).mockImplementation(async (kind, fact, c, opts) => {
+      const r = await base(kind, fact, c, opts);
+      if ((fact as DraftPickFact).pickNo === 2) {
+        tickWrotePick2();
+        return r;
+      }
+      // The tick is still writing pick 1 when someone opens the page for pick 2, which it just finished.
+      await pick2Written;
+      await claimFree(store.keys.lock(ctx.leagueId, `roast:${id2}`));
+      page = await ensurePickRoast(ctx, pick(2), [pick(1), pick(2)], 3_000);
+      return r;
+    });
+    let r: Awaited<ReturnType<typeof runTick>>;
+    try {
+      r = await runTick(new Date(now), { ctx, ignoreCooldown: true });
+    } finally {
+      vi.mocked(isRoastConfigured).mockReturnValue(false);
+    }
+    expect(vi.mocked(roastItem).mock.calls.map((c) => (c[1] as DraftPickFact).pickNo).sort()).toEqual([1, 2]);
+    expect(page).toMatchObject({ id: id2, source: "facts_only", text: "A roast." });
+    expect(r.outcomes.find((o) => o.job === "roast_picks")).toEqual({ job: "roast_picks", status: "ran", detail: "Wrote up 2 draft picks." });
+    const idx = await store.get<Record<string, unknown>>(store.keys.snapshot(ctx.leagueId, "roast-index"));
+    expect(idx?.[id2]).toEqual({ s: "facts_only", t: now, w: true, n: 1, v: ROAST_VOICE });
+  });
+
+  it("the tick's last merge never writes over an entry another run recorded after its own", async () => {
+    const now = Date.now();
+    const ctx = liveCtx(now);
+    txNow = { trades: [trade("t1", now - 60_000), trade("t2", now - 120_000)], waivers: [], placeholder: false };
+    vi.mocked(getDraftPicks).mockResolvedValue([]);
+    vi.mocked(draftFacts).mockResolvedValue(draftFactsWith([], { status: "drafting" }));
+    const indexKey = store.keys.snapshot(ctx.leagueId, "roast-index");
+    const later = { s: "llm", t: now + 60_000, w: true, n: 0, v: ROAST_VOICE };
+    const base = vi.mocked(roastItem).getMockImplementation()!;
+    let tickWroteT1!: () => void;
+    const t1Written = new Promise<void>((r) => (tickWroteT1 = r));
+    vi.mocked(roastItem).mockImplementation(async (kind, fact, c, opts) => {
+      const r = await base(kind, fact, c, opts);
+      if ((fact as TradeFact).transactionId === "t1") {
+        tickWroteT1();
+        return r;
+      }
+      // While t2 is being written, another run writes t1 again (after this tick recorded it).
+      await t1Written;
+      await claimFree(store.keys.lock(ctx.leagueId, "roast:trade:t1"));
+      const idx = (await store.get<Record<string, unknown>>(indexKey)) ?? {};
+      await store.set(indexKey, { ...idx, "trade:t1": later });
+      return r;
+    });
+    await runTick(new Date(now), { ctx, ignoreCooldown: true });
+    const idx = await store.get<Record<string, unknown>>(indexKey);
+    expect(idx?.["trade:t1"]).toEqual(later);
+    expect(idx?.["trade:t2"]).toEqual({ s: "facts_only", t: now, w: false, n: 0, v: ROAST_VOICE });
+  });
+
+  it("a rewrite that succeeds after a failed attempt starts the attempt count over", async () => {
+    const now = Date.now();
+    const ctx = liveCtx(now);
+    vi.mocked(isRoastConfigured).mockReturnValue(true);
+    txNow = { trades: [trade("t1", now - 60_000)], waivers: [], placeholder: false };
+    vi.mocked(getDraftPicks).mockResolvedValue([]);
+    vi.mocked(draftFacts).mockResolvedValue(draftFactsWith([], { status: "drafting" }));
+    const indexKey = store.keys.snapshot(ctx.leagueId, "roast-index");
+    // An older-voice post whose first rewrite failed an hour ago.
+    await store.set(indexKey, { "trade:t1": { s: "llm", t: now - 3600_000, w: true, n: 1, v: ROAST_VOICE - 1 } });
+    vi.mocked(roastItem).mockImplementation(async (kind, fact, c) => ({
+      id: "x", kind, leagueId: c!.leagueId, rosterIds: [], text: "Written in the new voice.", facts: fact, source: "llm", model: "claude-sonnet-5", createdAt: now, usage: null,
+    }));
+    try {
+      await runTick(new Date(now), { ctx, ignoreCooldown: true });
+    } finally {
+      vi.mocked(isRoastConfigured).mockReturnValue(false);
+    }
+    expect(roastItem).toHaveBeenCalledTimes(1);
+    expect((await store.get<Record<string, unknown>>(indexKey))?.["trade:t1"]).toEqual({ s: "llm", t: now, w: true, n: 0, v: ROAST_VOICE });
+    expect(await getRoast(ctx.leagueId, "trade:t1")).toMatchObject({ source: "llm", text: "Written in the new voice." });
+  });
+
+  it("a page that wins the claim after another run finished the pick returns that run's post and writes nothing", async () => {
+    const now = Date.now();
+    const ctx = liveCtx(now);
+    vi.mocked(isRoastConfigured).mockReturnValue(true);
+    const indexKey = store.keys.snapshot(ctx.leagueId, "roast-index");
+    const id1 = roastIds.pick("draft-1", 1);
+    const id2 = roastIds.pick("draft-1", 2);
+    const written: Roast = { id: id1, kind: "draft_pick", leagueId: ctx.leagueId, rosterIds: [1], text: "Written by the tick.", facts: pick(1), source: "llm", model: "claude-sonnet-5", createdAt: now, usage: null };
+    const factsOnly: Roast = { id: id2, kind: "draft_pick", leagueId: ctx.leagueId, rosterIds: [2], text: "Facts only.", facts: pick(2), source: "facts_only", model: null, createdAt: now, usage: null };
+    // Between the page's first look and its claim, another run finishes the pick and lets go.
+    vi.mocked(withinBudget)
+      .mockImplementationOnce(async () => {
+        await saveRoast(written);
+        await store.set(indexKey, { [id1]: { s: "llm", t: now, w: true, n: 0, v: ROAST_VOICE } });
+        return true;
+      })
+      .mockImplementationOnce(async () => {
+        await saveRoast(factsOnly);
+        const idx = (await store.get<Record<string, unknown>>(indexKey)) ?? {};
+        await store.set(indexKey, { ...idx, [id2]: { s: "facts_only", t: now, w: true, n: 1, v: ROAST_VOICE } });
+        return true;
+      });
+    try {
+      expect(await ensurePickRoast(ctx, pick(1), [pick(1), pick(2)], 3_000)).toEqual(written);
+      expect(await ensurePickRoast(ctx, pick(2), [pick(1), pick(2)], 3_000)).toEqual(factsOnly);
+    } finally {
+      vi.mocked(isRoastConfigured).mockReturnValue(false);
+      vi.mocked(withinBudget).mockReset().mockResolvedValue(true);
+    }
+    expect(roastItem).not.toHaveBeenCalled();
+    expect(await getRoast(ctx.leagueId, id1)).toEqual(written);
+    expect(await getRoast(ctx.leagueId, id2)).toEqual(factsOnly);
+  });
+
+  it("a page waiting on a holder that let go without recording anything returns quickly", async () => {
+    const now = Date.now();
+    const ctx = liveCtx(now);
+    vi.mocked(isRoastConfigured).mockReturnValue(true);
+    const claim = store.keys.lock(ctx.leagueId, `roast:${roastIds.pick("draft-1", 1)}`);
+    // The holder's call was refused (a placeholder): it lets go a moment later and records nothing.
+    await store.lock(claim, 300);
+    const other = (async () => {
+      await new Promise((r) => setTimeout(r, 200));
+      await store.unlock(claim);
+    })();
+    try {
+      const started = Date.now();
+      expect(await ensurePickRoast(ctx, pick(1), [pick(1)], 8_000)).toBeNull();
+      expect(Date.now() - started).toBeLessThan(4_000);
     } finally {
       await other;
       vi.mocked(isRoastConfigured).mockReturnValue(false);
