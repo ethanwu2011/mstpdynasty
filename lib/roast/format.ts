@@ -10,6 +10,29 @@ export const r1 = (n: number) => Math.round((n + Number.EPSILON) * 10) / 10;
 /** Scores the way Sleeper shows them: 2 decimals. */
 export const pts = (n: number) => r2(n).toFixed(2);
 /** Whole percent, but never rounded into a certainty it is not (99.8 is "over 99%", 0.3 is "under 1%"). */
+/**
+ * A percentage the way the odds tables print it (pctText: toFixed(1)), and never a certainty the
+ * sims did not produce: above 0 is at least 0.1, short of 100 at most 99.9 ("<0.1" and ">99.9").
+ */
+export const tablePct = (n: number) => (!Number.isFinite(n) || n <= 0 ? 0 : n >= 100 ? 100 : Math.min(99.9, Math.max(0.1, Number(n.toFixed(1)))));
+
+/** The odds as shown: to one decimal, so two teams that read the same tie on the page too. */
+const shownPct = (v: number) => Math.round((Number.isFinite(v) ? v : 0) * 10);
+
+/**
+ * The one order every odds table uses (the boards, /odds and the stat lines' rank): title odds as
+ * shown, then playoff odds as shown, then the unrounded numbers, then first name.
+ */
+export function oddsOrder(a: { titlePct: number; playoffPct: number; team: TeamRef }, b: { titlePct: number; playoffPct: number; team: TeamRef }): number {
+  return (
+    shownPct(b.titlePct) - shownPct(a.titlePct) ||
+    shownPct(b.playoffPct) - shownPct(a.playoffPct) ||
+    b.titlePct - a.titlePct ||
+    b.playoffPct - a.playoffPct ||
+    a.team.managerName.localeCompare(b.team.managerName)
+  );
+}
+
 export const pct = (n: number) => (n > 0 && n < 0.5 ? "under 1%" : n >= 99.5 && n < 100 ? "over 99%" : `${Math.round(n)}%`);
 export const money = (n: number) => `$${Math.round(n)}`;
 export const num = (n: number) => Math.round(n).toLocaleString("en-US");

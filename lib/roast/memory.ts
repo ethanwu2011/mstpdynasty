@@ -12,7 +12,7 @@ import { getDraftTradedPicks } from "@/lib/sleeper";
 import { getFantasyCalc } from "@/lib/fantasycalc";
 import { getWinProbabilities } from "@/lib/models";
 import type { DraftPickFact, FantasyCalcValue, IssueFacts, LeagueContext, ShameEntry, SleeperTradedPick } from "@/lib/types";
-import { pickLabel, r1 } from "./format";
+import { pickLabel, r1, tablePct } from "./format";
 import { EMPTY_MEMORY, starterCounts, type DraftContext, type PayloadMemory } from "./memory-shape";
 
 export { EMPTY_MEMORY, starterCounts, type DraftContext, type PayloadMemory } from "./memory-shape";
@@ -100,7 +100,7 @@ export async function issueMemory(facts: IssueFacts, ctx: LeagueContext): Promis
       "odds history",
       async () => {
         const snap = (await listOddsSnapshots(ctx.leagueId, ctx.season)).find((s) => s.week === prevWeek);
-        return Object.fromEntries((snap?.teams ?? []).map((t) => [t.rosterId, r1(t.playoffPct)]));
+        return Object.fromEntries((snap?.teams ?? []).map((t) => [t.rosterId, tablePct(t.playoffPct)]));
       },
       {} as Record<number, number>,
     );

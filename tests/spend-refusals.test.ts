@@ -247,6 +247,36 @@ describe("the tick when the writer is down or keeps failing a rewrite", () => {
     expect(await entry()).toMatchObject({ s: "llm", t: T0 + 31 * MIN, w: true, n: 0, o: 0, v: ROAST_VOICE });
   });
 
+  it("an outage on a new item shows its facts once, and a retry through the outage never moves it up the page", async () => {
+    await store.del(store.keys.snapshot(ctx.leagueId, "roast-index"));
+    vi.mocked(transactionFacts).mockImplementation(async () => ({ sinceMs: 0, untilMs: Date.now(), trades: [trade("t2", T0 - MIN)], waivers: [], placeholder: false }));
+    const down = downClient();
+    setRoastClient(down.client);
+    await tickAt(T0);
+    const first = await getRoast(ctx.leagueId, "trade:t2");
+    expect(first).toMatchObject({ source: "facts_only", createdAt: T0 });
+    await tickAt(T0 + 31 * MIN);
+    expect(down.calls).toHaveLength(2);
+    // Same post, same time: the home lead and the lists keep their order.
+    expect(await getRoast(ctx.leagueId, "trade:t2")).toEqual(first);
+    expect((await store.get<Record<string, { o?: number; n?: number }>>(indexKey))?.["trade:t2"]).toMatchObject({ o: 2, n: 0 });
+  });
+
+  it("a written post whose stored copy cannot be read is left alone this tick", async () => {
+    const s = store.getStore();
+    const get = s.get.bind(s);
+    s.get = async <T>(key: string) => (key.includes("trade:t1") && !key.includes("lock") ? Promise.reject(new Error("store timed out")) : get<T>(key));
+    const { client, calls } = spendingClient(INVENTED);
+    setRoastClient(client);
+    try {
+      await tickAt(T0);
+    } finally {
+      s.get = get;
+    }
+    expect(calls).toHaveLength(0);
+    expect(await getRoast(ctx.leagueId, "trade:t1")).toEqual(written);
+  });
+
   it("a failed rewrite of a written post keeps the post, and the writer gives up after three attempts", async () => {
     // Every reply quotes a number the facts do not have: the reply and its retry both fail the post-check.
     const { client, calls } = spendingClient(INVENTED);

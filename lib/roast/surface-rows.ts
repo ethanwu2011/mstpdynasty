@@ -22,7 +22,7 @@ import type {
   WeeklyFacts,
   WinProbWeek,
 } from "@/lib/types";
-import { r1, r2, who } from "./format";
+import { oddsOrder, r1, r2, tablePct, who } from "./format";
 import type { DraftContext } from "./memory-shape";
 import { assetPayload, matchupPayload, pickPayload, sidePct } from "./plan";
 
@@ -62,12 +62,6 @@ export function standingsRows(rows: StandingRow[], lastWeek: StandingRow[] | nul
 
 /** In-season odds (id = rosterId), in the sim's order (title odds, then playoff odds). */
 /** Percent the way it is stable enough to quote: whole numbers from 10 up, one decimal below. */
-/**
- * A percentage as the odds table prints it: one decimal, and never a certainty the sims did not
- * produce (a value above 0 is at least 0.1, one below 100 at most 99.9, as the table's "<0.1" and
- * ">99.9" say).
- */
-const tablePct = (n: number) => (n <= 0 || n >= 100 ? Math.round(n) : Math.min(99.9, Math.max(0.1, r1(n))));
 const stablePct = (n: number) => (n >= 10 && n < 99.5 ? Math.round(n) : tablePct(n));
 /** As coarse as the line check tolerates (whole points), from the value the facts carry, for hashing only. */
 const hashPct = (n: number) => Math.round(n);
@@ -78,7 +72,8 @@ const hashPct = (n: number) => Math.round(n);
  * projection update (which would spend the lines budget all week).
  */
 export function oddsRows(sim: SimResult): SurfaceRow[] {
-  return sim.teams.map((t, i) => {
+  // Ranked the way the odds board beside the line is, so "9th" means the 9th row there.
+  return [...sim.teams].sort(oddsOrder).map((t, i) => {
     // The facts at the precision the odds table prints, so a line never quotes a number the page
     // does not (99.7 stays 99.7, never a certain 100).
     const facts = {

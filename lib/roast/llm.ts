@@ -222,10 +222,20 @@ export type RoastCallResult =
       transient?: boolean;
     };
 
-/** Rate limits, overloads, server errors and dropped connections pass; a 400, 401, 403 or 404 does not. */
+/** Billing trouble (no credit left, a spend or usage limit): fixed by a top-up, not by the item. */
+const BILLING = /credit balance|usage limit|spend(ing)? limit|billing|quota/i;
+
+/**
+ * Worth retrying later: rate limits, overloads, server errors, dropped connections, and billing
+ * trouble (a 402, or a 400 about credits or limits). A bad request, a revoked key or a retired
+ * model is not.
+ */
 export function isTransientError(err: unknown): boolean {
   if (err instanceof Anthropic.RateLimitError || err instanceof Anthropic.APIConnectionError) return true;
-  if (err instanceof Anthropic.APIError) return err.status === undefined || err.status >= 500 || err.status === 408 || err.status === 409;
+  if (err instanceof Anthropic.APIError) {
+    if (err.status === undefined || err.status >= 500 || err.status === 408 || err.status === 409 || err.status === 402) return true;
+    return BILLING.test(err.message ?? "");
+  }
   return true;
 }
 
@@ -282,14 +292,16 @@ export async function callRoastModel(userContent: string, label: string, kind: R
     msg = await client.beta.messages.create(buildRoastRequest(userContent, kind), options);
   } catch (err) {
     const detail = scrubSecrets(describeError(err));
-    // A rejected key: move to the next candidate for the following call.
-    if (err instanceof Anthropic.AuthenticationError && override === undefined && keyIndex < apiKeyCandidates().length - 1) {
+    // A rejected key: move to the next candidate for the following call. While another key is
+    // left to try, the rejection is not the item's fault (retried, never counted).
+    const anotherKey = err instanceof Anthropic.AuthenticationError && override === undefined && keyIndex < apiKeyCandidates().length - 1;
+    if (anotherKey) {
       keyIndex += 1;
       sdkClient = null;
     }
     console.warn(`[roast] ${label}: ${detail}`);
     await recordWriterStatus({ ok: false, at: Date.now(), reason: "error", detail });
-    return { ok: false, reason: "error", detail, model: null, usage: null, transient: isTransientError(err) };
+    return { ok: false, reason: "error", detail, model: null, usage: null, transient: anotherKey || isTransientError(err) };
   }
   const usage = usageOf(msg);
   await recordSpend(msg.model, usage);

@@ -31,7 +31,7 @@ import type {
   WaiverFact,
   WeeklyRecapFacts,
 } from "@/lib/types";
-import { label, money, num, para, pct, pickLabel, pts, r1, r2, sentences, signed, who } from "./format";
+import { label, money, num, para, pct, pickLabel, pts, r1, r2, sentences, signed, tablePct, who } from "./format";
 import { EMPTY_MEMORY, type DraftContext, type PayloadMemory } from "./memory-shape";
 
 /** Each kind's name (docs/SITE_SPEC.md DECISIONS ROUND 2). A weekly issue prints as "Week 7 Recap". */
@@ -273,12 +273,12 @@ function oddsPayload(odds: SimResult, mem: PayloadMemory) {
     .map((t) => ({
       manager: t.team.managerName,
       team: t.team.teamName,
-      playoffPct: r1(t.playoffPct),
+      playoffPct: tablePct(t.playoffPct),
       ...(mem.playoffPctLastWeek[t.team.rosterId] !== undefined ? { playoffPctLastWeek: mem.playoffPctLastWeek[t.team.rosterId] } : {}),
-      byePct: r1(t.byePct),
-      titlePct: r1(t.titlePct),
-      lastPct: r1(t.lastPlacePct),
-      firstPickPct: r1(t.firstPickPct),
+      byePct: tablePct(t.byePct),
+      titlePct: tablePct(t.titlePct),
+      lastPct: tablePct(t.lastPlacePct),
+      firstPickPct: tablePct(t.firstPickPct),
     }));
 }
 
@@ -306,7 +306,7 @@ function oddsSection(odds: SimResult, heading: string, withSlot: boolean): Plann
   blocks.push({
     type: "table",
     columns: ["Team", "Manager", "Playoffs %", "Bye %", "Title %", "Last %"],
-    rows: rows.map((t) => [t.team.teamName, t.team.managerName, r1(t.playoffPct), r1(t.byePct), r1(t.titlePct), r1(t.lastPlacePct)]),
+    rows: rows.map((t) => [t.team.teamName, t.team.managerName, tablePct(t.playoffPct), tablePct(t.byePct), tablePct(t.titlePct), tablePct(t.lastPlacePct)]),
   });
   blocks.push({ type: "note", text: `From ${num(odds.runs)} simulated seasons.` });
   return { heading, blocks };
@@ -695,8 +695,14 @@ const matchupSlotId = (m: { matchupId: number }) => `m-${m.matchupId}`;
 
 /** Whole-number win % from the home side's percentage: the away side is 100 minus it, so a pair never adds to 101. */
 export const pctFromHome = (homePct: number, isHome: boolean) => (isHome ? Math.round(homePct) : 100 - Math.round(homePct));
-/** The same at one decimal (37.6 and 62.4, never 62.5). */
-export const pct1FromHome = (homePct: number, isHome: boolean) => (isHome ? r1(homePct) : r1(100 - r1(homePct)));
+/**
+ * The same at one decimal (37.6 and 62.4, never 62.5). A game still being played never reads
+ * 100 to 0: the home side stays between 0.1 and 99.9.
+ */
+export const pct1FromHome = (homePct: number, isHome: boolean, live = true) => {
+  const h = live ? Math.min(99.9, Math.max(0.1, r1(homePct))) : r1(homePct);
+  return isHome ? h : r1(100 - h);
+};
 
 /** A side's whole-number win %. */
 export function sidePct(m: { home: TeamWinProb; away: TeamWinProb }, t: TeamWinProb): number {
@@ -704,8 +710,8 @@ export function sidePct(m: { home: TeamWinProb; away: TeamWinProb }, t: TeamWinP
 }
 
 /** A side's win % at one decimal. */
-export function sidePct1(m: { home: TeamWinProb; away: TeamWinProb }, t: TeamWinProb): number {
-  return pct1FromHome(m.home.winProb * 100, t === m.home);
+export function sidePct1(m: { home: TeamWinProb; away: TeamWinProb; isFinal?: boolean }, t: TeamWinProb): number {
+  return pct1FromHome(m.home.winProb * 100, t === m.home, !m.isFinal);
 }
 const vs = (a: TeamRef, b: TeamRef) => `${label(a)} vs ${label(b)}`;
 

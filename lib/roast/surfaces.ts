@@ -652,7 +652,9 @@ export function currentLines(lines: SurfaceLineMap, rows: SurfaceRow[]): Surface
       // The post-check lets a line round a decimal fact to a whole number (612.34 as 612).
       // The post-check lets a line round an amount (8 wins for 8.4, 612 for 612.34); never an
       // ordinal ("3rd"), which must match a rank exactly.
-      const rounded = (v: number) => !pct && !m[2] && Number.isInteger(n) && !Number.isInteger(v) && Math.round(v) === n;
+      // "No. 3" and "#3" are ranks too, like "3rd".
+      const ranked = Boolean(m[2]) || /(?:\bno\.?\s*|#)$/i.test(line.slice(Math.max(0, (m.index ?? 0) - 4), m.index));
+      const rounded = (v: number) => !pct && !ranked && Number.isInteger(n) && !Number.isInteger(v) && Math.round(v) === n;
       if (!known.some((v) => Math.abs(v - n) <= tol || (pct && Math.abs(v * 100 - n) <= tol) || rounded(v))) {
         fresh = false;
         break;

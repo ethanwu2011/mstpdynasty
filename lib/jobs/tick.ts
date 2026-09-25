@@ -79,7 +79,11 @@ interface IndexEntry {
 const MAX_OUTAGE_RETRIES = 24;
 
 /** Attempts and outages counted at the current voice. */
-const attemptsOf = (e: IndexEntry) => ((e.av ?? e.v ?? 1) < ROAST_VOICE ? { n: 0, o: 0 } : { n: e.n ?? 0, o: e.o ?? 0 });
+const attemptsOf = (e: IndexEntry) => {
+  // An entry from before av existed: a written post's failed attempts were made at this voice.
+  const av = e.av ?? (e.s === "llm" && e.n ? ROAST_VOICE : (e.v ?? 1));
+  return av < ROAST_VOICE ? { n: 0, o: 0 } : { n: e.n ?? 0, o: e.o ?? 0 };
+};
 type RoastIndex = Record<string, IndexEntry>;
 
 const INDEX = "roast-index";
@@ -219,9 +223,14 @@ export async function tickOutcomes(ctx: LeagueContext, now: number): Promise<Job
       const prev = (fresh ?? index)[c.id];
       // What is on the site decides, not the index (an entry can be lost to a concurrent write):
       // a written post is never replaced by a facts-only one.
-      const stored = await getRoast(l, c.id).catch(() => null);
-      const posted = stored?.source === "llm";
-      const base: IndexEntry = prev ?? (posted ? { s: "llm", t: stored.createdAt, w: writer } : { s: "facts_only", t: now, w: writer });
+      let stored: Roast | null;
+      try {
+        stored = await getRoast(l, c.id);
+      } catch {
+        return "busy" as const; // cannot see what is on the site: try again next tick
+      }
+      const posted = stored?.source === "llm" || prev?.s === "llm";
+      const base: IndexEntry = prev ?? (posted && stored ? { s: "llm", t: stored.createdAt, w: writer } : { s: "facts_only", t: now, w: writer });
       const counted = attemptsOf(base);
       let entry: IndexEntry;
       let result: "roasted" | "placeholder" | "error";
@@ -242,15 +251,18 @@ export async function tickOutcomes(ctx: LeagueContext, now: number): Promise<Job
         result = "roasted";
       } catch (err) {
         if (err instanceof WriterOutage) {
-          // The writer is down: keep a written post, show the facts where there is none, and try
-          // again later without counting a failed attempt.
-          if (!posted) await saveRoast({ ...err.fallback, id: c.id });
+          // The writer is down: keep a written post, show the facts where there is nothing yet
+          // (once: a re-save would move an old post above newer ones), and try again later
+          // without counting a failed attempt.
+          if (!stored) await saveRoast({ ...err.fallback, id: c.id });
           entry = posted
             ? { ...base, s: "llm", t: now, n: counted.n, o: counted.o + 1, av: ROAST_VOICE }
             : { s: "facts_only", t: now, w: writer, n: counted.n, o: counted.o + 1, v: ROAST_VOICE, av: ROAST_VOICE };
           result = "error";
         } else {
-          entry = { ...base, s: posted ? "llm" : "error", t: now };
+          // Anything else: a written post keeps its place and the attempt counts (never retried
+          // on every tick); an item with no post waits the hour like before.
+          entry = posted ? { ...base, s: "llm", t: now, n: counted.n + 1, o: counted.o, av: ROAST_VOICE } : { ...base, s: "error", t: now };
           result = "error";
         }
       }

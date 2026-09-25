@@ -353,7 +353,10 @@ export async function resendIssue(issue: Issue): Promise<SendResult> {
     const ids = messages.length
       ? (await transport.send(messages, { idempotencyKey: `resend/${l}/${current.slug}/${words}/${shortHash(to.join(","))}` })).ids
       : [];
-    await saveIssue(withEmailed({ ...current, status: "sent", sentAt: Date.now(), recipientCount: messages.length }));
+    // Read again before recording: a newer rewrite may have been saved while this one was sending.
+    const latest = (await getIssue(l, current.slug)) ?? current;
+    const versions = [...new Set([...emailedVersions(latest), ...emailedVersions(current), words])];
+    await saveIssue({ ...latest, status: "sent", sentAt: Date.now(), recipientCount: messages.length, emailedWords: versions });
     result = { status: "sent", recipients: messages.length, messageIds: ids };
   } catch (err) {
     result = { status: "error", recipients: 0, messageIds: [], error: errText(err) };

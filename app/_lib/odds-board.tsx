@@ -12,6 +12,7 @@ import { lineOf, RowLine } from "@/components/RowLine";
 import { LiveSquare } from "@/components/Tag";
 import { TeamSub } from "@/components/TeamSub";
 import type { SurfaceLineMap, TeamRef } from "@/lib/types";
+import { oddsOrder } from "@/lib/roast/format";
 
 export interface OddsRow {
   team: TeamRef;
@@ -46,22 +47,8 @@ export function pctText(v: number): string {
   return v.toFixed(1);
 }
 
-/** The odds as shown: to one decimal, so two teams that read the same tie on the page too. */
-const shown = (v: number) => Math.round((Number.isFinite(v) ? v : 0) * 10);
-
-/**
- * The one order every odds table uses: title odds as shown, then playoff odds as shown, then the
- * unrounded numbers, then first name. The key under each table says so.
- */
-export function oddsOrder(a: { titlePct: number; playoffPct: number; team: TeamRef }, b: { titlePct: number; playoffPct: number; team: TeamRef }): number {
-  return (
-    shown(b.titlePct) - shown(a.titlePct) ||
-    shown(b.playoffPct) - shown(a.playoffPct) ||
-    b.titlePct - a.titlePct ||
-    b.playoffPct - a.playoffPct ||
-    a.team.managerName.localeCompare(b.team.managerName)
-  );
-}
+/** The one order every odds table uses (shared with the stat lines, lib/roast/format.ts). */
+export { oddsOrder };
 
 export const ODDS_ORDER_NOTE = "Ranked by title odds, then playoff odds.";
 
