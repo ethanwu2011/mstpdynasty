@@ -1,16 +1,11 @@
 import type { Metadata } from "next";
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import { getLeagueContext } from "@/lib/league";
 import { pagePhase, type SearchParams } from "../../_lib/phase";
-import { DarkBoard, WeekScores } from "../_parts/view";
+import { DarkBoard, startWeekOf, WeekScores } from "../_parts/view";
+import { weekRoute } from "../_parts/week";
 
 type Params = Promise<{ week: string }>;
-
-function parseWeek(raw: string, lastWeek: number): number | null {
-  if (!/^\d{1,2}$/.test(raw)) return null;
-  const n = Number(raw);
-  return n >= 1 && n <= lastWeek ? n : null;
-}
 
 export async function generateMetadata({ params }: { params: Params }): Promise<Metadata> {
   const { week } = await params;
@@ -22,8 +17,10 @@ export async function generateMetadata({ params }: { params: Params }): Promise<
 
 export default async function WeekScoresPage({ params, searchParams }: { params: Params; searchParams: SearchParams }) {
   const [{ week: raw }, ctx] = await Promise.all([params, getLeagueContext()]);
-  const week = parseWeek(raw, ctx.lastWeek);
-  if (week === null) notFound();
+  const route = weekRoute(raw, startWeekOf(ctx), ctx.lastWeek);
+  if (route.kind === "not_found") notFound();
+  if (route.kind === "before_start") redirect("/scores");
+  const week = route.week;
   const phase = await pagePhase(ctx, searchParams);
   if (phase === "pre_draft" || phase === "drafting") return <DarkBoard ctx={ctx} phase={phase} />;
   return <WeekScores ctx={ctx} phase={phase} week={week} />;
