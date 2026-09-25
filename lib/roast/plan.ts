@@ -561,9 +561,8 @@ export function planWeekly(f: WeeklyRecapFacts, mem: PayloadMemory = EMPTY_MEMOR
  */
 const winBefore = (m: { home: TeamWinProb; away: TeamWinProb }, t: TeamWinProb, mem: PayloadMemory) => {
   const home = mem.winPctBefore[m.home.team.rosterId];
-  if (home === undefined) return {};
-  const h = r1(home);
-  return { winPctBefore: t === m.home ? h : r1(100 - h) };
+  // The same rounding as the win chance now, from the same kind of number: equal chances print equal.
+  return home === undefined ? {} : { winPctBefore: pct1FromHome(home, t === m.home) };
 };
 
 export function planThursday(f: ThursdayFalloutFacts, mem: PayloadMemory = EMPTY_MEMORY): IssuePlan {
@@ -694,16 +693,19 @@ export function lineupEdges(
 
 const matchupSlotId = (m: { matchupId: number }) => `m-${m.matchupId}`;
 
-/** A side's whole-number win %: the away side is 100 minus the home side, so a matchup never adds to 101. */
+/** Whole-number win % from the home side's percentage: the away side is 100 minus it, so a pair never adds to 101. */
+export const pctFromHome = (homePct: number, isHome: boolean) => (isHome ? Math.round(homePct) : 100 - Math.round(homePct));
+/** The same at one decimal (37.6 and 62.4, never 62.5). */
+export const pct1FromHome = (homePct: number, isHome: boolean) => (isHome ? r1(homePct) : r1(100 - r1(homePct)));
+
+/** A side's whole-number win %. */
 export function sidePct(m: { home: TeamWinProb; away: TeamWinProb }, t: TeamWinProb): number {
-  const home = Math.round(m.home.winProb * 100);
-  return t === m.home ? home : 100 - home;
+  return pctFromHome(m.home.winProb * 100, t === m.home);
 }
 
-/** The same at one decimal (37.6 and 62.4, never 62.5). */
+/** A side's win % at one decimal. */
 export function sidePct1(m: { home: TeamWinProb; away: TeamWinProb }, t: TeamWinProb): number {
-  const home = r1(m.home.winProb * 100);
-  return t === m.home ? home : r1(100 - home);
+  return pct1FromHome(m.home.winProb * 100, t === m.home);
 }
 const vs = (a: TeamRef, b: TeamRef) => `${label(a)} vs ${label(b)}`;
 
@@ -715,7 +717,7 @@ export function planSundayPreview(f: SundayPreviewFacts, mem: PayloadMemory = EM
   const before = (m: (typeof ms)[number], t: TeamWinProb) => {
     const home = mem.winPctBefore[m.home.team.rosterId];
     if (home === undefined) return {};
-    const b = t === m.home ? Math.round(home) : 100 - Math.round(home);
+    const b = pctFromHome(home, t === m.home);
     return b === sidePct(m, t) ? {} : { winPctBefore: b };
   };
   const side = (m: (typeof ms)[number], t: TeamWinProb) => ({
@@ -752,7 +754,7 @@ export function planSundayPreview(f: SundayPreviewFacts, mem: PayloadMemory = EM
       id,
       brief: `${hasDog ? "1 or 2 sentences" : "2 or 3 sentences"} on matchup ${id} before the Sunday games: both managers hit, the favorite's expected total (mean, Thursday points included) and win chance against the underdog's, their stars and weakest starters, and any Thursday points already banked.${hasDog ? ` ${dog.team.managerName} already got the cold open.` : ""}`,
     });
-    const fb = `${m.home.team.managerName} ${p1(m.home.projected)} projected (${sidePct(m, m.home)}%), ${m.away.team.managerName} ${p1(m.away.projected)} (${sidePct(m, m.away)}%).`;
+    const fb = `${m.home.team.managerName} ${r1(m.home.mean).toFixed(1)} expected (${sidePct(m, m.home)}%), ${m.away.team.managerName} ${r1(m.away.mean).toFixed(1)} (${sidePct(m, m.away)}%).`;
     blocks.push({ type: "heading", text: vs(m.home.team, m.away.team) }, slot(id, [para(fb)]));
   }
   blocks.push({

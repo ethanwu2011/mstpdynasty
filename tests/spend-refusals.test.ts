@@ -224,27 +224,27 @@ describe("the tick when the writer is down or keeps failing a rewrite", () => {
     vi.useRealTimers();
   });
 
-  it("an outage on an older-voice written post keeps the post, records an error without counting an attempt, and retries after an hour", async () => {
+  it("an outage on an older-voice written post keeps the post, records the outage without counting an attempt, and retries after half an hour", async () => {
     const down = downClient();
     setRoastClient(down.client);
     const out = await tickAt(T0);
     expect(down.calls).toHaveLength(1);
     expect(out.find((o) => o.job === "roast_trades")).toEqual({ job: "roast_trades", status: "error", detail: "1 failed." });
     expect(await getRoast(ctx.leagueId, "trade:t1")).toEqual(written);
-    expect(await entry()).toEqual({ s: "error", t: T0 });
+    expect(await entry()).toMatchObject({ s: "llm", t: T0, n: 0, o: 1, v: ROAST_VOICE - 1 });
 
-    // Not again within the hour, even with the writer back.
+    // Not again within the half hour, even with the writer back.
     const up = spendingClient(CLEAN);
     setRoastClient(up.client);
-    await tickAt(T0 + 59 * MIN);
+    await tickAt(T0 + 29 * MIN);
     expect(up.calls).toHaveLength(0);
     expect(await getRoast(ctx.leagueId, "trade:t1")).toEqual(written);
 
-    // After the hour it is written again, in the current voice.
-    await tickAt(T0 + 61 * MIN);
+    // After it, it is written again, in the current voice.
+    await tickAt(T0 + 31 * MIN);
     expect(up.calls).toHaveLength(1);
     expect(await getRoast(ctx.leagueId, "trade:t1")).toMatchObject({ source: "llm", text: "Manager 2 handed over the better receiver and called it a plan." });
-    expect(await entry()).toEqual({ s: "llm", t: T0 + 61 * MIN, w: true, n: 0, v: ROAST_VOICE });
+    expect(await entry()).toMatchObject({ s: "llm", t: T0 + 31 * MIN, w: true, n: 0, o: 0, v: ROAST_VOICE });
   });
 
   it("a failed rewrite of a written post keeps the post, and the writer gives up after three attempts", async () => {
@@ -254,7 +254,7 @@ describe("the tick when the writer is down or keeps failing a rewrite", () => {
     await tickAt(T0);
     expect(calls).toHaveLength(2);
     expect(await getRoast(ctx.leagueId, "trade:t1")).toEqual(written);
-    expect(await entry()).toEqual({ s: "llm", t: T0, w: true, n: 1, v: ROAST_VOICE - 1 });
+    expect(await entry()).toMatchObject({ s: "llm", t: T0, w: true, n: 1, v: ROAST_VOICE - 1 });
 
     // A failed attempt waits half an hour, like any other.
     await tickAt(T0 + 10 * MIN);
@@ -263,7 +263,7 @@ describe("the tick when the writer is down or keeps failing a rewrite", () => {
     expect(calls).toHaveLength(4);
     await tickAt(T0 + 72 * MIN);
     expect(calls).toHaveLength(6);
-    expect(await entry()).toEqual({ s: "llm", t: T0 + 72 * MIN, w: true, n: 3, v: ROAST_VOICE - 1 });
+    expect(await entry()).toMatchObject({ s: "llm", t: T0 + 72 * MIN, w: true, n: 3, v: ROAST_VOICE - 1 });
 
     // Three failed attempts: the writer leaves this item alone, and the written post stays up.
     const out = await tickAt(T0 + 5 * HOUR);

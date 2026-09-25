@@ -105,3 +105,30 @@ describe("pre-kickoff odds are rounded once, when an issue prints them", () => {
     }
   });
 });
+
+describe("the same win chance before kickoff and now never prints as a swing", () => {
+  // Values that used to print a swing because the "before" number was rounded twice.
+  const SAME = [0.0705, 0.145, 0.2035, 0.285, 0.3246, 0.5015, 0.565, 0.575];
+
+  it("in Thursday Night Fallout and the Sunday Recap (one decimal)", async () => {
+    for (const p of SAME) {
+      const wp = week([matchup(1, side(1, p), side(2, 1 - p))]);
+      vi.mocked(getWinProbabilities).mockResolvedValue(wp);
+      const mem = await issueMemory({ kind: "sunday_recap", week: 4, winProbs: wp }, fakeCtx());
+      const recap = planSundayRecap({ kind: "sunday_recap", week: 4, winProbs: wp }, mem).facts["m-1"] as { home: Record<string, number>; away: Record<string, number> };
+      expect(recap.home.winPctBefore, `p ${p}`).toBe(recap.home.winPct);
+      expect(recap.away.winPctBefore, `p ${p}`).toBe(recap.away.winPct);
+    }
+  });
+
+  it("in the Sunday Preview (whole numbers: left out when equal)", async () => {
+    for (const p of SAME) {
+      const wp = week([matchup(1, side(1, p), side(2, 1 - p))]);
+      vi.mocked(getWinProbabilities).mockResolvedValue(wp);
+      const mem = await issueMemory({ kind: "sunday_preview", week: 4, winProbs: wp, lineupAlerts: [] }, fakeCtx());
+      const m = planSundayPreview({ kind: "sunday_preview", week: 4, winProbs: wp, lineupAlerts: [] }, mem).facts["m-1"] as { home: object; away: object };
+      expect(m.home, `p ${p}`).not.toHaveProperty("winPctBefore");
+      expect(m.away, `p ${p}`).not.toHaveProperty("winPctBefore");
+    }
+  });
+});

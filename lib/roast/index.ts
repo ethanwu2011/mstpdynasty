@@ -50,6 +50,17 @@ import { ALLUSION_SLOT, HIDDEN_SLOTS, planDaily, planDraftGrades, planSundayPrev
 import { recordDrops } from "./status";
 import { AllowedNumbers, checkText, describeDrops, limitExclamations, parseSlots, sanitize, splitSentences, type Dropped } from "./postcheck";
 
+/** The writer was down or overloaded (a transient API error): `fallback` is the facts-only post. */
+export class WriterOutage extends Error {
+  constructor(
+    detail: string,
+    readonly fallback: Roast,
+  ) {
+    super(`writer unavailable: ${detail}`);
+    this.name = "WriterOutage";
+  }
+}
+
 export { ISSUE_TITLES, issueTitle } from "./plan";
 export { SYSTEM_PROMPT } from "./persona";
 import { SYSTEM_PROMPT } from "./persona";
@@ -520,8 +531,9 @@ async function writeItem(
     // would count as a failed attempt or replace a written post.
     if (!res.ok) {
       if (res.reason === "budget") return { text: null, model, usage, refused: true };
-      // The API is down, overloaded or not configured: not the item's fault either.
-      if (res.reason === "error" || res.reason === "not_configured") return { text: null, model, usage, outage: res.detail };
+      // The API is down or overloaded: not the item's fault, retried later. A permanent error (a
+      // bad request, a revoked key, a retired model) falls through to facts only and counts.
+      if (res.reason === "error" && res.transient) return { text: null, model, usage, outage: res.detail };
       return { text: null, model, usage };
     }
     const slots = parseSlots(res.text, "roast");
@@ -577,8 +589,9 @@ export async function roastItem(kind: RoastItemKind, fact: RoastItemFact, ctx?: 
   const out = await writeItem(plan, lore, await recentBlock(c.leagueId, plan));
   // A placeholder is never saved: the tick and the page leave the item for the next run.
   if (out.refused) return { ...base, source: "placeholder", model: out.model, usage: out.usage };
-  // An outage throws, so the tick records an error (retried in an hour) and saves nothing.
-  if (out.outage) throw new Error(`writer unavailable: ${out.outage}`);
+  // An outage throws, carrying the facts-only post: the caller keeps a written post, shows the
+  // facts where there is none, and retries later without counting a failed attempt.
+  if (out.outage) throw new WriterOutage(out.outage, { ...base, model: out.model, usage: out.usage });
   if (!out.text) return { ...base, model: out.model, usage: out.usage };
   return { ...base, text: out.text, source: "llm", model: out.model, usage: out.usage };
 }

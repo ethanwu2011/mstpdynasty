@@ -952,6 +952,11 @@ export interface Issue {
    * facts-only and older issues.
    */
   writerNotes?: { allusion: string | null; closer: string | null; lines: string[] };
+  /**
+   * The versions of this issue's words (issueWordsHash) that went to the league, saved with the
+   * send that emailed them. Absent on issues sent before it existed.
+   */
+  emailedWords?: string[];
 }
 
 export interface DailyFacts {

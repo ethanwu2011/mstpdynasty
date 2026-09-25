@@ -16,7 +16,7 @@
 import { getRoast, listRoasts, roastIds, saveRoast } from "@/lib/archive";
 import { draftFacts, transactionFacts } from "@/lib/facts";
 import { withFrozenRank } from "@/lib/facts/draft";
-import { isRoastConfigured, roastItem, withinBudget } from "@/lib/roast";
+import { isRoastConfigured, roastItem, withinBudget, WriterOutage } from "@/lib/roast";
 import { getDraftPicks } from "@/lib/sleeper";
 import * as store from "@/lib/store";
 import type { DraftPickFact, JobOutcome, LeagueContext, Roast, RoastItemFact, RoastItemKind, RoastSource, WaiverFact } from "@/lib/types";
@@ -69,7 +69,17 @@ interface IndexEntry {
   n?: number;
   /** ROAST_VOICE the item was written in. */
   v?: number;
+  /** ROAST_VOICE of the attempts counted in n and o (older attempts do not count at a new voice). */
+  av?: number;
+  /** Writer outages since the last result (retried later, never counted as failed attempts). */
+  o?: number;
 }
+
+/** Stop retrying through an outage after this many tries (about a day at the retry pace). */
+const MAX_OUTAGE_RETRIES = 24;
+
+/** Attempts and outages counted at the current voice. */
+const attemptsOf = (e: IndexEntry) => ((e.av ?? e.v ?? 1) < ROAST_VOICE ? { n: 0, o: 0 } : { n: e.n ?? 0, o: e.o ?? 0 });
 type RoastIndex = Record<string, IndexEntry>;
 
 const INDEX = "roast-index";
@@ -89,13 +99,15 @@ function wants(idx: RoastIndex, id: string, now: number, writerConfigured: boole
   if (!e) return true;
   if (e.s === "error") return now - e.t > RETRY_ERROR_AFTER_MS;
   if (!writerConfigured) return false;
-  // A written post is rewritten only for a new voice, and a failed rewrite waits and gives up
-  // like any other attempt (the written post stays up meanwhile).
-  if (e.s === "llm") return revoice && (e.v ?? 1) < ROAST_VOICE && (e.n ?? 0) < MAX_WRITER_ATTEMPTS && now - e.t > (e.n ? REROAST_AFTER_MS : 0);
+  const { n, o } = attemptsOf(e);
+  if (o >= MAX_OUTAGE_RETRIES) return false;
+  // A written post is rewritten only for a new voice, and a failed rewrite or an outage waits and
+  // gives up like any other attempt (the written post stays up meanwhile).
+  if (e.s === "llm") return revoice && (e.v ?? 1) < ROAST_VOICE && n < MAX_WRITER_ATTEMPTS && now - e.t > (n || o ? REROAST_AFTER_MS : 0);
   // Written before the writer existed (for example before the API key was added): redo it now.
   if (!e.w) return true;
   // Gave up on the writer: a new voice (and its new checks) gets one more try.
-  if ((e.n ?? 0) >= MAX_WRITER_ATTEMPTS) return (e.v ?? 1) < ROAST_VOICE;
+  if (n >= MAX_WRITER_ATTEMPTS) return (e.v ?? 1) < ROAST_VOICE && (e.av ?? e.v ?? 1) < ROAST_VOICE;
   return now - e.t > REROAST_AFTER_MS;
 }
 
@@ -205,24 +217,42 @@ export async function tickOutcomes(ctx: LeagueContext, now: number): Promise<Job
       const fresh = await store.get<RoastIndex>(indexKey(l)).catch(() => null);
       if (fresh && !wants(fresh, c.id, Date.now(), writer, recent.has(c.id))) return "busy" as const;
       const prev = (fresh ?? index)[c.id];
-      // Pick roasts reuse the draft facts computed above instead of one draftFacts() call per pick.
+      // What is on the site decides, not the index (an entry can be lost to a concurrent write):
+      // a written post is never replaced by a facts-only one.
+      const stored = await getRoast(l, c.id).catch(() => null);
+      const posted = stored?.source === "llm";
+      const base: IndexEntry = prev ?? (posted ? { s: "llm", t: stored.createdAt, w: writer } : { s: "facts_only", t: now, w: writer });
+      const counted = attemptsOf(base);
       let entry: IndexEntry;
       let result: "roasted" | "placeholder" | "error";
       try {
+        // Pick roasts reuse the draft facts computed above instead of one draftFacts() call per pick.
         const r = await roastItem(c.kind, c.fact, ctx, { now, draftPicks });
         if (r.source === "placeholder") return "placeholder" as const;
-        const prevN = prev?.n ?? 0;
-        if (r.source !== "llm" && prev?.s === "llm") {
+        if (r.source === "llm") {
+          await saveRoast({ ...r, id: c.id });
+          entry = { s: "llm", t: now, w: writer, n: 0, o: 0, v: ROAST_VOICE, av: ROAST_VOICE };
+        } else if (posted) {
           // A failed rewrite of a written post: keep the post, count the attempt.
-          entry = { ...prev, t: now, n: prevN + 1 };
+          entry = { ...base, s: "llm", t: now, n: counted.n + 1, o: counted.o, av: ROAST_VOICE };
         } else {
           await saveRoast({ ...r, id: c.id });
-          entry = { s: r.source, t: now, w: writer, n: r.source === "llm" ? 0 : writer ? prevN + 1 : prevN, v: ROAST_VOICE };
+          entry = { s: r.source, t: now, w: writer, n: writer ? counted.n + 1 : counted.n, o: counted.o, v: ROAST_VOICE, av: ROAST_VOICE };
         }
         result = "roasted";
-      } catch {
-        entry = { s: "error", t: now };
-        result = "error";
+      } catch (err) {
+        if (err instanceof WriterOutage) {
+          // The writer is down: keep a written post, show the facts where there is none, and try
+          // again later without counting a failed attempt.
+          if (!posted) await saveRoast({ ...err.fallback, id: c.id });
+          entry = posted
+            ? { ...base, s: "llm", t: now, n: counted.n, o: counted.o + 1, av: ROAST_VOICE }
+            : { s: "facts_only", t: now, w: writer, n: counted.n, o: counted.o + 1, v: ROAST_VOICE, av: ROAST_VOICE };
+          result = "error";
+        } else {
+          entry = { ...base, s: posted ? "llm" : "error", t: now };
+          result = "error";
+        }
       }
       // Recorded while the claim is still held, so a page never writes this item again meanwhile.
       updates[c.id] = entry;
@@ -305,16 +335,27 @@ export async function ensurePickRoast(
         const frozen = await freezeDraftPickRanks(l, pick.draftId, picks).catch(() => null);
         const draftPicks = frozen ? picks.map((p) => withFrozenRank(p, frozen.get(p.pickNo))) : picks;
         const fact = draftPicks.find((p) => p.pickNo === pick.pickNo) ?? pick;
-        const r = await roastItem("draft_pick", fact, ctx, { now, draftPicks });
+        const latest0 = (await store.get<RoastIndex>(indexKey(l)).catch(() => null)) ?? index;
+        const counted = latest0[id] ? attemptsOf(latest0[id]) : { n: 0, o: 0 };
+        let r: Roast;
+        let outage = false;
+        try {
+          r = await roastItem("draft_pick", fact, ctx, { now, draftPicks });
+        } catch (err) {
+          if (!(err instanceof WriterOutage)) throw err;
+          // The writer is down: show the facts, record the outage so pages and the tick wait.
+          r = err.fallback;
+          outage = true;
+        }
         if (r.source === "placeholder") return existing;
         const saved: Roast = { ...r, id };
         await saveRoast(saved);
-        const latest = (await store.get<RoastIndex>(indexKey(l)).catch(() => null)) ?? index;
-        const prevN = latest[id]?.n ?? 0;
-        await store.set(indexKey(l), {
-          ...latest,
-          [id]: { s: r.source, t: now, w: writer, n: r.source === "llm" ? 0 : prevN + 1, v: ROAST_VOICE },
-        });
+        const latest = (await store.get<RoastIndex>(indexKey(l)).catch(() => null)) ?? latest0;
+        const entry: IndexEntry =
+          r.source === "llm"
+            ? { s: "llm", t: now, w: writer, n: 0, o: 0, v: ROAST_VOICE, av: ROAST_VOICE }
+            : { s: r.source, t: now, w: writer, n: outage ? counted.n : counted.n + 1, o: outage ? counted.o + 1 : counted.o, v: ROAST_VOICE, av: ROAST_VOICE };
+        await store.set(indexKey(l), { ...latest, [id]: entry });
         return saved;
       } finally {
         await store.unlock(claim).catch(() => {});

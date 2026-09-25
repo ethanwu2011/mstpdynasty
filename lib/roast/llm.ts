@@ -212,7 +212,22 @@ export function buildRoastRequest(userContent: string, kind: RoastKind = "issue"
 
 export type RoastCallResult =
   | { ok: true; text: string; model: string; usage: RoastUsage; stopReason: string | null }
-  | { ok: false; reason: "not_configured" | "refusal" | "error" | "empty" | "budget"; detail: string; model: string | null; usage: RoastUsage | null };
+  | {
+      ok: false;
+      reason: "not_configured" | "refusal" | "error" | "empty" | "budget";
+      detail: string;
+      model: string | null;
+      usage: RoastUsage | null;
+      /** An error worth retrying later (rate limit, overload, server error, timeout); false for a bad request, a bad key or a retired model. */
+      transient?: boolean;
+    };
+
+/** Rate limits, overloads, server errors and dropped connections pass; a 400, 401, 403 or 404 does not. */
+export function isTransientError(err: unknown): boolean {
+  if (err instanceof Anthropic.RateLimitError || err instanceof Anthropic.APIConnectionError) return true;
+  if (err instanceof Anthropic.APIError) return err.status === undefined || err.status >= 500 || err.status === 408 || err.status === 409;
+  return true;
+}
 
 function usageOf(msg: BetaMessage): RoastUsage {
   const u = msg.usage;
@@ -274,7 +289,7 @@ export async function callRoastModel(userContent: string, label: string, kind: R
     }
     console.warn(`[roast] ${label}: ${detail}`);
     await recordWriterStatus({ ok: false, at: Date.now(), reason: "error", detail });
-    return { ok: false, reason: "error", detail, model: null, usage: null };
+    return { ok: false, reason: "error", detail, model: null, usage: null, transient: isTransientError(err) };
   }
   const usage = usageOf(msg);
   await recordSpend(msg.model, usage);

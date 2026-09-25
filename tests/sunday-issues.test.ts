@@ -169,7 +169,8 @@ describe("Sunday Preview win chances", () => {
 
   it("the fallback paragraph and headline print the same numbers", () => {
     const fallback = plan.sections[1].blocks.flatMap((b) => (b.type === "slot" && b.slot === "m-5" ? b.fallback : []));
-    expect(fallback).toEqual([{ type: "paragraph", text: "Peter 170 projected (88%), Anish 120 (12%)." }]);
+    // The expected totals (Thursday points included), the same numbers as the table's Expected column.
+    expect(fallback).toEqual([{ type: "paragraph", text: "Peter 170.0 expected (88%), Anish 120.0 (12%)." }]);
     expect(plan.fallbackDek).toBe("Week 3: Anish is 12% to win.");
   });
 

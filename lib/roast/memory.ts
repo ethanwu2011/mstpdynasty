@@ -12,7 +12,7 @@ import { getDraftTradedPicks } from "@/lib/sleeper";
 import { getFantasyCalc } from "@/lib/fantasycalc";
 import { getWinProbabilities } from "@/lib/models";
 import type { DraftPickFact, FantasyCalcValue, IssueFacts, LeagueContext, ShameEntry, SleeperTradedPick } from "@/lib/types";
-import { pickLabel, r1, r2 } from "./format";
+import { pickLabel, r1 } from "./format";
 import { EMPTY_MEMORY, starterCounts, type DraftContext, type PayloadMemory } from "./memory-shape";
 
 export { EMPTY_MEMORY, starterCounts, type DraftContext, type PayloadMemory } from "./memory-shape";
@@ -113,10 +113,10 @@ export async function issueMemory(facts: IssueFacts, ctx: LeagueContext): Promis
         const pre = await getWinProbabilities(facts.week, ctx, { pregame: true });
         const out: Record<number, number> = {};
         for (const m of pre.matchups) {
-          // Exact (winProb has 4 decimals), the two sides adding to 100. The issues round when
-          // they print, from the home side, so rounding twice never invents a swing.
-          out[m.home.team.rosterId] = r2(m.home.winProb * 100);
-          out[m.away.team.rosterId] = r2(100 - out[m.home.team.rosterId]);
+          // The same number the issues round for the win chance now (winProb x 100, unrounded),
+          // from the home side: equal chances before and after print equal, never a fake swing.
+          out[m.home.team.rosterId] = m.home.winProb * 100;
+          out[m.away.team.rosterId] = 100 - m.home.winProb * 100;
         }
         return out;
       },

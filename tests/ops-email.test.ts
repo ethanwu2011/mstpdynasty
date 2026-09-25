@@ -177,50 +177,38 @@ describe("the record of emailed words (third review round)", () => {
   /** The per-issue resend counter, cleared so a test can ask again without hitting the daily limit. */
   const clearResends = (slug: string) => store.del(store.keys.rate(`resend:${MSTP_LEAGUE_ID}:${slug}`));
 
-  it("recording a second version never drops the first, even when two resends overlap", async () => {
+  it("every version the league got stays on the issue's record: none goes out a second time", async () => {
     vi.stubEnv("NEWSLETTER_MODE", "auto");
     leagueList("a");
     const issue = makeIssue({ factsOnly: false });
     await saveIssue(issue);
     expect((await sendIssue(issue, "auto")).status).toBe("sent");
     const sent = (await getIssue(MSTP_LEAGUE_ID, issue.slug))!;
+    // The record is saved with the send itself, on the issue.
+    expect(sent.emailedWords).toHaveLength(1);
     const v2 = { ...sent, dek: "Week 3, reviewed again." };
-    const v3 = { ...sent, dek: "Week 3, reviewed a third time." };
-
-    // A second resend (new words) runs start to finish while the first is recording its words:
-    // after the first one checked the record, before its own write lands.
-    const s = store.getStore();
-    const set = s.set.bind(s);
-    let raced = false;
-    s.set = async (key, value, opts) => {
-      if (!raced && key.includes("emailed-words")) {
-        raced = true;
-        await saveIssue(v3);
-        expect(await resendIssue(v3)).toMatchObject({ status: "sent" });
-      }
-      return set(key, value, opts);
-    };
-    try {
-      await saveIssue(v2);
-      expect(await resendIssue(v2)).toMatchObject({ status: "sent" });
-    } finally {
-      s.set = set;
-    }
-    expect(raced).toBe(true);
-    expect(t.sent.map((x) => x.messages[0].text.includes("third time"))).toEqual([false, false, true]);
-
-    // Both versions the league got are on record: neither goes out a second time.
-    await clearResends(issue.slug);
-    expect(await resendIssue(v3)).toMatchObject({ status: "skipped", error: "These exact words already went to the league." });
     await saveIssue(v2);
-    expect(await resendIssue(v2)).toMatchObject({ status: "skipped", error: "These exact words already went to the league." });
+    expect(await resendIssue(v2)).toMatchObject({ status: "sent" });
+    expect((await getIssue(MSTP_LEAGUE_ID, issue.slug))!.emailedWords).toHaveLength(2);
+
     await clearResends(issue.slug);
-    await saveIssue(sent);
-    expect(await resendIssue(sent)).toMatchObject({ status: "skipped", error: "These exact words already went to the league." });
-    expect(t.sent).toHaveLength(3);
+    expect(await resendIssue(v2)).toMatchObject({ status: "skipped", error: "These exact words already went to the league." });
+    await saveIssue({ ...(await getIssue(MSTP_LEAGUE_ID, issue.slug))!, dek: sent.dek });
+    expect(await resendIssue((await getIssue(MSTP_LEAGUE_ID, issue.slug))!)).toMatchObject({ status: "skipped", error: "These exact words already went to the league." });
+    expect(t.sent).toHaveLength(2);
   });
 
-  it("resendIssue sends nothing when the record of emailed words cannot be read", async () => {
+  it("an issue sent before the record existed holds the words it carries", async () => {
+    vi.stubEnv("NEWSLETTER_MODE", "auto");
+    leagueList("a");
+    const old = makeIssue({ factsOnly: false, status: "sent", sentAt: 1, recipientCount: 1 });
+    expect(old.emailedWords).toBeUndefined();
+    await saveIssue(old);
+    expect(await resendIssue(old)).toMatchObject({ status: "skipped", error: "These exact words already went to the league." });
+    expect(t.sent).toHaveLength(0);
+  });
+
+  it("resendIssue sends nothing when the issue cannot be read", async () => {
     vi.stubEnv("NEWSLETTER_MODE", "auto");
     leagueList("a");
     const issue = makeIssue({ factsOnly: false });
@@ -228,10 +216,9 @@ describe("the record of emailed words (third review round)", () => {
     expect((await sendIssue(issue, "auto")).status).toBe("sent");
     const rewritten = { ...(await getIssue(MSTP_LEAGUE_ID, issue.slug))!, dek: "Week 3, reviewed again." };
     await saveIssue(rewritten);
-
     const s = store.getStore();
     const get = s.get.bind(s);
-    s.get = async <T>(key: string) => (key.includes("emailed-words") ? Promise.reject(new Error("store timed out")) : get<T>(key));
+    s.get = async <T>(key: string) => (key.includes(issue.slug) ? Promise.reject(new Error("store timed out")) : get<T>(key));
     try {
       expect((await resendIssue(rewritten)).status).not.toBe("sent");
     } finally {

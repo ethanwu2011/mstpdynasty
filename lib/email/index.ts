@@ -293,8 +293,8 @@ async function sendToLeague(issue: Issue, transport: EmailTransport): Promise<Se
       ? (await transport.send(messages, { idempotencyKey: `send/${l}/${current.slug}/${shortHash(to.join(","))}` })).ids
       : [];
     const sentAt = Date.now();
-    await saveIssue({ ...current, status: "sent", sentAt, recipientCount: messages.length });
-    await recordEmailedWords(current);
+    // The record of what went out is saved with the "sent" status itself: they cannot disagree.
+    await saveIssue(withEmailed({ ...current, status: "sent", sentAt, recipientCount: messages.length }));
     await markDone(l, name, { at: sentAt, recipients: messages.length });
     return { status: "sent", recipients: messages.length, messageIds: ids };
   } catch (err) {
@@ -305,28 +305,17 @@ async function sendToLeague(issue: Issue, transport: EmailTransport): Promise<Se
 
 /** The words of an issue as emailed (dek and sections), hashed. */
 export const issueWordsHash = (i: Pick<Issue, "dek" | "sections">) => shortHash(JSON.stringify([i.dek, i.sections]));
-/** One key per emailed version, so no write can drop an earlier one. */
-const emailedKey = (leagueId: string, slug: string, words: string) => store.keys.snapshot(leagueId, `emailed-words:${slug}:${words}`);
-const EMAILED_TTL_SECONDS = 400 * 86_400;
 
 /**
- * Whether these exact words already went to the league. Throws when the store cannot answer:
- * callers treat that as "do not send", never as "not sent yet".
+ * The versions the league holds. An issue sent before the record existed holds the words it
+ * carried when it was first rewritten (publishExternal fills this in before it changes them).
  */
-export async function wasEmailed(leagueId: string, slug: string, words: string): Promise<boolean> {
-  return Boolean(await store.get(emailedKey(leagueId, slug, words)));
+export function emailedVersions(i: Pick<Issue, "status" | "emailedWords" | "dek" | "sections">): string[] {
+  if (i.emailedWords) return i.emailedWords;
+  return i.status === "sent" ? [issueWordsHash(i)] : [];
 }
 
-/** Record a version the league holds (sent here, or sent before this record existed). */
-export async function markEmailed(leagueId: string, slug: string, words: string): Promise<void> {
-  await store.set(emailedKey(leagueId, slug, words), 1, { ttlSeconds: EMAILED_TTL_SECONDS });
-}
-
-async function recordEmailedWords(issue: Issue): Promise<void> {
-  await markEmailed(issue.leagueId, issue.slug, issueWordsHash(issue)).catch((err) =>
-    console.warn(`[email] could not record the words emailed for ${issue.slug}: ${errText(err)}`),
-  );
-}
+const withEmailed = (i: Issue): Issue => ({ ...i, emailedWords: [...new Set([...emailedVersions(i), issueWordsHash(i)])] });
 
 /** Resends of one issue per day, so a looping writer cannot spam the league. */
 export const MAX_RESENDS_PER_ISSUE_PER_DAY = 2;
@@ -360,12 +349,11 @@ export async function resendIssue(issue: Issue): Promise<SendResult> {
       messages.push({ to: email, ...renderIssueEmail(current, { unsubscribeUrl: unsub, webUrl }), headers: unsubscribeHeaders(unsub) });
     }
     const words = issueWordsHash(current);
-    if (await wasEmailed(l, current.slug, words)) return skipped("These exact words already went to the league.");
+    if (emailedVersions(current).includes(words)) return skipped("These exact words already went to the league.");
     const ids = messages.length
       ? (await transport.send(messages, { idempotencyKey: `resend/${l}/${current.slug}/${words}/${shortHash(to.join(","))}` })).ids
       : [];
-    await saveIssue({ ...current, status: "sent", sentAt: Date.now(), recipientCount: messages.length });
-    await recordEmailedWords(current);
+    await saveIssue(withEmailed({ ...current, status: "sent", sentAt: Date.now(), recipientCount: messages.length }));
     result = { status: "sent", recipients: messages.length, messageIds: ids };
   } catch (err) {
     result = { status: "error", recipients: 0, messageIds: [], error: errText(err) };

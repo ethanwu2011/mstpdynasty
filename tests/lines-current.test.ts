@@ -69,7 +69,16 @@ describe("currentLines rounds only amounts of 10 and up, never a rank", () => {
     expect(currentLines({ "1": "Carlos is 10th and acting like a contender." }, rows)["1"]).toBeUndefined();
   });
 
-  it("a small whole number is not taken for a rounded decimal (3 is not 2.6)", () => {
-    expect(currentLines({ "1": "Carlos has 3 wins of pure luck." }, rows)["1"]).toBeUndefined();
+  it("a line may round a small amount the way the post-check lets it (3 wins of luck for 2.6), but never an ordinal", () => {
+    expect(currentLines({ "1": "Carlos has 3 wins of pure luck." }, rows)["1"]).toBe("Carlos has 3 wins of pure luck.");
+    expect(currentLines({ "1": "Carlos sits 3rd and knows it." }, rows)["1"]).toBeUndefined();
+  });
+});
+
+describe("negative facts", () => {
+  const rows = [row("1", "Dan", { rank: 8, record: "1-5", luck: -2.6 })];
+  it("a line quoting bad luck without its sign, or with it, is still true", () => {
+    expect(currentLines({ "1": "Dan is 1-5 with 2.6 wins of bad luck and still blames the schedule." }, rows)["1"]).toBeTruthy();
+    expect(currentLines({ "1": "Dan has a luck score of -2.6 and a 1-5 record to match." }, rows)["1"]).toBeTruthy();
   });
 });

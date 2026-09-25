@@ -13,7 +13,7 @@
  *   review, email not set up   stays a draft (nobody can approve it yet)
  */
 import { getIssue, saveIssue } from "@/lib/archive";
-import { issueWordsHash, markEmailed, resendIssue, sendIssue, wasEmailed } from "@/lib/email";
+import { emailedVersions, issueWordsHash, resendIssue, sendIssue } from "@/lib/email";
 import { newsletterMode } from "@/lib/env";
 import { draftFacts, tnfFacts, weeklyFacts } from "@/lib/facts";
 import { backfillOddsHistory, getPowerRankings, getWinProbabilities, runSeasonSim } from "@/lib/models";
@@ -289,8 +289,6 @@ export async function externalBriefs(
     const b = await issueBrief(step.facts, ctx, now);
     const existing = await getIssue(l, b.slug);
     const rewriteOf = opts.rewrite && existing && published(existing) ? issueWordsHash(existing) : undefined;
-    // An issue emailed before the emailed-words record existed: the league holds these words.
-    if (rewriteOf && existing?.status === "sent") await markEmailed(l, existing.slug, rewriteOf).catch(() => undefined);
     await store.set<StoredBrief>(briefKey(l, b.slug), { job, facts: step.facts, now, ...(rewriteOf !== undefined ? { rewriteOf } : {}) }, { ttlSeconds: BRIEF_TTL_SECONDS });
     briefs.push({ job: job.job, key: job.key, slug: b.slug, kind: b.kind, date: b.date, published: Boolean(existing && published(existing)), system: b.system, user: b.user, slots: b.slots });
   }
@@ -350,15 +348,22 @@ export async function publishExternal(
   if (existing && published(existing)) {
     // Only a rewrite brief taken against this very version may replace words that went out; a
     // late reply to an older brief would put older, thinner facts over what the league was sent.
-    const kept: Issue = { ...built, status: existing.status, sentAt: existing.sentAt, recipientCount: existing.recipientCount, createdAt: existing.createdAt };
+    const kept: Issue = {
+      ...built,
+      status: existing.status,
+      sentAt: existing.sentAt,
+      recipientCount: existing.recipientCount,
+      createdAt: existing.createdAt,
+      // What the league holds, carried over (and filled in for an issue sent before the record).
+      ...(existing.status === "sent" ? { emailedWords: emailedVersions(existing) } : {}),
+    };
     const onSite = issueWordsHash(existing);
     if (brief.rewriteOf === undefined || (onSite !== brief.rewriteOf && onSite !== issueWordsHash(kept))) {
       return { status: "stale", detail: "This issue already went out (or changed since this brief). Get a new rewrite brief (rewrite=1) to replace it.", slug, report, preview };
     }
     const changed = wordsOf(kept) !== wordsOf(existing);
     if (changed) await saveIssue(kept);
-    // A store that cannot say counts as "already emailed": never risk a second send.
-    const alreadyEmailed = await wasEmailed(l, kept.slug, issueWordsHash(kept)).catch(() => true);
+    const alreadyEmailed = emailedVersions(kept).includes(issueWordsHash(kept));
     if (opts.deliver !== "now" || existing.status !== "sent" || alreadyEmailed) {
       const detail = !changed
         ? "Same words as the issue on the site: nothing changed."
@@ -379,7 +384,15 @@ export async function publishExternal(
   if (claim === "done") return { status: "stale", detail: "This period's job already ran (a review copy may be waiting for approval).", slug, report, preview };
   if (claim === "busy") return { status: "busy", detail: "The morning job is working on this issue right now. Post again in a few minutes: if it skipped, your reply goes out then.", slug, report, preview };
   try {
-    await saveIssue(built);
+    // Inside the claim, look again: the morning job may have published it just before.
+    const again = await getIssue(l, built.slug);
+    if (again && published(again)) {
+      await releaseClaim(l, brief.job.key);
+      return { status: "stale", detail: "This issue already went out.", slug, report, preview };
+    }
+    // A fresh createdAt: an approve link sent for an earlier version never sends this one.
+    const fresh: Issue = { ...built, createdAt: Date.now() };
+    await saveIssue(fresh);
     await store.set(builtKey(l, brief.job.key), built.slug, { ttlSeconds: 30 * 24 * 3600 });
     // The day's job runs once, and each weekly issue is planned on one weekday only: if it has
     // already come by for this period (and skipped or failed), nobody else will send this, so
@@ -389,7 +402,7 @@ export async function publishExternal(
       await releaseClaim(l, brief.job.key);
       return { status: "queued", detail: "Stored. The morning job sends it.", slug, report, preview };
     }
-    const d = await deliverIssue(built, ctx);
+    const d = await deliverIssue(fresh, ctx);
     if (!d.ok) {
       await releaseClaim(l, brief.job.key);
       return { status: "error", detail: d.detail, slug, report, preview };

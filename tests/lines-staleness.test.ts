@@ -268,15 +268,20 @@ describe("odds and power rows hash on the numbers a line quotes", () => {
     expect(row.facts).toMatchObject({ playoffPct: 99.7, byePct: 42.4, titlePct: 23.5, lastPct: 0.3, expectedWins: 8 });
   });
 
-  it("odds: the hash ignores a +0.3 point drift but changes on a whole-point move, and keeps 0 and 100 apart", () => {
+  it("odds: the hash ignores a +0.3 point drift but changes on a whole-point move, and a 0 / 0.01 flicker is not news", () => {
     expect(oddsHash({ titlePct: 3.4 })).toBe(oddsHash({ titlePct: 3.1 }));
     expect(oddsHash({ playoffPct: 55.4 })).toBe(oddsHash({ playoffPct: 55.1 }));
     expect(oddsHash({ titlePct: 4.2 })).not.toBe(oddsHash({ titlePct: 3.1 }));
     expect(oddsHash({ playoffPct: 56.2 })).not.toBe(oddsHash({ playoffPct: 55.1 }));
-    // Above 0 is not 0, and short of 100 is not 100 (a line may not call either a sure thing).
-    expect(oddsHash({ lastPlacePct: 0.3 })).not.toBe(oddsHash({ lastPlacePct: 0 }));
-    expect(oddsHash({ playoffPct: 99.6 })).not.toBe(oddsHash({ playoffPct: 100 }));
-    expect(oddsHash({ playoffPct: 99.6 })).toBe(oddsHash({ playoffPct: 99.9 }));
+    // 1 title in 10,000 sims one run and none the next: the same line still reads true, no rewrite.
+    expect(oddsHash({ lastPlacePct: 0.01 })).toBe(oddsHash({ lastPlacePct: 0 }));
+    expect(oddsHash({ playoffPct: 99.96 })).toBe(oddsHash({ playoffPct: 100 }));
+  });
+
+  it("odds facts never call a sure thing the sims did not produce: above 0 is at least 0.1, short of 100 at most 99.9", () => {
+    const f = (over: Partial<SimTeamOdds>) => oddsRows(sim(over))[0].facts;
+    expect(f({ titlePct: 0.03, playoffPct: 99.96, lastPlacePct: 0 })).toMatchObject({ titlePct: 0.1, playoffPct: 99.9, lastPct: 0 });
+    expect(f({ playoffPct: 100 })).toMatchObject({ playoffPct: 100 });
   });
 
   it("draft odds never round 99.5 to 99.9 into a certain 100", () => {

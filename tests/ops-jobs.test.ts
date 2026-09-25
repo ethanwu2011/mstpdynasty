@@ -40,7 +40,7 @@ vi.mock("@/lib/fantasycalc", async (importOriginal) => {
   return { ...mod, getFantasyCalc: vi.fn(async () => Promise.reject(new Error("offline"))) };
 });
 
-import { getIssue, getRoast, listIssues, listRoasts, roastIds, saveRoast } from "@/lib/archive";
+import { getIssue, getRoast, listIssues, listRoasts, roastIds, saveIssue, saveRoast } from "@/lib/archive";
 import { setEmailTransportForTests } from "@/lib/email";
 import { MSTP_LEAGUE_ID } from "@/lib/env";
 import { draftFacts, tnfFacts, transactionFacts, weeklyFacts } from "@/lib/facts";
@@ -763,18 +763,6 @@ describe("the external writer (publishExternal)", () => {
     expect(await getDone(ctx.leagueId, KEY)).toMatchObject({ slug: SLUG });
   });
 
-  /** Every record of the words emailed for an issue, whatever shape it is kept in. */
-  const emailedRecords = async (ctx: LeagueContext) => store.list(store.keys.snapshot(ctx.leagueId, "emailed-words"));
-  /** Store reads of that record fail (a timeout), everything else answers. */
-  const failEmailedReads = () => {
-    const s = store.getStore();
-    const get = s.get.bind(s);
-    s.get = async <T>(key: string) => (key.includes("emailed-words") ? Promise.reject(new Error("store timed out")) : get<T>(key));
-    return () => {
-      s.get = get;
-    };
-  };
-
   it("an issue sent before the emailed-words record existed gets no second email from a same-words rewrite with deliver now", async () => {
     autoMode();
     const ctx = fakeCtx();
@@ -782,31 +770,29 @@ describe("the external writer (publishExternal)", () => {
     expect(await post(ctx, WORDS, "now")).toMatchObject({ status: "sent" });
     expect(t.sent).toHaveLength(1);
     // It went out before the site kept a record of the words it emailed.
-    for (const k of await emailedRecords(ctx)) await store.del(k);
-    expect(await emailedRecords(ctx)).toEqual([]);
+    const sent = (await getIssue(ctx.leagueId, SLUG))!;
+    await saveIssue({ ...sent, emailedWords: undefined });
 
-    // Taking the rewrite brief records the words the league holds, so the same words are not sent again.
     expect((await brief(ctx, true)).published).toBe(true);
     expect(await post(ctx, WORDS, "now")).toMatchObject({ status: "updated", detail: "Same words as the issue on the site: nothing changed." });
     expect(t.sent).toHaveLength(1);
     expect(await getIssue(ctx.leagueId, SLUG)).toMatchObject({ status: "sent", dek: "Week 3, and Manager 2 folded first." });
   });
 
-  it("a rewrite with deliver now emails nobody while the record of emailed words cannot be read", async () => {
+  it("a rewrite saved to the site first (no email) still goes out once when posted again with deliver now", async () => {
     autoMode();
     const ctx = fakeCtx();
     await brief(ctx);
     expect(await post(ctx, WORDS, "now")).toMatchObject({ status: "sent" });
     await brief(ctx, true);
-    const restore = failEmailedReads();
-    try {
-      // A store that cannot answer counts as "already emailed": never risk a second send.
-      expect(await post(ctx, NEW_WORDS, "now")).toMatchObject({ status: "updated" });
-    } finally {
-      restore();
-    }
+    expect(await post(ctx, NEW_WORDS)).toMatchObject({ status: "updated" });
     expect(t.sent).toHaveLength(1);
-    expect(await getIssue(ctx.leagueId, SLUG)).toMatchObject({ status: "sent", dek: "Week 3, and Manager 2 folded first, again." });
+    // A new rewrite brief, taken on the words now on the site, never marks them as emailed.
+    await brief(ctx, true);
+    expect(await post(ctx, NEW_WORDS, "now")).toMatchObject({ status: "resent" });
+    expect(t.sent).toHaveLength(2);
+    expect(await post(ctx, NEW_WORDS, "now")).toMatchObject({ status: "updated" });
+    expect(t.sent).toHaveLength(2);
   });
 
   it("review mode: a rewrite with deliver now of an issue that went out goes on the site, and nobody is emailed", async () => {
@@ -1033,7 +1019,7 @@ describe("runTick", () => {
     expect(roastItem).not.toHaveBeenCalled();
     expect(r.outcomes[0]).toEqual({ job: "roast_trades", status: "skipped", detail: "1 already being written by another run." });
     expect(await getRoast(ctx.leagueId, "trade:t1")).toEqual(page);
-    expect((await store.get<Record<string, unknown>>(indexKey))?.["trade:t1"]).toEqual({ s: "llm", t: now, w: true, v: ROAST_VOICE });
+    expect((await store.get<Record<string, unknown>>(indexKey))?.["trade:t1"]).toMatchObject({ s: "llm", t: now, w: true, v: ROAST_VOICE });
   });
 
   it("with the writer off, still writes facts-only posts when the day's spend is over the item share", async () => {
@@ -1136,7 +1122,7 @@ describe("runTick", () => {
     expect(page).toMatchObject({ id: id2, source: "facts_only", text: "A roast." });
     expect(r.outcomes.find((o) => o.job === "roast_picks")).toEqual({ job: "roast_picks", status: "ran", detail: "Wrote up 2 draft picks." });
     const idx = await store.get<Record<string, unknown>>(store.keys.snapshot(ctx.leagueId, "roast-index"));
-    expect(idx?.[id2]).toEqual({ s: "facts_only", t: now, w: true, n: 1, v: ROAST_VOICE });
+    expect(idx?.[id2]).toMatchObject({ s: "facts_only", t: now, w: true, n: 1, v: ROAST_VOICE });
   });
 
   it("the tick's last merge never writes over an entry another run recorded after its own", async () => {
@@ -1166,7 +1152,7 @@ describe("runTick", () => {
     await runTick(new Date(now), { ctx, ignoreCooldown: true });
     const idx = await store.get<Record<string, unknown>>(indexKey);
     expect(idx?.["trade:t1"]).toEqual(later);
-    expect(idx?.["trade:t2"]).toEqual({ s: "facts_only", t: now, w: false, n: 0, v: ROAST_VOICE });
+    expect(idx?.["trade:t2"]).toMatchObject({ s: "facts_only", t: now, w: false, n: 0, v: ROAST_VOICE });
   });
 
   it("a rewrite that succeeds after a failed attempt starts the attempt count over", async () => {
@@ -1188,7 +1174,7 @@ describe("runTick", () => {
       vi.mocked(isRoastConfigured).mockReturnValue(false);
     }
     expect(roastItem).toHaveBeenCalledTimes(1);
-    expect((await store.get<Record<string, unknown>>(indexKey))?.["trade:t1"]).toEqual({ s: "llm", t: now, w: true, n: 0, v: ROAST_VOICE });
+    expect((await store.get<Record<string, unknown>>(indexKey))?.["trade:t1"]).toMatchObject({ s: "llm", t: now, w: true, n: 0, v: ROAST_VOICE });
     expect(await getRoast(ctx.leagueId, "trade:t1")).toMatchObject({ source: "llm", text: "Written in the new voice." });
   });
 

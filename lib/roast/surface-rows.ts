@@ -62,9 +62,15 @@ export function standingsRows(rows: StandingRow[], lastWeek: StandingRow[] | nul
 
 /** In-season odds (id = rosterId), in the sim's order (title odds, then playoff odds). */
 /** Percent the way it is stable enough to quote: whole numbers from 10 up, one decimal below. */
-const stablePct = (n: number) => ((n >= 10 && n < 99.5) || n === 100 ? Math.round(n) : r1(n));
-/** A percentage as coarse as the line check tolerates (whole points), for hashing only; 0 and "above 0" stay apart. */
-const hashPct = (n: number) => (n > 0 && n < 0.5 ? 0.5 : n < 100 && n >= 99.5 ? 99.5 : Math.round(n));
+/**
+ * A percentage as the odds table prints it: one decimal, and never a certainty the sims did not
+ * produce (a value above 0 is at least 0.1, one below 100 at most 99.9, as the table's "<0.1" and
+ * ">99.9" say).
+ */
+const tablePct = (n: number) => (n <= 0 || n >= 100 ? Math.round(n) : Math.min(99.9, Math.max(0.1, r1(n))));
+const stablePct = (n: number) => (n >= 10 && n < 99.5 ? Math.round(n) : tablePct(n));
+/** As coarse as the line check tolerates (whole points), from the value the facts carry, for hashing only. */
+const hashPct = (n: number) => Math.round(n);
 
 /**
  * Season odds (id = rosterId). The sim reruns on fresh projections all week, so the row hashes
@@ -77,15 +83,15 @@ export function oddsRows(sim: SimResult): SurfaceRow[] {
     // does not (99.7 stays 99.7, never a certain 100).
     const facts = {
       rank: i + 1,
-      playoffPct: r1(t.playoffPct),
-      titlePct: r1(t.titlePct),
-      byePct: r1(t.byePct),
-      lastPct: r1(t.lastPlacePct),
+      playoffPct: tablePct(t.playoffPct),
+      titlePct: tablePct(t.titlePct),
+      byePct: tablePct(t.byePct),
+      lastPct: tablePct(t.lastPlacePct),
       expectedWins: r1(t.expectedWins),
       record: record(t.wins, t.losses, t.ties),
       asOf: sim.asOfWeek > 0 ? `week ${sim.asOfWeek}` : "before the season",
     };
-    const hash = [facts.rank, facts.record, facts.asOf, hashPct(t.playoffPct), hashPct(t.titlePct), hashPct(t.byePct), hashPct(t.lastPlacePct), Math.round(t.expectedWins)];
+    const hash = [facts.rank, facts.record, facts.asOf, hashPct(facts.playoffPct), hashPct(facts.titlePct), hashPct(facts.byePct), hashPct(facts.lastPct), Math.round(facts.expectedWins)];
     return rowOf(t.team, facts, JSON.stringify(hash));
   });
 }

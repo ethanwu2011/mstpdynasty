@@ -609,7 +609,8 @@ const escapeRe = (x: string) => x.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
  * record is not taken for stale the moment it is written.
  */
 function factNumbers(value: unknown, out: number[] = []): number[] {
-  if (typeof value === "number" && Number.isFinite(value)) out.push(value);
+  // Signs are dropped the way the post-check drops them: "2.6 wins of bad luck" is luck -2.6.
+  if (typeof value === "number" && Number.isFinite(value)) out.push(Math.abs(value));
   else if (typeof value === "string") for (const m of value.matchAll(/\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?/g)) out.push(Number(m[0].replace(/,/g, "")));
   else if (Array.isArray(value)) for (const v of value) factNumbers(v, out);
   else if (value && typeof value === "object") for (const v of Object.values(value)) factNumbers(v, out);
@@ -649,8 +650,9 @@ export function currentLines(lines: SurfaceLineMap, rows: SurfaceRow[]): Surface
       if (!pct && n >= 1900 && n <= 2100) continue; // a year
       const tol = tolerance(n, pct);
       // The post-check lets a line round a decimal fact to a whole number (612.34 as 612).
-      // Only for real amounts (612 for 612.34): never a rank or ordinal, which must match exactly.
-      const rounded = (v: number) => !pct && !m[2] && n >= 10 && Number.isInteger(n) && !Number.isInteger(v) && Math.round(v) === n;
+      // The post-check lets a line round an amount (8 wins for 8.4, 612 for 612.34); never an
+      // ordinal ("3rd"), which must match a rank exactly.
+      const rounded = (v: number) => !pct && !m[2] && Number.isInteger(n) && !Number.isInteger(v) && Math.round(v) === n;
       if (!known.some((v) => Math.abs(v - n) <= tol || (pct && Math.abs(v * 100 - n) <= tol) || rounded(v))) {
         fresh = false;
         break;
