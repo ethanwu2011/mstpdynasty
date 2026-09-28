@@ -197,6 +197,14 @@ export async function runIssueJob(job: PlannedJob, ctx: LeagueContext, now: numb
       return { job: job.job, status: "skipped", detail: `Already published as ${issue.slug}.`, issueSlug: issue.slug };
     }
 
+    // Never email an issue with no jokes in it: when no writer produced a word (the Max-plan run
+    // did not post and the API writer failed), hold it as a draft. The period stays open, so a
+    // written reply posted later today goes out the moment it lands.
+    if (issue.factsOnly && !ctx.isDevLeague) {
+      await releaseClaim(l, job.key);
+      return { job: job.job, status: "skipped", detail: "Held, not emailed: no writer produced this issue (facts only). A written reply posted today sends it.", issueSlug: issue.slug };
+    }
+
     const d = await deliverIssue(issue, ctx);
     if (!d.ok) {
       await releaseClaim(l, job.key);
@@ -282,8 +290,10 @@ export async function externalBriefs(
       continue;
     }
     // Already written and queued for the morning send (a reply posted the night before): leave
-    // it, unless asked to rewrite it.
-    if (!opts.rewrite && (await store.get<string>(builtKey(l, job.key)).catch(() => null))) {
+    // it, unless asked to rewrite it. A held facts-only issue is not written: brief it.
+    const queuedSlug = opts.rewrite ? null : await store.get<string>(builtKey(l, job.key)).catch(() => null);
+    const queued = queuedSlug ? await getIssue(l, queuedSlug).catch(() => null) : null;
+    if (queued && !queued.factsOnly) {
       skipped.push({ job: job.job, detail: "Already written and queued for the morning send (pass rewrite=1 to replace it)." });
       continue;
     }

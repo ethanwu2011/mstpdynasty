@@ -197,7 +197,8 @@ beforeEach(() => {
   vi.mocked(getPowerRankings).mockResolvedValue({ season: "2026", asOfWeek: 3, formula: "Formula.", rows: [], placeholder: false });
   vi.mocked(roastIssue).mockImplementation(async (kind: IssueKind, facts: IssueFacts, ctx?: LeagueContext) => {
     const period = facts.kind === "daily" ? facts.date : "week" in facts ? `w${facts.week}` : "draft";
-    return makeIssue({ kind, slug: `${period}-${kind.replace(/_/g, "-")}`, leagueId: ctx!.leagueId, title: kind, createdAt: Date.now() });
+    // A written issue, as the site's writer returns it when it works (a facts-only one is held).
+    return makeIssue({ kind, slug: `${period}-${kind.replace(/_/g, "-")}`, leagueId: ctx!.leagueId, title: kind, createdAt: Date.now(), factsOnly: false });
   });
   vi.mocked(roastItem).mockImplementation(
     async (kind: RoastItemKind, fact: RoastItemFact, ctx?: LeagueContext): Promise<Roast> => ({
@@ -423,7 +424,7 @@ describe("runDaily", () => {
       // The real slug rule ("<date>-<kind>"), so the Sunday issues are pinned to the day they run.
       vi.mocked(roastIssue).mockImplementation(async (kind: IssueKind, facts: IssueFacts, ctx?: LeagueContext, opts?: { now?: number }) => {
         const date = etDate(opts?.now ?? Date.now());
-        return makeIssue({ kind, slug: `${date}-${kind.replace(/_/g, "-")}`, date, week: "week" in facts ? facts.week : null, leagueId: ctx!.leagueId, title: kind, createdAt: Date.now() });
+        return makeIssue({ kind, slug: `${date}-${kind.replace(/_/g, "-")}`, date, week: "week" in facts ? facts.week : null, leagueId: ctx!.leagueId, title: kind, createdAt: Date.now(), factsOnly: false });
       });
     });
 
@@ -502,7 +503,7 @@ describe("the external writer (publishExternal)", () => {
     vi.mocked(roastIssue).mockImplementation(async (kind: IssueKind, facts: IssueFacts, ctx?: LeagueContext, opts?: RoastOpts) => {
       const base = { kind, slug: slugOf(kind, facts), leagueId: ctx!.leagueId, title: kind, createdAt: Date.now() };
       const reply = opts?.reply;
-      if (!reply) return makeIssue(base);
+      if (!reply) return makeIssue({ ...base, factsOnly: false });
       return makeIssue({
         ...base,
         factsOnly: false,
@@ -552,6 +553,23 @@ describe("the external writer (publishExternal)", () => {
     expect(await getIssue(ctx.leagueId, SLUG)).toMatchObject({ status: "sent", dek: "Week 3, and Manager 2 folded first, again." });
   });
 
+  it("with no writer, the morning job holds the dry issue instead of emailing it, and a written reply later sends at once", async () => {
+    autoMode();
+    const ctx = fakeCtx();
+    const writer = vi.mocked(roastIssue).getMockImplementation()!;
+    vi.mocked(roastIssue).mockImplementation(async (...args) => ({ ...(await writer(...args)), factsOnly: true }));
+    const r = await runDaily(TUE, { ctx, schedule });
+    expect(outcome(r, "weekly_recap")).toMatchObject({ status: "skipped", detail: "Held, not emailed: no writer produced this issue (facts only). A written reply posted today sends it." });
+    expect(t.sent).toHaveLength(0);
+    expect(await getDone(ctx.leagueId, KEY)).toBeNull();
+    vi.mocked(roastIssue).mockImplementation(writer);
+    // The held issue is not "already written": the writer gets its brief, and its reply goes out now.
+    await brief(ctx);
+    expect(await post(ctx, WORDS)).toMatchObject({ status: "sent" });
+    expect(t.sent).toHaveLength(1);
+    expect(await getIssue(ctx.leagueId, SLUG)).toMatchObject({ status: "sent", factsOnly: false });
+  });
+
   it("a late reply to an ordinary brief never replaces an issue that went out, and emails nobody", async () => {
     autoMode();
     const ctx = fakeCtx();
@@ -562,7 +580,7 @@ describe("the external writer (publishExternal)", () => {
 
     expect(await post(ctx, WORDS)).toMatchObject({ status: "stale" });
     expect(await post(ctx, WORDS, "now")).toMatchObject({ status: "stale" });
-    expect(await getIssue(ctx.leagueId, SLUG)).toMatchObject({ status: "sent", dek: "Week 3, reviewed.", factsOnly: true });
+    expect(await getIssue(ctx.leagueId, SLUG)).toMatchObject({ status: "sent", dek: "Week 3, reviewed." });
     expect(t.sent).toHaveLength(1);
   });
 
@@ -671,7 +689,7 @@ describe("the external writer (publishExternal)", () => {
 
     expect(await post(ctx, WORDS, "now")).toMatchObject({ status: "stale" });
     expect(await post(ctx, WORDS)).toMatchObject({ status: "stale" });
-    expect(await getIssue(ctx.leagueId, SLUG)).toMatchObject({ status: "sent", dek: "Week 3, reviewed.", factsOnly: true });
+    expect(await getIssue(ctx.leagueId, SLUG)).toMatchObject({ status: "sent", dek: "Week 3, reviewed." });
     expect(t.sent).toHaveLength(1);
   });
 
