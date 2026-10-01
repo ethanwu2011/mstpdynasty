@@ -3,11 +3,12 @@ import { ISSUE_TITLES, issueTitle } from "@/lib/roast";
 import { formatEt } from "@/lib/time";
 import type { Issue, IssueKind, LeagueContext } from "@/lib/types";
 
-export const ISSUE_ORDER: readonly IssueKind[] = ["thursday_fallout", "sunday_preview", "sunday_recap", "weekly_recap", "daily", "draft_grades"];
+export const ISSUE_ORDER: readonly IssueKind[] = ["thursday_preview", "thursday_fallout", "sunday_preview", "sunday_recap", "weekly_recap", "daily", "draft_grades"];
 
 /** When each issue goes out, as a line under its name (the home page and /newsletter share it). */
 export const CADENCE: Record<IssueKind, string> = {
   daily: "Outside the season, 8 AM ET on mornings when something happened",
+  thursday_preview: "Thursdays in season, before the Thursday game",
   thursday_fallout: "Fridays in season, after the Thursday game",
   sunday_preview: "Sunday mornings in season, before kickoff",
   sunday_recap: "Monday mornings in season, after the Sunday games",
@@ -18,6 +19,7 @@ export const CADENCE: Record<IssueKind, string> = {
 /** Cadence inside a sentence: "Week 5 Recap goes out every Tuesday in season." */
 export const WHEN: Record<IssueKind, string> = {
   daily: "outside the season, at 8 AM ET on any morning when something happened",
+  thursday_preview: "on Thursdays in season, before the Thursday game",
   thursday_fallout: "on Fridays in season, after the Thursday game",
   sunday_preview: "on Sunday mornings in season, before kickoff",
   sunday_recap: "on Monday mornings in season, after the Sunday games",
@@ -41,6 +43,7 @@ export const issueLabel = (k: IssueKind, week: number) => (k === "weekly_recap" 
 /** The name of every issue of a kind at once (filters, "No recaps yet"). */
 export const KIND_PLURAL: Record<IssueKind, string> = {
   daily: "The Daily",
+  thursday_preview: "TNF Previews",
   thursday_fallout: "Thursday Night Fallout",
   sunday_preview: "Sunday Previews",
   sunday_recap: "Sunday Recaps",

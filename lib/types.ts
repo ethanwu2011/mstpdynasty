@@ -893,7 +893,7 @@ export interface Roast {
  * `ISSUE_TITLES` / `issueTitle()` from lib/roast. The kind is also the slug suffix
  * ("2026-09-19-daily", "2026-09-29-weekly-recap").
  */
-export type IssueKind = "daily" | "thursday_fallout" | "sunday_preview" | "sunday_recap" | "weekly_recap" | "draft_grades";
+export type IssueKind = "daily" | "thursday_preview" | "thursday_fallout" | "sunday_preview" | "sunday_recap" | "weekly_recap" | "draft_grades";
 
 /**
  * Kinds stored before the 2026-09-18 rename. `lib/archive` upgrades them on read
@@ -1006,6 +1006,16 @@ export interface SundayPreviewFacts {
   lineupAlerts: LineupAlertFact[];
 }
 
+/** Thursday, before the week's first game: every matchup, and who plays tonight. */
+export interface ThursdayPreviewFacts {
+  kind: "thursday_preview";
+  week: number;
+  winProbs: WinProbWeek;
+  lineupAlerts: LineupAlertFact[];
+  /** NFL teams playing tonight. */
+  tonight: string[];
+}
+
 /** Monday morning: where every matchup stands after Sunday, with who is left for Monday night. */
 export interface SundayRecapFacts {
   kind: "sunday_recap";
@@ -1013,7 +1023,7 @@ export interface SundayRecapFacts {
   winProbs: WinProbWeek;
 }
 
-export type IssueFacts = DailyFacts | ThursdayFalloutFacts | SundayPreviewFacts | SundayRecapFacts | WeeklyRecapFacts | DraftGradesFacts;
+export type IssueFacts = DailyFacts | ThursdayPreviewFacts | ThursdayFalloutFacts | SundayPreviewFacts | SundayRecapFacts | WeeklyRecapFacts | DraftGradesFacts;
 
 /** @deprecated Renamed to DailyFacts (kind "daily"). */
 export type DailyRoastFacts = DailyFacts;

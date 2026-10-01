@@ -21,6 +21,7 @@ import type {
   StarterLine,
   StarterPerformance,
   SundayPreviewFacts,
+  ThursdayPreviewFacts,
   SundayRecapFacts,
   SwapFact,
   TeamRef,
@@ -37,6 +38,7 @@ import { EMPTY_MEMORY, type DraftContext, type PayloadMemory } from "./memory-sh
 /** Each kind's name (docs/SITE_SPEC.md DECISIONS ROUND 2). A weekly issue prints as "Week 7 Recap". */
 export const ISSUE_TITLES: Record<IssueKind, string> = {
   daily: "The Daily",
+  thursday_preview: "TNF Preview",
   thursday_fallout: "Thursday Night Fallout",
   sunday_preview: "Sunday Preview",
   sunday_recap: "Sunday Recap",
@@ -716,6 +718,23 @@ export function sidePct1(m: { home: TeamWinProb; away: TeamWinProb; isFinal?: bo
 const vs = (a: TeamRef, b: TeamRef) => `${label(a)} vs ${label(b)}`;
 
 export function planSundayPreview(f: SundayPreviewFacts, mem: PayloadMemory = EMPTY_MEMORY): IssuePlan {
+  return planPreview("sunday_preview", f, mem);
+}
+
+/** Thursday, before the week's first game: the Sunday Preview's shape, plus who plays tonight. */
+export function planThursdayPreview(f: ThursdayPreviewFacts, mem: PayloadMemory = EMPTY_MEMORY): IssuePlan {
+  return planPreview("thursday_preview", f, mem);
+}
+
+function planPreview(
+  kind: "sunday_preview" | "thursday_preview",
+  f: { week: number; winProbs: SundayPreviewFacts["winProbs"]; lineupAlerts: SundayPreviewFacts["lineupAlerts"]; tonight?: string[] },
+  mem: PayloadMemory,
+): IssuePlan {
+  const thursday = kind === "thursday_preview";
+  const when = thursday ? "tonight's game" : "the Sunday games";
+  const day = thursday ? "Thursday" : "Sunday";
+  const tonightTeams = new Set(f.tonight ?? []);
   const ms = f.winProbs.matchups;
   const sides = ms.flatMap((m) => [m.home, m.away]);
   // Before kickoff, at the same precision as winPct (whole, adding to 100), and only when it
@@ -736,6 +755,7 @@ export function planSundayPreview(f: SundayPreviewFacts, mem: PayloadMemory = EM
     ...(t.actual > 0 ? { banked: r2(t.actual) } : {}),
     // Stars and the weak link among the starters still to play (a Thursday player is done).
     ...lineupEdges(t, (p) => p.fractionRemaining > 0),
+    ...(thursday ? tonightOf(t, tonightTeams) : {}),
   });
   const facts: Record<string, unknown> = { week: f.week, ...commissionerFact(mem) };
   for (const m of ms) facts[matchupSlotId(m)] = { home: side(m, m.home), away: side(m, m.away) };
@@ -749,7 +769,7 @@ export function planSundayPreview(f: SundayPreviewFacts, mem: PayloadMemory = EM
       id: "cold-open",
       brief: dog
         ? `4 to 8 sentences in one or two paragraphs about ${dog.team.managerName}, the biggest underdog of week ${f.week}. ${EPIC_OPEN} on ${dog.team.managerName}. Then the facts that prove it (his expected total, win chance, stars and weakest starter against his opponent's), ${EPIC_RETURN}.`
-        : "3 to 5 sentences. A short fake epic about the Sunday ahead.",
+        : `3 to 5 sentences. A short fake epic about the ${day} ahead.`,
     },
   ];
   const blocks: PlannedBlock[] = [];
@@ -758,7 +778,9 @@ export function planSundayPreview(f: SundayPreviewFacts, mem: PayloadMemory = EM
     const hasDog = dog && (m.home === dog || m.away === dog);
     slots.push({
       id,
-      brief: `${hasDog ? "1 or 2 sentences" : "2 or 3 sentences"} on matchup ${id} before the Sunday games: both managers hit, the favorite's expected total (mean, Thursday points included) and win chance against the underdog's, their stars and weakest starters, and any Thursday points already banked.${hasDog ? ` ${dog.team.managerName} already got the cold open.` : ""}`,
+      brief: thursday
+        ? `${hasDog ? "1 or 2 sentences" : "2 or 3 sentences"} on matchup ${id} before ${when}: both managers hit, the favorite's expected total (mean) and win chance against the underdog's, their stars and weakest starters, and who each side has playing tonight (tonight).${hasDog ? ` ${dog.team.managerName} already got the cold open.` : ""}`
+        : `${hasDog ? "1 or 2 sentences" : "2 or 3 sentences"} on matchup ${id} before ${when}: both managers hit, the favorite's expected total (mean, Thursday points included) and win chance against the underdog's, their stars and weakest starters, and any Thursday points already banked.${hasDog ? ` ${dog.team.managerName} already got the cold open.` : ""}`,
     });
     const fb = `${m.home.team.managerName} ${r1(m.home.mean).toFixed(1)} expected (${sidePct(m, m.home)}%), ${m.away.team.managerName} ${r1(m.away.mean).toFixed(1)} (${sidePct(m, m.away)}%).`;
     blocks.push({ type: "heading", text: vs(m.home.team, m.away.team) }, slot(id, [para(fb)]));
@@ -769,7 +791,7 @@ export function planSundayPreview(f: SundayPreviewFacts, mem: PayloadMemory = EM
     rows: ms.flatMap((m) => [m.home, m.away].map((t) => [label(t.team), r2(t.actual), r1(t.mean).toFixed(1), `${sidePct(m, t)}%`])),
   });
   const sections: PlannedSection[] = [
-    { heading: `Week ${f.week}, Sunday`, blocks: [slot("cold-open", [])] },
+    { heading: `Week ${f.week}, ${day}`, blocks: [slot("cold-open", [])] },
     { heading: "The matchups", blocks },
   ];
   const managers = sides.map((t) => t.team.managerName);
@@ -786,21 +808,31 @@ export function planSundayPreview(f: SundayPreviewFacts, mem: PayloadMemory = EM
       ],
     });
   }
-  slots.push(closerSlot("Predict how Sunday ends for one named manager, and come back to the cold-open history one last time."));
+  if (thursday) {
+    const playing = sides.flatMap((t) => t.starters.filter((p) => isPlayer(p) && p.nflTeam && tonightTeams.has(p.nflTeam)).map((p) => [label(t.team), p.name, p.position, p1(p.projected).toFixed(1)]));
+    if (playing.length) sections.push({ heading: "Playing tonight", blocks: [{ type: "table", columns: ["Team", "Player", "Pos", "Proj"], rows: playing }] });
+  }
+  slots.push(closerSlot(`Predict how ${thursday ? "tonight" : "Sunday"} ends for one named manager, and come back to the cold-open history one last time.`));
   sections.push({ heading: "Kickoff", blocks: [slot("closer", [])] });
   return {
-    kind: "sunday_preview",
-    title: ISSUE_TITLES.sunday_preview,
-    header: `ISSUE: ${ISSUE_TITLES.sunday_preview}, week ${f.week}`,
-    task: `Write the Sunday Preview for week ${f.week}: headline, cold open, one short paragraph per matchup before the Sunday games${f.lineupAlerts.length ? ", the lineup holes" : ""}, then the closer. Only what is in FACTS.`,
+    kind,
+    title: ISSUE_TITLES[kind],
+    header: `ISSUE: ${ISSUE_TITLES[kind]}, week ${f.week}`,
+    task: `Write the ${ISSUE_TITLES[kind]} for week ${f.week}: headline, cold open, one short paragraph per matchup before ${when}${f.lineupAlerts.length ? ", the lineup holes" : ""}, then the closer. Only what is in FACTS.`,
     slots,
     facts,
     sections,
-    fallbackDek: dog ? `Week ${f.week}: ${dog.team.managerName} is ${sidePct(ms.find((m) => m.home === dog || m.away === dog)!, dog)}% to win.` : `Week ${f.week}, Sunday.`,
+    fallbackDek: dog ? `Week ${f.week}: ${dog.team.managerName} is ${sidePct(ms.find((m) => m.home === dog || m.away === dog)!, dog)}% to win.` : `Week ${f.week}, ${day}.`,
     week: f.week,
     managers,
     placeholder: f.winProbs.placeholder,
   };
+}
+
+/** A side's starters whose NFL game is tonight, with their projections. */
+function tonightOf(t: TeamWinProb, teams: Set<string>) {
+  const playing = t.starters.filter((p) => isPlayer(p) && p.nflTeam && teams.has(p.nflTeam));
+  return playing.length ? { tonight: playing.map(projectedLine) } : {};
 }
 
 export function planSundayRecap(f: SundayRecapFacts, mem: PayloadMemory = EMPTY_MEMORY): IssuePlan {

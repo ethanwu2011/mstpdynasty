@@ -19,6 +19,7 @@ export const DAY_MS = 24 * 3600 * 1000;
 export const DRAFT_GRADES_WINDOW_DAYS = 21;
 
 const SUNDAY = 0;
+const THURSDAY = 4;
 const MONDAY = 1;
 const TUESDAY = 2;
 const FRIDAY = 5;
@@ -120,6 +121,7 @@ export interface PlanInput {
 export type PlannedJob =
   | { job: "draft_grades"; key: string; draftId: string }
   | { job: "weekly_recap"; key: string; week: number }
+  | { job: "thursday_preview"; key: string; week: number }
   | { job: "thursday_fallout"; key: string; week: number }
   | { job: "sunday_preview"; key: string; week: number }
   | { job: "sunday_recap"; key: string; week: number }
@@ -135,7 +137,7 @@ export interface DailyPlan {
 }
 
 /** Execution and report order. */
-export const JOB_ORDER: IssueKind[] = ["draft_grades", "weekly_recap", "sunday_recap", "sunday_preview", "thursday_fallout", "daily"];
+export const JOB_ORDER: IssueKind[] = ["draft_grades", "weekly_recap", "sunday_recap", "sunday_preview", "thursday_preview", "thursday_fallout", "daily"];
 
 const skip = (job: IssueKind, detail: string): JobOutcome => ({ job, status: "skipped", detail });
 
@@ -174,6 +176,16 @@ export function planDaily(input: PlanInput): DailyPlan {
     if (!week) skipped.push(skip("thursday_fallout", "No Thursday game this week."));
     else if (!inRange(week)) skipped.push(skip("thursday_fallout", `Week ${week} is not a league week.`));
     else jobs.push({ job: "thursday_fallout", key: `thursday_fallout:${season}:${week}`, week });
+  }
+
+  // TNF Preview: the day of a week's first game (its Thursday) in season, before kickoff.
+  if (weekday !== THURSDAY) skipped.push(skip("thursday_preview", "Only on Thursdays."));
+  else if (phase !== "in_season") skipped.push(skip("thursday_preview", "Not in season."));
+  else {
+    const week = schedule.length ? weekWithGameOn(schedule, date) : null;
+    if (!week || firstDateOfWeek(schedule, week) !== date) skipped.push(skip("thursday_preview", "No Thursday game today."));
+    else if (!inRange(week)) skipped.push(skip("thursday_preview", `Week ${week} is not a league week.`));
+    else jobs.push({ job: "thursday_preview", key: `thursday_preview:${season}:${week}`, week });
   }
 
   // Sunday Preview: Sunday mornings in season, for the week whose games are played today.

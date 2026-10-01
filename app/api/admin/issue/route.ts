@@ -32,7 +32,7 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 300;
 
 const NO_STORE = { "cache-control": "no-store" };
-const KINDS: IssueKind[] = ["daily", "thursday_fallout", "sunday_preview", "sunday_recap", "weekly_recap", "draft_grades"];
+const KINDS: IssueKind[] = ["daily", "thursday_preview", "thursday_fallout", "sunday_preview", "sunday_recap", "weekly_recap", "draft_grades"];
 const MAX_TEXT = 60_000;
 
 async function authorize(req: Request): Promise<Response | null> {

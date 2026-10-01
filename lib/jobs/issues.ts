@@ -19,6 +19,7 @@ import { draftFacts, tnfFacts, weeklyFacts } from "@/lib/facts";
 import { backfillOddsHistory, getPowerRankings, getWinProbabilities, runSeasonSim } from "@/lib/models";
 import { issueBrief, roastIssue, type IssueReport } from "@/lib/roast";
 import * as store from "@/lib/store";
+import { etDate } from "@/lib/time";
 import type { Issue, IssueFacts, IssueKind, JobOutcome, LeagueContext, NflGame } from "@/lib/types";
 import { buildDailyFacts, lineupAlertsNow } from "./daily-facts";
 import { claimOnce, getDone, markDone, releaseClaim } from "./once";
@@ -48,6 +49,15 @@ async function factsFor(job: PlannedJob, ctx: LeagueContext, now: number, schedu
       const winProbs = await getWinProbabilities(job.week, ctx);
       if (winProbs.placeholder) return skipStep(NOT_READY, false);
       return { kind: "facts", facts: { kind: "thursday_fallout", week: job.week, tnf, winProbs } };
+    }
+    case "thursday_preview": {
+      const winProbs = await getWinProbabilities(job.week, ctx);
+      if (winProbs.placeholder) return skipStep(NOT_READY, false);
+      if (!winProbs.matchups.length) return skipStep(`No matchups in week ${job.week}.`, true);
+      const date = etDate(now);
+      const tonight = [...new Set(schedule.filter((g) => g.week === job.week && g.date === date).flatMap((g) => [g.home, g.away]))];
+      const lineupAlerts = await lineupAlertsNow(ctx, schedule, job.week, now);
+      return { kind: "facts", facts: { kind: "thursday_preview", week: job.week, winProbs, lineupAlerts, tonight } };
     }
     case "sunday_preview": {
       const winProbs = await getWinProbabilities(job.week, ctx);
@@ -268,7 +278,7 @@ export interface ExternalBrief {
  * issue is stored, so a brief taken at one time and a reply posted at another would drop or
  * repeat material. It runs only outside the season now.
  */
-const EXTERNAL_KINDS = new Set<PlannedJob["job"]>(["thursday_fallout", "sunday_preview", "sunday_recap", "weekly_recap", "draft_grades"]);
+const EXTERNAL_KINDS = new Set<PlannedJob["job"]>(["thursday_preview", "thursday_fallout", "sunday_preview", "sunday_recap", "weekly_recap", "draft_grades"]);
 
 export async function externalBriefs(
   jobs: PlannedJob[],

@@ -46,7 +46,7 @@ import { planItem, type ItemPlan } from "./items";
 import { addUsage, callRoastModel, hasRoastClient, sharedStoreMissing } from "./llm";
 import { draftContext, EMPTY_MEMORY, issueMemory, starterCounts, type PayloadMemory } from "./memory";
 import { loadRoastNotes, notesFor } from "./notes";
-import { ALLUSION_SLOT, HIDDEN_SLOTS, planDaily, planDraftGrades, planSundayPreview, planSundayRecap, planThursday, planWeekly, type IssuePlan, type SlotSpec, type WaiverMode } from "./plan";
+import { ALLUSION_SLOT, HIDDEN_SLOTS, planDaily, planDraftGrades, planSundayPreview, planSundayRecap, planThursdayPreview, planThursday, planWeekly, type IssuePlan, type SlotSpec, type WaiverMode } from "./plan";
 import { recordDrops } from "./status";
 import { AllowedNumbers, checkText, describeDrops, limitExclamations, parseSlots, sanitize, splitSentences, type Dropped } from "./postcheck";
 
@@ -252,6 +252,8 @@ function planFor(facts: IssueFacts, ctx: LeagueContext, memory: PayloadMemory): 
       return planThursday(facts, memory);
     case "sunday_preview":
       return planSundayPreview(facts, memory);
+    case "thursday_preview":
+      return planThursdayPreview(facts, memory);
     case "sunday_recap":
       return planSundayRecap(facts, memory);
     case "daily":

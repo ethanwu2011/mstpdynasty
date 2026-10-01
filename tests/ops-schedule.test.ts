@@ -58,8 +58,16 @@ describe("planDaily", () => {
     expect(plan.weekday).toBe(2);
     expect(jobs(input("2026-09-29"))).toEqual(["weekly_recap:3"]);
     expect(plan.jobs.find((j) => j.job === "weekly_recap")?.key).toBe("weekly_recap:2026:3");
-    expect(plan.skipped.map((s) => s.job)).toEqual(["draft_grades", "sunday_recap", "sunday_preview", "thursday_fallout", "daily"]);
+    expect(plan.skipped.map((s) => s.job)).toEqual(["draft_grades", "sunday_recap", "sunday_preview", "thursday_preview", "thursday_fallout", "daily"]);
     expect(plan.skipped.find((s) => s.job === "daily")?.detail).toBe("In season the weekly issues replace it.");
+  });
+
+  it("Thursday in season, the day of the week's first game: the TNF Preview", () => {
+    expect(jobs(input("2026-10-01"))).toEqual(["thursday_preview:4"]);
+    expect(planDaily(input("2026-10-01")).jobs[0].key).toBe("thursday_preview:2026:4");
+    // Not on a Thursday with no game, nor out of season.
+    expect(planDaily(input("2026-10-01", { schedule: [] })).skipped.find((s) => s.job === "thursday_preview")?.detail).toBe("No Thursday game today.");
+    expect(jobs(input("2026-10-01", { phase: "offseason" }))).toEqual(["daily"]);
   });
 
   it("Friday in season: Thursday Night Fallout for this week", () => {
@@ -105,10 +113,11 @@ describe("planDaily", () => {
 
   it("the morning after the startup draft completes: Draft Grades once", () => {
     const done = { phase: "in_season" as const, draft: { draftId: "draft-1", status: "complete" as const, isStartup: true, lastPicked: at("2026-09-23") - 3600_000 } };
-    expect(jobs(input("2026-09-24", done))).toEqual(["draft_grades"]);
+    // 2026-09-24 is week 3's Thursday: the TNF Preview goes out the same morning.
+    expect(jobs(input("2026-09-24", done))).toEqual(["draft_grades", "thursday_preview:3"]);
     expect(planDaily(input("2026-09-24", done)).jobs[0].key).toBe("draft_grades:draft-1");
     // a rookie draft never gets Draft Grades, and a long-finished startup draft is not re-graded
-    expect(jobs(input("2026-09-24", { draft: { ...done.draft, isStartup: false } }))).toEqual([]);
+    expect(jobs(input("2026-09-24", { draft: { ...done.draft, isStartup: false } }))).toEqual(["thursday_preview:3"]);
     const late = planDaily(input("2026-11-25", done));
     expect(late.jobs.map((j) => j.job)).toEqual([]);
     expect(late.skipped.find((s) => s.job === "draft_grades")?.detail).toBe("Draft finished more than 21 days ago.");

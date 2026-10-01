@@ -4,7 +4,7 @@
  */
 import { describe, expect, it } from "vitest";
 import { EMPTY_MEMORY, type PayloadMemory } from "@/lib/roast/memory-shape";
-import { planSundayPreview, planSundayRecap, sidePct, type IssuePlan } from "@/lib/roast/plan";
+import { planSundayPreview, planSundayRecap, planThursdayPreview, sidePct, type IssuePlan } from "@/lib/roast/plan";
 import type { LineupAlertFact, StarterLine, SundayPreviewFacts, SundayRecapFacts, TeamRef, TeamWinProb, WinProb, WinProbWeek } from "@/lib/types";
 
 const team = (rosterId: number, managerName: string, teamName = managerName): TeamRef => ({ rosterId, managerName, teamName, managerKey: managerName.toLowerCase() });
@@ -334,3 +334,25 @@ describe("the Sunday Preview's expected totals", () => {
     expect(brief(plan, "m-1")).toContain("expected total (mean, Thursday points included)");
   });
 });
+
+describe("planThursdayPreview", () => {
+  const justin = side(JUSTIN, 161.14, 0.321, {
+    starters: [{ ...line("1", "Ace", "QB", 22.4), nflTeam: "PIT" }, line("2", "Deuce", "WR", 15.06), { ...line("3", "Dud", "TE", 2.1), nflTeam: "CLE" }],
+  });
+  const brandon = side(BRANDON, 183.08, 0.679, { starters: [line("5", "Bell", "RB", 17.3)] });
+  const plan = planThursdayPreview({ kind: "thursday_preview", week: 4, winProbs: week([matchup(1, justin, brandon)]), lineupAlerts: [], tonight: ["PIT", "CLE"] });
+
+  it("is the preview's shape for tonight, naming who each side has playing tonight", () => {
+    expect(plan).toMatchObject({ kind: "thursday_preview", title: "TNF Preview", week: 4 });
+    const m = plan.facts["m-1"] as Sides;
+    expect(m.home.tonight).toEqual([
+      { name: "Ace", pos: "QB", projected: 22.4 },
+      { name: "Dud", pos: "TE", projected: 2.1 },
+    ]);
+    expect(m.away).not.toHaveProperty("tonight");
+    expect(brief(plan, "m-1")).toMatch(/before tonight's game/);
+    expect(plan.sections.map((sec) => sec.heading)).toEqual(["Week 4, Thursday", "The matchups", "Playing tonight", "Kickoff"]);
+    expectSlotsPrinted(plan);
+  });
+});
+
